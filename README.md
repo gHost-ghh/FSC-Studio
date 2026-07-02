@@ -73,3 +73,9 @@ w600k_r50.onnx
 ## Data Privacy
 
 Face databases and photos can contain sensitive biometric data. Keep `.fscdb`, `.dtb`, image folders, and generated previews out of public commits.
+
+## License
+
+FSC Studio source code is licensed under the Apache License 2.0. See `LICENSE`.
+
+Third-party packages and model weights keep their own licenses. In particular, InsightFace model weights are not bundled in this repository and must be used under their upstream terms.
