@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+.venv*/
+venv/
+venv*/
+
+# IDE and local agent state
+.idea/
+.agents/
+.codex/
+.xcodebuildmcp/
+
+# Build and release outputs
+build/
+dist/
+release/
+*.egg-info/
+*.spec
+*.log
+
+# Legacy/generated binaries and archives
+*.exe
+*.dll
+*.pyd
+*.7z
+*.zip
+*.cab
+*.msi
+
+# Private face databases and personal image data
+*.dtb
+*.fscdb
+*.fscdb-shm
+*.fscdb-wal
+test_img/
+
+# Large local model weights
+model/
+model/**/*.onnx
+model/**/*.dat
+model/**/*.zip
+model/insightface/models/buffalo_l/
+
+# Generated backup snapshots
+backup_before_*/
+legacy_backup_*/
+
+# Android generated and large binary assets
+android/
+android/**/build/
+android/**/.gradle/
+android/**/deps/
+android/**/app/src/main/assets/*.onnx
+android/**/*.apk
+android/**/*.idsig
+
+# iOS/Xcode generated files
+ios/
+ios/**/build/
+ios/**/DerivedData/
+ios/**/*.xcuserstate
+ios/**/*.xcuserdata/
+
+# OS cruft
+Thumbs.db
+.DS_Store

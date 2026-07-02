@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fsc-studio"
+version = "0.1.0"
+description = "Desktop face similarity and face database application"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6==6.11.1",
+    "insightface==1.0.1",
+    "opencv-python==4.13.0.92",
+    "numpy==2.5.0",
+    "Pillow==12.2.0",
+    "scikit-image==0.26.0",
+    "onnx==1.22.0",
+]
+
+[project.optional-dependencies]
+cpu = [
+    "onnxruntime==1.27.0",
+]
+gpu = [
+    "onnxruntime-gpu==1.27.0",
+]
+
+[tool.setuptools]
+py-modules = [
+    "fsc_studio",
+    "fsc_studio_services",
+    "fsc_face_engine",
+    "fsc_face_database",
+]
+
