@@ -971,14 +971,15 @@ class Landmark3DView(QWidget):
             return
 
         projection_context = self._projection_context(self.points, rect.width(), rect.height())
-        projected = self._project_points_with_context(self.points, projection_context)
+        rotated = self._rotate_points_with_context(self.points, projection_context)
+        projected = self._project_rotated_points(rotated, projection_context)
         depth = projected[:, 2]
         min_depth = float(depth.min()) if depth.size else 0.0
         max_depth = float(depth.max()) if depth.size else 1.0
         depth_span = max(1e-6, max_depth - min_depth)
 
         if self.render_mode == "textured":
-            textured = self._render_textured_mesh(projected, depth)
+            textured = self._render_textured_mesh(projected, depth, rotated)
             if textured is not None:
                 painter.drawImage(0, 0, textured)
                 painter.setPen(QPen(QColor("#334155"), 1))
@@ -1083,24 +1084,36 @@ class Landmark3DView(QWidget):
         points: np.ndarray,
         context: tuple[np.ndarray, float, float, float, float],
     ) -> np.ndarray:
-        center, scale, _, _, _ = context
-        normalized = (points - center.reshape(1, 3)) / scale
-        return self._project_normalized_points(normalized, context)
+        rotated = self._rotate_points_with_context(points, context)
+        return self._project_rotated_points(rotated, context)
 
-    def _project_normalized_points(
+    def _rotate_points_with_context(
         self,
-        normalized: np.ndarray,
+        points: np.ndarray,
         context: tuple[np.ndarray, float, float, float, float],
     ) -> np.ndarray:
-        _, _, draw_scale, center_x, center_y = context
+        center, scale, _, _, _ = context
+        normalized = (points - center.reshape(1, 3)) / scale
+        return self._rotate_normalized_points(normalized)
+
+    def _rotate_normalized_points(
+        self,
+        normalized: np.ndarray,
+    ) -> np.ndarray:
         cos_y = math.cos(self.yaw)
         sin_y = math.sin(self.yaw)
         cos_x = math.cos(self.pitch)
         sin_x = math.sin(self.pitch)
         rot_y = np.array([[cos_y, 0.0, sin_y], [0.0, 1.0, 0.0], [-sin_y, 0.0, cos_y]], dtype=np.float32)
         rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cos_x, -sin_x], [0.0, sin_x, cos_x]], dtype=np.float32)
-        rotated = normalized @ rot_y.T @ rot_x.T
+        return normalized @ rot_y.T @ rot_x.T
 
+    def _project_rotated_points(
+        self,
+        rotated: np.ndarray,
+        context: tuple[np.ndarray, float, float, float, float],
+    ) -> np.ndarray:
+        _, _, draw_scale, center_x, center_y = context
         projected = np.empty_like(rotated)
         projected[:, 0] = center_x + rotated[:, 0] * draw_scale
         projected[:, 1] = center_y + rotated[:, 1] * draw_scale
@@ -1111,6 +1124,7 @@ class Landmark3DView(QWidget):
         self,
         projected: np.ndarray,
         depth: np.ndarray,
+        rotated: np.ndarray,
     ) -> QImage | None:
         if self.points is None or self.texture_rgb is None:
             return None
@@ -1134,7 +1148,7 @@ class Landmark3DView(QWidget):
             dst = projected[indexes, :2].astype(np.float32)
             if self._triangle_area(src) < 0.5 or self._triangle_area(dst) < 0.5:
                 continue
-            is_back_facing = self._triangle_is_back_facing(src, dst)
+            is_back_facing = self._triangle_is_back_facing(rotated[indexes])
 
             min_x = max(0, int(math.floor(float(dst[:, 0].min()))) - 2)
             max_x = min(canvas_width, int(math.ceil(float(dst[:, 0].max()))) + 3)
@@ -1266,7 +1280,7 @@ class Landmark3DView(QWidget):
 
         topology_triangles = self._mediapipe_tesselation_triangles(len(self.points))
         if topology_triangles:
-            self._texture_triangles = topology_triangles
+            self._texture_triangles = self._normalize_texture_triangle_winding(topology_triangles)
             return self._texture_triangles
 
         texture_height, texture_width = self.texture_rgb.shape[:2]
@@ -1327,8 +1341,26 @@ class Landmark3DView(QWidget):
             seen.add(key)
             triangles.append(triangle)
 
-        self._texture_triangles = triangles
+        self._texture_triangles = self._normalize_texture_triangle_winding(triangles)
         return self._texture_triangles
+
+    def _normalize_texture_triangle_winding(
+        self,
+        triangles: list[tuple[int, int, int]],
+    ) -> list[tuple[int, int, int]]:
+        if self.points is None:
+            return triangles
+        normalized: list[tuple[int, int, int]] = []
+        for a, b, c in triangles:
+            if min(a, b, c) < 0 or max(a, b, c) >= len(self.points):
+                continue
+            source = self.points[[a, b, c], :3].astype(np.float32, copy=False)
+            normal = np.cross(source[1] - source[0], source[2] - source[0])
+            if float(normal[2]) < 0.0:
+                normalized.append((a, c, b))
+            else:
+                normalized.append((a, b, c))
+        return normalized
 
     def _mediapipe_tesselation_triangles(self, landmark_count: int) -> list[tuple[int, int, int]]:
         try:
@@ -1533,10 +1565,16 @@ class Landmark3DView(QWidget):
         a, b, c = points[:3, :2]
         return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
 
-    def _triangle_is_back_facing(self, source: np.ndarray, projected: np.ndarray) -> bool:
-        del source, projected
-        front_factor = math.cos(self.yaw) * math.cos(self.pitch)
-        return front_factor < -0.12
+    def _triangle_is_back_facing(self, rotated_triangle: np.ndarray) -> bool:
+        if rotated_triangle.shape[0] < 3:
+            return False
+        a, b, c = rotated_triangle[:3, :3]
+        normal = np.cross(b - a, c - a)
+        normal_length = float(np.linalg.norm(normal))
+        if normal_length <= 1e-8:
+            return False
+        # Very steep folds can produce tiny negative normals while still reading as frontal.
+        return float(normal[2]) / normal_length < -0.10
 
     def _clean_points(self, points: list | None) -> np.ndarray | None:
         if not points:
