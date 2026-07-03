@@ -45,6 +45,7 @@ class AnalyzedFace:
     bbox: list[float]
     kps: list[list[float]]
     landmarks: list[list[float]] | None
+    landmarks3d: list[list[float]] | None
     det_score: float
     quality_score: float
     quality_details: dict[str, float]
@@ -159,6 +160,7 @@ class FaceEngine:
         bbox = _as_float_array(_face_value(face, "bbox"))
         kps = _as_float_array(_face_value(face, "kps"))
         landmarks = _as_float_array(_face_value(face, "landmark_2d_106"))
+        landmarks3d = _as_float_array(_face_value(face, "landmark_3d_68"))
         det_score = _face_value(face, "det_score", 0.0)
         quality_score, quality_details = face_quality_score(image_bgr, bbox, float(det_score))
 
@@ -169,6 +171,7 @@ class FaceEngine:
             bbox=_array_to_nested_list(bbox),
             kps=_array_to_nested_list(kps),
             landmarks=_array_to_nested_list(landmarks) if landmarks is not None else None,
+            landmarks3d=_array_to_nested_list(landmarks3d) if landmarks3d is not None else None,
             det_score=float(det_score),
             quality_score=quality_score,
             quality_details=quality_details,
@@ -381,6 +384,7 @@ def analysis_to_database_record(analysis: AnalyzedFace) -> dict[str, object]:
         "bbox": analysis.bbox,
         "kps": analysis.kps,
         "landmarks": analysis.landmarks,
+        "landmarks3d": analysis.landmarks3d,
         "det_score": analysis.det_score,
         "quality_score": analysis.quality_score,
         "quality": analysis.quality_details,

@@ -29,6 +29,9 @@ cpu = [
 gpu = [
     "onnxruntime-gpu==1.27.0",
 ]
+dense-mesh = [
+    "mediapipe==0.10.35",
+]
 
 [tool.setuptools]
 py-modules = [

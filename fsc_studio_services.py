@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import pickle
 import sqlite3
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -20,6 +22,7 @@ from fsc_face_database import (
     TagRecord,
     assign_person as db_assign_person,
     connect_database,
+    create_identity_profile_schema,
     database_statistics,
     ensure_person,
     existing_image_hashes,
@@ -33,6 +36,8 @@ from fsc_face_database import (
     normalize_database_path,
     set_face_tags as db_set_face_tags,
     set_face_tags_on_connection,
+    update_face_mesh3d as db_update_face_mesh3d,
+    update_face_landmarks3d as db_update_face_landmarks3d,
     update_face_review as db_update_face_review,
 )
 from fsc_face_engine import (
@@ -42,6 +47,7 @@ from fsc_face_engine import (
     analysis_to_database_record,
     cosine_similarity,
     get_engine,
+    read_image_bgr,
     similarity_percent,
 )
 
@@ -56,6 +62,17 @@ IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
 }
+MEDIAPIPE_MODEL_DIR = Path(__file__).resolve().parent / "model" / "mediapipe"
+MEDIAPIPE_FACE_LANDMARKER_PATH = MEDIAPIPE_MODEL_DIR / "face_landmarker.task"
+MEDIAPIPE_FACE_LANDMARKER_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/latest/face_landmarker.task"
+)
+IDENTITY_MIN_STRONG_SAMPLES = 3
+IDENTITY_MAX_PROTOTYPES = 5
+IDENTITY_DEFAULT_MIN_QUALITY = 0.35
+IDENTITY_PROTOTYPE_DIVERSITY = 0.965
+IDENTITY_MARGIN_THRESHOLD = 0.035
 
 
 @dataclass
@@ -102,6 +119,58 @@ class FaceSearchIndex:
 
 
 @dataclass
+class IdentityProfile:
+    person_id: int
+    person_name: str
+    sample_count: int
+    prototype_count: int
+    embedding_dim: int
+    centroid: np.ndarray
+    prototypes: np.ndarray
+    accept_threshold: float
+    review_threshold: float
+    mean_similarity: float
+    min_similarity: float
+    max_similarity: float
+    quality_mean: float
+    evidence_face_ids: list[int]
+    status: str
+    updated_at: str
+
+
+@dataclass
+class IdentityCandidate:
+    profile: IdentityProfile
+    score: float
+    margin: float
+    confidence: float
+    evidence_face_id: int | None
+
+
+@dataclass
+class IdentityResult:
+    decision: str
+    candidates: list[IdentityCandidate]
+    message: str
+
+
+@dataclass
+class IdentityTrainingSummary:
+    profiles_built: int
+    weak_profiles: int
+    skipped_people: int
+    samples_used: int
+    messages: list[str]
+
+
+@dataclass
+class IdentityProfileIndex:
+    database_path: str
+    cache_key: tuple[tuple[str, int, int], ...]
+    profiles: list[IdentityProfile]
+
+
+@dataclass
 class FaceCluster:
     cluster_id: int
     records: list[FaceRecord]
@@ -131,6 +200,11 @@ class PersonSummary:
     ignored_count: int
     review_count: int
     representative_face_id: int | None
+    identity_status: str = ""
+    identity_sample_count: int = 0
+    identity_prototype_count: int = 0
+    identity_accept_threshold: float = 0.0
+    identity_updated_at: str = ""
 
 
 @dataclass
@@ -172,6 +246,10 @@ class LegacyDtbUnpickler(pickle.Unpickler):
 
 _SEARCH_INDEX_CACHE: dict[str, FaceSearchIndex] = {}
 _SEARCH_INDEX_LOCK = threading.RLock()
+_IDENTITY_PROFILE_CACHE: dict[str, IdentityProfileIndex] = {}
+_IDENTITY_PROFILE_LOCK = threading.RLock()
+_FACE_LANDMARKER_LOCK = threading.RLock()
+_FACE_LANDMARKER = None
 
 
 def runtime_metadata(engine) -> dict[str, object]:
@@ -521,6 +599,7 @@ def load_person_summaries(
 ) -> list[PersonSummary]:
     conn = connect_database(database_path)
     try:
+        create_identity_profile_schema(conn)
         params: list[object] = []
         where_sql = ""
         if text_filter.strip():
@@ -541,6 +620,11 @@ def load_person_summaries(
                 AVG(f.quality_score) AS average_quality,
                 SUM(CASE WHEN f.ignored = 1 THEN 1 ELSE 0 END) AS ignored_count,
                 SUM(CASE WHEN f.review_state != 'reviewed' OR f.ignored = 1 THEN 1 ELSE 0 END) AS review_count,
+                profile.status AS identity_status,
+                profile.sample_count AS identity_sample_count,
+                profile.prototype_count AS identity_prototype_count,
+                profile.accept_threshold AS identity_accept_threshold,
+                profile.updated_at AS identity_updated_at,
                 (
                     SELECT f2.id
                     FROM faces f2
@@ -550,8 +634,10 @@ def load_person_summaries(
                 ) AS representative_face_id
             FROM persons p
             LEFT JOIN faces f ON f.person_id = p.id
+            LEFT JOIN person_identity_profiles profile ON profile.person_id = p.id
             {where_sql}
-            GROUP BY p.id, p.name, p.notes
+            GROUP BY p.id, p.name, p.notes, profile.status, profile.sample_count, profile.prototype_count,
+                     profile.accept_threshold, profile.updated_at
             ORDER BY face_count DESC, p.name COLLATE NOCASE
             {limit_sql}
             """,
@@ -569,6 +655,11 @@ def load_person_summaries(
                 representative_face_id=(
                     int(row["representative_face_id"]) if row["representative_face_id"] is not None else None
                 ),
+                identity_status=str(row["identity_status"] or ""),
+                identity_sample_count=int(row["identity_sample_count"] or 0),
+                identity_prototype_count=int(row["identity_prototype_count"] or 0),
+                identity_accept_threshold=float(row["identity_accept_threshold"] or 0.0),
+                identity_updated_at=str(row["identity_updated_at"] or ""),
             )
             for row in rows
         ]
@@ -799,6 +890,222 @@ def analyze_faces(image_path: str | Path, *, prefer_gpu: bool = True) -> list[An
     if not faces:
         raise FaceEngineError("No face was detected in the selected image.")
     return faces
+
+
+def load_or_build_landmarks3d(database_path: str | Path, record: FaceRecord) -> list | None:
+    if record.landmarks3d:
+        return record.landmarks3d
+    if not record.source_path:
+        return None
+    source = Path(record.source_path)
+    if not source.exists():
+        return None
+
+    faces = get_engine(prefer_gpu=True).extract_faces_from_path(source)
+    if not faces:
+        return None
+    selected = _best_matching_analysis_for_record(record, faces)
+    if not selected.landmarks3d:
+        return None
+    db_update_face_landmarks3d(database_path, record.id, selected.landmarks3d)
+    return selected.landmarks3d
+
+
+def load_or_build_face_mesh3d(database_path: str | Path, record: FaceRecord) -> list | str | None:
+    if record.face_mesh3d:
+        return record.face_mesh3d
+    if not record.source_path:
+        return None
+    source = Path(record.source_path)
+    if not source.exists():
+        return None
+
+    try:
+        image_bgr = read_image_bgr(source)
+        meshes = _extract_mediapipe_face_meshes(image_bgr)
+    except ImportError:
+        return 'Install the optional "dense-mesh" extra to enable MediaPipe Face Mesh.'
+    except Exception as exc:
+        return f"MediaPipe Face Mesh failed: {exc}"
+    if not meshes:
+        return None
+
+    selected = _best_matching_mesh_for_record(record, meshes)
+    db_update_face_mesh3d(database_path, record.id, selected)
+    return selected
+
+
+def rebuild_identity_profiles(
+    database_path: str | Path,
+    person_ids: Iterable[int] | None = None,
+    *,
+    min_quality: float = IDENTITY_DEFAULT_MIN_QUALITY,
+    max_prototypes: int = IDENTITY_MAX_PROTOTYPES,
+) -> IdentityTrainingSummary:
+    normalized = normalize_database_path(database_path)
+    target_ids = [int(value) for value in person_ids] if person_ids is not None else None
+    messages: list[str] = []
+    profiles_built = 0
+    weak_profiles = 0
+    skipped_people = 0
+    samples_used = 0
+
+    conn = connect_database(normalized)
+    try:
+        create_identity_profile_schema(conn)
+        params: list[object] = []
+        person_where = ""
+        if target_ids is not None:
+            if not target_ids:
+                return IdentityTrainingSummary(0, 0, 0, 0, ["No people selected."])
+            placeholders = ",".join("?" for _ in target_ids)
+            person_where = f"WHERE p.id IN ({placeholders})"
+            params.extend(target_ids)
+
+        people_rows = conn.execute(
+            f"""
+            SELECT p.id, p.name
+            FROM persons p
+            {person_where}
+            ORDER BY p.name COLLATE NOCASE
+            """,
+            params,
+        ).fetchall()
+        if not people_rows:
+            return IdentityTrainingSummary(0, 0, 0, 0, ["No named people are available for training."])
+
+        face_params: list[object] = [float(min_quality)]
+        face_where = "f.person_id IS NOT NULL AND f.ignored = 0 AND f.quality_score >= ?"
+        if target_ids is not None:
+            placeholders = ",".join("?" for _ in target_ids)
+            face_where += f" AND f.person_id IN ({placeholders})"
+            face_params.extend(target_ids)
+        face_rows = conn.execute(
+            f"""
+            SELECT
+                f.id,
+                f.person_id,
+                p.name AS person_name,
+                f.embedding_blob,
+                f.embedding_dim,
+                f.quality_score
+            FROM faces f
+            JOIN persons p ON p.id = f.person_id
+            WHERE {face_where}
+            ORDER BY p.name COLLATE NOCASE, f.quality_score DESC, f.id ASC
+            """,
+            face_params,
+        ).fetchall()
+
+        rows_by_person: dict[int, list[sqlite3.Row]] = {}
+        for row in face_rows:
+            rows_by_person.setdefault(int(row["person_id"]), []).append(row)
+
+        if target_ids is None:
+            conn.execute("DELETE FROM person_identity_profiles")
+        else:
+            placeholders = ",".join("?" for _ in target_ids)
+            conn.execute(f"DELETE FROM person_identity_profiles WHERE person_id IN ({placeholders})", target_ids)
+
+        for person in people_rows:
+            person_id = int(person["id"])
+            person_name = str(person["name"])
+            person_face_rows = rows_by_person.get(person_id, [])
+            profile = _build_identity_profile_from_rows(
+                person_id,
+                person_name,
+                person_face_rows,
+                max_prototypes=max_prototypes,
+            )
+            if profile is None:
+                skipped_people += 1
+                messages.append(f"{person_name}: skipped, no usable assigned faces above quality {min_quality:.2f}.")
+                continue
+            _save_identity_profile_on_connection(conn, profile)
+            profiles_built += 1
+            samples_used += profile.sample_count
+            if profile.status == "weak":
+                weak_profiles += 1
+            messages.append(
+                f"{person_name}: {profile.sample_count} sample(s), {profile.prototype_count} prototype(s), "
+                f"{profile.status}, accept {profile.accept_threshold:.3f}."
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    clear_identity_profile_cache(normalized)
+    return IdentityTrainingSummary(
+        profiles_built=profiles_built,
+        weak_profiles=weak_profiles,
+        skipped_people=skipped_people,
+        samples_used=samples_used,
+        messages=messages,
+    )
+
+
+def identify_person(
+    database_path: str | Path,
+    query_embedding: np.ndarray,
+    *,
+    top_k: int = 5,
+) -> IdentityResult:
+    index = get_identity_profile_index(database_path)
+    if not index.profiles:
+        return IdentityResult("unknown", [], "No trained identity profiles.")
+    query = _normalize_vector(np.asarray(query_embedding, dtype=np.float32).reshape(-1))
+    if query.size == 0:
+        return IdentityResult("unknown", [], "Query embedding is empty.")
+
+    scored: list[tuple[IdentityProfile, float, int | None]] = []
+    for profile in index.profiles:
+        if profile.embedding_dim != query.size or profile.prototype_count <= 0:
+            continue
+        prototype_scores = profile.prototypes @ query
+        best_index = int(np.argmax(prototype_scores))
+        best_score = float(prototype_scores[best_index])
+        centroid_score = float(profile.centroid @ query)
+        if centroid_score > best_score:
+            evidence_face_id = profile.evidence_face_ids[0] if profile.evidence_face_ids else None
+            score = centroid_score
+        else:
+            evidence_face_id = (
+                profile.evidence_face_ids[best_index]
+                if best_index < len(profile.evidence_face_ids)
+                else profile.evidence_face_ids[0]
+                if profile.evidence_face_ids
+                else None
+            )
+            score = best_score
+        scored.append((profile, score, evidence_face_id))
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+    if not scored:
+        return IdentityResult("unknown", [], "No identity profile matches the query embedding dimensions.")
+
+    candidates: list[IdentityCandidate] = []
+    limit = max(1, int(top_k))
+    for position, (profile, score, evidence_face_id) in enumerate(scored[:limit]):
+        next_score = float(scored[position + 1][1]) if position + 1 < len(scored) else profile.review_threshold
+        margin = float(score - next_score)
+        candidates.append(
+            IdentityCandidate(
+                profile=profile,
+                score=float(score),
+                margin=margin,
+                confidence=_identity_confidence(profile, float(score), margin),
+                evidence_face_id=evidence_face_id,
+            )
+        )
+
+    best = candidates[0]
+    if best.score < best.profile.review_threshold:
+        return IdentityResult("unknown", candidates, "No person passes the review threshold.")
+    if best.profile.status == "weak":
+        return IdentityResult("review", candidates, "Best profile is weak; manual confirmation is required.")
+    if best.score >= best.profile.accept_threshold and best.margin >= IDENTITY_MARGIN_THRESHOLD:
+        return IdentityResult("confirmed", candidates, "Identity confirmed by trained profile.")
+    return IdentityResult("review", candidates, "Identity is plausible but needs review.")
 
 
 def compare_images(
@@ -1051,13 +1358,76 @@ def get_search_index(database_path: str | Path) -> FaceSearchIndex:
     return index
 
 
+def get_identity_profile_index(database_path: str | Path) -> IdentityProfileIndex:
+    normalized = str(Path(normalize_database_path(database_path)).resolve())
+    cache_key = database_cache_key(normalized)
+    with _IDENTITY_PROFILE_LOCK:
+        cached = _IDENTITY_PROFILE_CACHE.get(normalized)
+        if cached and cached.cache_key == cache_key:
+            return cached
+
+    profiles = load_identity_profiles(normalized)
+    index = IdentityProfileIndex(database_path=normalized, cache_key=cache_key, profiles=profiles)
+    with _IDENTITY_PROFILE_LOCK:
+        _IDENTITY_PROFILE_CACHE[normalized] = index
+    return index
+
+
+def load_identity_profiles(database_path: str | Path) -> list[IdentityProfile]:
+    conn = connect_database(database_path)
+    try:
+        create_identity_profile_schema(conn)
+        rows = conn.execute(
+            """
+            SELECT
+                profile.person_id,
+                p.name AS person_name,
+                profile.sample_count,
+                profile.prototype_count,
+                profile.embedding_dim,
+                profile.centroid_blob,
+                profile.prototypes_blob,
+                profile.accept_threshold,
+                profile.review_threshold,
+                profile.mean_similarity,
+                profile.min_similarity,
+                profile.max_similarity,
+                profile.quality_mean,
+                profile.evidence_face_ids_json,
+                profile.status,
+                profile.updated_at
+            FROM person_identity_profiles profile
+            JOIN persons p ON p.id = profile.person_id
+            ORDER BY p.name COLLATE NOCASE
+            """
+        ).fetchall()
+        profiles: list[IdentityProfile] = []
+        for row in rows:
+            profile = _identity_profile_from_row(row)
+            if profile is not None:
+                profiles.append(profile)
+        return profiles
+    finally:
+        conn.close()
+
+
 def clear_search_index_cache(database_path: str | Path | None = None) -> None:
     with _SEARCH_INDEX_LOCK:
         if database_path is None:
             _SEARCH_INDEX_CACHE.clear()
+        else:
+            normalized = str(Path(normalize_database_path(database_path)).resolve())
+            _SEARCH_INDEX_CACHE.pop(normalized, None)
+    clear_identity_profile_cache(database_path)
+
+
+def clear_identity_profile_cache(database_path: str | Path | None = None) -> None:
+    with _IDENTITY_PROFILE_LOCK:
+        if database_path is None:
+            _IDENTITY_PROFILE_CACHE.clear()
             return
         normalized = str(Path(normalize_database_path(database_path)).resolve())
-        _SEARCH_INDEX_CACHE.pop(normalized, None)
+        _IDENTITY_PROFILE_CACHE.pop(normalized, None)
 
 
 def database_cache_key(database_path: str | Path) -> tuple[tuple[str, int, int], ...]:
@@ -1078,6 +1448,207 @@ def load_preview(database_path: str | Path, face_id: int) -> bytes | None:
     return db_load_face_preview(database_path, face_id)
 
 
+def _build_identity_profile_from_rows(
+    person_id: int,
+    person_name: str,
+    rows: list[sqlite3.Row],
+    *,
+    max_prototypes: int,
+) -> IdentityProfile | None:
+    vectors: list[np.ndarray] = []
+    face_ids: list[int] = []
+    qualities: list[float] = []
+    dim: int | None = None
+    for row in rows:
+        row_dim = int(row["embedding_dim"])
+        embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32)
+        if embedding.size != row_dim:
+            continue
+        if dim is None:
+            dim = row_dim
+        if row_dim != dim:
+            continue
+        vectors.append(_normalize_vector(embedding.astype(np.float32, copy=True)))
+        face_ids.append(int(row["id"]))
+        qualities.append(float(row["quality_score"] or 0.0))
+    if not vectors or dim is None:
+        return None
+
+    matrix = np.vstack(vectors).astype(np.float32, copy=False)
+    qualities_array = np.asarray(qualities, dtype=np.float32)
+    weights = np.clip(qualities_array, 0.10, 1.0)
+    centroid = _normalize_vector(np.average(matrix, axis=0, weights=weights))
+
+    selected_positions = _select_identity_prototype_positions(
+        matrix,
+        qualities_array,
+        max_prototypes=max_prototypes,
+    )
+    prototypes = matrix[selected_positions].astype(np.float32, copy=True)
+    evidence_face_ids = [face_ids[position] for position in selected_positions]
+
+    pairwise_scores = _upper_pairwise_scores(matrix)
+    if pairwise_scores.size:
+        mean_similarity = float(pairwise_scores.mean())
+        min_similarity = float(pairwise_scores.min())
+        max_similarity = float(pairwise_scores.max())
+        score_std = float(pairwise_scores.std())
+    else:
+        mean_similarity = min_similarity = max_similarity = 1.0
+        score_std = 0.0
+
+    sample_count = len(vectors)
+    if sample_count >= IDENTITY_MIN_STRONG_SAMPLES:
+        accept_threshold = _clamp(mean_similarity - max(0.035, score_std * 1.25), 0.42, 0.72)
+        review_threshold = _clamp(accept_threshold - 0.08, 0.30, accept_threshold - 0.02)
+        status = "strong"
+    else:
+        accept_threshold = 0.90
+        review_threshold = _clamp(mean_similarity - 0.12 if sample_count > 1 else 0.45, 0.35, 0.55)
+        status = "weak"
+
+    return IdentityProfile(
+        person_id=int(person_id),
+        person_name=person_name,
+        sample_count=sample_count,
+        prototype_count=int(prototypes.shape[0]),
+        embedding_dim=int(dim),
+        centroid=centroid.astype(np.float32, copy=False),
+        prototypes=prototypes,
+        accept_threshold=float(accept_threshold),
+        review_threshold=float(review_threshold),
+        mean_similarity=mean_similarity,
+        min_similarity=min_similarity,
+        max_similarity=max_similarity,
+        quality_mean=float(qualities_array.mean()) if qualities_array.size else 0.0,
+        evidence_face_ids=evidence_face_ids,
+        status=status,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _save_identity_profile_on_connection(conn: sqlite3.Connection, profile: IdentityProfile) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO person_identity_profiles (
+            person_id,
+            sample_count,
+            prototype_count,
+            embedding_dim,
+            centroid_blob,
+            prototypes_blob,
+            accept_threshold,
+            review_threshold,
+            mean_similarity,
+            min_similarity,
+            max_similarity,
+            quality_mean,
+            evidence_face_ids_json,
+            status,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            profile.person_id,
+            profile.sample_count,
+            profile.prototype_count,
+            profile.embedding_dim,
+            profile.centroid.astype(np.float32, copy=False).tobytes(),
+            profile.prototypes.astype(np.float32, copy=False).reshape(-1).tobytes(),
+            profile.accept_threshold,
+            profile.review_threshold,
+            profile.mean_similarity,
+            profile.min_similarity,
+            profile.max_similarity,
+            profile.quality_mean,
+            json.dumps(profile.evidence_face_ids, separators=(",", ":")),
+            profile.status,
+            profile.updated_at,
+        ),
+    )
+
+
+def _identity_profile_from_row(row: sqlite3.Row) -> IdentityProfile | None:
+    dim = int(row["embedding_dim"])
+    prototype_count = int(row["prototype_count"])
+    centroid = np.frombuffer(row["centroid_blob"], dtype=np.float32)
+    prototypes = np.frombuffer(row["prototypes_blob"], dtype=np.float32)
+    if dim <= 0 or prototype_count <= 0 or centroid.size != dim or prototypes.size != prototype_count * dim:
+        return None
+    try:
+        evidence_face_ids = [int(value) for value in json.loads(str(row["evidence_face_ids_json"] or "[]"))]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        evidence_face_ids = []
+    return IdentityProfile(
+        person_id=int(row["person_id"]),
+        person_name=str(row["person_name"]),
+        sample_count=int(row["sample_count"]),
+        prototype_count=prototype_count,
+        embedding_dim=dim,
+        centroid=centroid.astype(np.float32, copy=True),
+        prototypes=prototypes.astype(np.float32, copy=True).reshape(prototype_count, dim),
+        accept_threshold=float(row["accept_threshold"]),
+        review_threshold=float(row["review_threshold"]),
+        mean_similarity=float(row["mean_similarity"]),
+        min_similarity=float(row["min_similarity"]),
+        max_similarity=float(row["max_similarity"]),
+        quality_mean=float(row["quality_mean"]),
+        evidence_face_ids=evidence_face_ids,
+        status=str(row["status"] or "weak"),
+        updated_at=str(row["updated_at"] or ""),
+    )
+
+
+def _select_identity_prototype_positions(
+    matrix: np.ndarray,
+    qualities: np.ndarray,
+    *,
+    max_prototypes: int,
+) -> list[int]:
+    order = np.lexsort((np.arange(matrix.shape[0]), -qualities))
+    selected: list[int] = []
+    for position in order:
+        index = int(position)
+        if not selected:
+            selected.append(index)
+            continue
+        similarities = matrix[selected] @ matrix[index]
+        if float(similarities.max()) < IDENTITY_PROTOTYPE_DIVERSITY:
+            selected.append(index)
+        if len(selected) >= max(1, int(max_prototypes)):
+            break
+    return selected
+
+
+def _upper_pairwise_scores(matrix: np.ndarray) -> np.ndarray:
+    if matrix.shape[0] < 2:
+        return np.empty((0,), dtype=np.float32)
+    scores = matrix @ matrix.T
+    return scores[np.triu_indices(matrix.shape[0], k=1)].astype(np.float32, copy=False)
+
+
+def _normalize_vector(vector: np.ndarray) -> np.ndarray:
+    arr = np.asarray(vector, dtype=np.float32).reshape(-1)
+    norm = float(np.linalg.norm(arr))
+    if norm <= 1e-12:
+        return arr
+    return (arr / norm).astype(np.float32, copy=False)
+
+
+def _identity_confidence(profile: IdentityProfile, score: float, margin: float) -> float:
+    threshold_span = max(0.04, profile.accept_threshold - profile.review_threshold)
+    score_confidence = _clamp((score - profile.review_threshold) / threshold_span, 0.0, 1.0)
+    margin_confidence = _clamp(margin / max(IDENTITY_MARGIN_THRESHOLD * 2.0, 1e-6), 0.0, 1.0)
+    if profile.status == "weak":
+        return min(0.69, score_confidence * 0.75 + margin_confidence * 0.15)
+    return _clamp(score_confidence * 0.68 + margin_confidence * 0.32, 0.0, 1.0)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
+
+
 def _record_matches_search_filters(
     record: FaceRecord,
     *,
@@ -1095,6 +1666,120 @@ def _record_matches_search_filters(
     if record.quality_score < min_quality:
         return False
     return True
+
+
+def _best_matching_analysis_for_record(record: FaceRecord, faces: list[AnalyzedFace]) -> AnalyzedFace:
+    if len(faces) == 1:
+        return faces[0]
+    if record.bbox and len(record.bbox) >= 4:
+        scored_by_bbox = [(_bbox_iou(record.bbox, face.bbox), face) for face in faces]
+        best_score, best_face = max(scored_by_bbox, key=lambda item: item[0])
+        if best_score > 0:
+            return best_face
+    return max(faces, key=lambda face: cosine_similarity(record.embedding, face.embedding))
+
+
+def _extract_mediapipe_face_meshes(image_bgr: np.ndarray) -> list[list[list[float]]]:
+    import mediapipe as mp
+
+    height, width = image_bgr.shape[:2]
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    image_rgb = np.ascontiguousarray(image_rgb)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+    with _FACE_LANDMARKER_LOCK:
+        landmarker = _get_face_landmarker(mp)
+        results = landmarker.detect(mp_image)
+
+    meshes: list[list[list[float]]] = []
+    for face_landmarks in getattr(results, "face_landmarks", None) or []:
+        points = [
+            [
+                float(landmark.x) * width,
+                float(landmark.y) * height,
+                float(landmark.z) * width,
+            ]
+            for landmark in face_landmarks
+        ]
+        if points:
+            meshes.append(points)
+    return meshes
+
+
+def _get_face_landmarker(mp):
+    global _FACE_LANDMARKER
+
+    with _FACE_LANDMARKER_LOCK:
+        if _FACE_LANDMARKER is None:
+            _ensure_mediapipe_face_landmarker_model()
+            base_options = mp.tasks.BaseOptions(model_asset_path=str(MEDIAPIPE_FACE_LANDMARKER_PATH))
+            options = mp.tasks.vision.FaceLandmarkerOptions(
+                base_options=base_options,
+                running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                num_faces=10,
+                min_face_detection_confidence=0.5,
+                min_face_presence_confidence=0.5,
+            )
+            _FACE_LANDMARKER = mp.tasks.vision.FaceLandmarker.create_from_options(options)
+        return _FACE_LANDMARKER
+
+
+def _ensure_mediapipe_face_landmarker_model() -> None:
+    if MEDIAPIPE_FACE_LANDMARKER_PATH.exists():
+        return
+
+    MEDIAPIPE_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    temporary_path = MEDIAPIPE_FACE_LANDMARKER_PATH.with_suffix(".task.tmp")
+    if temporary_path.exists():
+        temporary_path.unlink()
+    urllib.request.urlretrieve(MEDIAPIPE_FACE_LANDMARKER_URL, temporary_path)
+    temporary_path.replace(MEDIAPIPE_FACE_LANDMARKER_PATH)
+
+
+def _best_matching_mesh_for_record(record: FaceRecord, meshes: list[list[list[float]]]) -> list[list[float]]:
+    if len(meshes) == 1:
+        return meshes[0]
+    if record.bbox and len(record.bbox) >= 4:
+        scored = [(_bbox_iou(record.bbox, _bbox_from_points(mesh)), mesh) for mesh in meshes]
+        best_score, best_mesh = max(scored, key=lambda item: item[0])
+        if best_score > 0:
+            return best_mesh
+    return max(meshes, key=lambda mesh: _bbox_area(_bbox_from_points(mesh)))
+
+
+def _bbox_from_points(points: list[list[float]]) -> list[float]:
+    xs = [float(point[0]) for point in points if len(point) >= 2]
+    ys = [float(point[1]) for point in points if len(point) >= 2]
+    if not xs or not ys:
+        return []
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _bbox_area(bbox: Iterable[float]) -> float:
+    values = list(bbox)[:4]
+    if len(values) < 4:
+        return 0.0
+    x1, y1, x2, y2 = [float(value) for value in values]
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def _bbox_iou(a: Iterable[float], b: Iterable[float]) -> float:
+    values_a = list(a)[:4]
+    values_b = list(b)[:4]
+    if len(values_a) < 4 or len(values_b) < 4:
+        return 0.0
+    ax1, ay1, ax2, ay2 = [float(value) for value in values_a]
+    bx1, by1, bx2, by2 = [float(value) for value in values_b]
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter_area
+    return inter_area / union if union > 0 else 0.0
 
 
 def export_faces_csv(database_path: str | Path, output_path: str | Path) -> str:

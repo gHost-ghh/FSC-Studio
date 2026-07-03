@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import math
 import time
 import sys
 from pathlib import Path
 from typing import Callable
 
 import cv2
+import numpy as np
 from PIL import Image, ImageDraw
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -53,6 +55,7 @@ from fsc_face_engine import (
     similarity_percent,
 )
 from fsc_studio_services import (
+    IdentityResult,
     ImportSummary,
     LegacyConversionSummary,
     MaintenanceResult,
@@ -77,7 +80,10 @@ from fsc_studio_services import (
     default_legacy_conversion_output_path,
     export_faces_csv,
     import_images_to_database,
+    identify_person,
     load_database_statistics,
+    load_or_build_face_mesh3d,
+    load_or_build_landmarks3d,
     load_people,
     load_person_summaries,
     load_preview,
@@ -87,6 +93,7 @@ from fsc_studio_services import (
     load_tags,
     merge_people,
     rename_person,
+    rebuild_identity_profiles,
     search_database,
     search_database_progressive,
     set_tags,
@@ -501,6 +508,18 @@ def record_image_from_source(record: FaceRecord, *, focused: bool = False) -> Im
     return full
 
 
+def record_texture_image_from_source(record: FaceRecord) -> Image.Image | None:
+    if not record.source_path:
+        return None
+    source = Path(record.source_path)
+    if not source.exists():
+        return None
+    try:
+        return bgr_frame_to_pil(read_image_bgr(source))
+    except Exception:
+        return None
+
+
 def bgr_frame_to_pil(image_bgr) -> Image.Image:
     rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
@@ -557,6 +576,7 @@ def scale_camera_faces_to_frame(
                 bbox=face.bbox,
                 kps=face.kps,
                 landmarks=face.landmarks,
+                landmarks3d=face.landmarks3d,
                 det_score=face.det_score,
                 quality_score=face.quality_score,
                 quality_details=face.quality_details,
@@ -575,6 +595,20 @@ def scale_camera_faces_to_frame(
                 scaled.append([float(point[0]) * scale_x, float(point[1]) * scale_y])
         return scaled
 
+    def scale_points3d(points: list[list[float]] | None) -> list[list[float]] | None:
+        if points is None:
+            return None
+        scale_z = (scale_x + scale_y) / 2.0
+        scaled: list[list[float]] = []
+        for point in points:
+            if len(point) >= 3:
+                scaled.append([
+                    float(point[0]) * scale_x,
+                    float(point[1]) * scale_y,
+                    float(point[2]) * scale_z,
+                ])
+        return scaled
+
     scaled_faces: list[AnalyzedFace] = []
     for face in faces:
         bbox = [
@@ -590,6 +624,7 @@ def scale_camera_faces_to_frame(
                 bbox=bbox,
                 kps=scale_points(face.kps) or [],
                 landmarks=scale_points(face.landmarks),
+                landmarks3d=scale_points3d(face.landmarks3d),
                 det_score=face.det_score,
                 quality_score=face.quality_score,
                 quality_details=face.quality_details,
@@ -840,10 +875,630 @@ def make_focus_overlay(label: FocusablePreviewLabel, button: QPushButton) -> QWi
     return container
 
 
+LANDMARK_68_EDGES = [
+    *[(index, index + 1) for index in range(0, 16)],
+    *[(index, index + 1) for index in range(17, 21)],
+    *[(index, index + 1) for index in range(22, 26)],
+    *[(index, index + 1) for index in range(27, 30)],
+    *[(index, index + 1) for index in range(31, 35)],
+    *[(index, index + 1) for index in range(36, 41)],
+    (41, 36),
+    *[(index, index + 1) for index in range(42, 47)],
+    (47, 42),
+    *[(index, index + 1) for index in range(48, 59)],
+    (59, 48),
+    *[(index, index + 1) for index in range(60, 67)],
+    (67, 60),
+]
+
+
+class Landmark3DView(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("Landmark3DView")
+        self.setMinimumSize(260, 220)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.points: np.ndarray | None = None
+        self.edges: list[tuple[int, int]] = LANDMARK_68_EDGES
+        self.render_mode = "points"
+        self.texture_rgb: np.ndarray | None = None
+        self.texture_size: tuple[int, int] = (0, 0)
+        self._texture_triangles: list[tuple[int, int, int]] | None = None
+        self.message = "No 3D landmarks"
+        self.yaw = 0.0
+        self.pitch = -0.15
+        self.zoom = 1.0
+        self._last_mouse_pos = None
+
+    def set_points(
+        self,
+        points: list | None,
+        message: str = "No 3D landmarks",
+        *,
+        edges: list[tuple[int, int]] | None = None,
+    ) -> None:
+        cleaned = self._clean_points(points)
+        self.points = cleaned
+        self.edges = LANDMARK_68_EDGES if edges is None else edges
+        self._texture_triangles = None
+        self.message = message if cleaned is None else ""
+        self.update()
+
+    def set_texture_image(self, image: Image.Image | None) -> None:
+        if image is None:
+            self.texture_rgb = None
+            self.texture_size = (0, 0)
+            self._texture_triangles = None
+            self.update()
+            return
+        rgb = image.convert("RGB")
+        self.texture_rgb = np.asarray(rgb, dtype=np.uint8).copy()
+        self.texture_size = rgb.size
+        self._texture_triangles = None
+        self.update()
+
+    def set_render_mode(self, mode: str) -> None:
+        self.render_mode = "textured" if mode == "textured" else "points"
+        self.update()
+
+    def set_message(self, message: str) -> None:
+        self.points = None
+        self.message = message
+        self.update()
+
+    def reset_view(self) -> None:
+        self.yaw = 0.0
+        self.pitch = -0.15
+        self.zoom = 1.0
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = self.contentsRect().adjusted(1, 1, -1, -1)
+        painter.fillRect(rect, QColor("#111827"))
+        painter.setPen(QPen(QColor("#334155"), 1))
+        painter.drawRoundedRect(rect, 6, 6)
+        if self.points is None or len(self.points) == 0:
+            painter.setPen(QColor("#cbd5e1"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.message)
+            return
+
+        projected = self._project_points(self.points, rect.width(), rect.height())
+        depth = projected[:, 2]
+        min_depth = float(depth.min()) if depth.size else 0.0
+        max_depth = float(depth.max()) if depth.size else 1.0
+        depth_span = max(1e-6, max_depth - min_depth)
+
+        if self.render_mode == "textured":
+            textured = self._render_textured_mesh(projected, depth)
+            if textured is not None:
+                painter.drawImage(0, 0, textured)
+                painter.setPen(QPen(QColor("#334155"), 1))
+                painter.drawRoundedRect(rect, 6, 6)
+                painter.setPen(QColor("#dbeafe"))
+                painter.drawText(
+                    rect.adjusted(8, 6, -8, -6),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                    "textured face mesh",
+                )
+                painter.setPen(QColor("#94a3b8"))
+                painter.drawText(
+                    rect.adjusted(8, 24, -8, -6),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                    "drag to rotate",
+                )
+                return
+
+        painter.setPen(QPen(QColor("#64748b"), 1))
+        for start, end in self.edges:
+            if start >= len(projected) or end >= len(projected):
+                continue
+            x1, y1 = projected[start, :2]
+            x2, y2 = projected[end, :2]
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        order = np.argsort(depth)
+        for index in order:
+            x, y, z = projected[index]
+            depth_ratio = (float(z) - min_depth) / depth_span
+            radius = 2.2 + 2.0 * depth_ratio
+            color = QColor.fromHsvF(0.55, 0.30 + 0.35 * depth_ratio, 0.82 + 0.15 * depth_ratio)
+            painter.setPen(QPen(QColor("#0f172a"), 1))
+            painter.setBrush(color)
+            painter.drawEllipse(
+                int(round(x - radius)),
+                int(round(y - radius)),
+                int(round(radius * 2)),
+                int(round(radius * 2)),
+            )
+
+        painter.setPen(QColor("#94a3b8"))
+        painter.drawText(rect.adjusted(8, 6, -8, -6), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "drag to rotate")
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._last_mouse_pos = event.position()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._last_mouse_pos is None:
+            super().mouseMoveEvent(event)
+            return
+        pos = event.position()
+        delta = pos - self._last_mouse_pos
+        self._last_mouse_pos = pos
+        self.yaw -= float(delta.x()) * 0.01
+        self.pitch += float(delta.y()) * 0.01
+        self.pitch = max(-math.pi / 2.0, min(math.pi / 2.0, self.pitch))
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._last_mouse_pos = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event) -> None:  # type: ignore[override]
+        steps = float(event.angleDelta().y()) / 120.0
+        self.zoom = max(0.5, min(3.0, self.zoom * (1.0 + steps * 0.08)))
+        self.update()
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.reset_view()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _project_points(self, points: np.ndarray, width: int, height: int) -> np.ndarray:
+        centered = points - points.mean(axis=0, keepdims=True)
+        span = np.ptp(centered, axis=0)
+        scale = max(float(span.max()), 1.0)
+        normalized = centered / scale
+
+        cos_y = math.cos(self.yaw)
+        sin_y = math.sin(self.yaw)
+        cos_x = math.cos(self.pitch)
+        sin_x = math.sin(self.pitch)
+        rot_y = np.array([[cos_y, 0.0, sin_y], [0.0, 1.0, 0.0], [-sin_y, 0.0, cos_y]], dtype=np.float32)
+        rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cos_x, -sin_x], [0.0, sin_x, cos_x]], dtype=np.float32)
+        rotated = normalized @ rot_y.T @ rot_x.T
+
+        draw_scale = min(width, height) * 0.72 * self.zoom
+        center_x = self.width() / 2.0
+        center_y = self.height() / 2.0
+        projected = np.empty_like(rotated)
+        projected[:, 0] = center_x + rotated[:, 0] * draw_scale
+        projected[:, 1] = center_y + rotated[:, 1] * draw_scale
+        projected[:, 2] = rotated[:, 2]
+        return projected
+
+    def _render_textured_mesh(self, projected: np.ndarray, depth: np.ndarray) -> QImage | None:
+        if self.points is None or self.texture_rgb is None:
+            return None
+        triangles = self._build_texture_triangles()
+        if not triangles:
+            return None
+
+        canvas_width = max(1, self.width())
+        canvas_height = max(1, self.height())
+        canvas = np.full((canvas_height, canvas_width, 3), (17, 24, 39), dtype=np.uint8)
+        z_buffer = np.full((canvas_height, canvas_width), np.inf, dtype=np.float32)
+        texture = self.texture_rgb
+        texture_height, texture_width = texture.shape[:2]
+        source_points = self.points[:, :2].astype(np.float32, copy=True)
+        source_points[:, 0] = np.clip(source_points[:, 0], 0.0, max(0.0, texture_width - 1.0))
+        source_points[:, 1] = np.clip(source_points[:, 1], 0.0, max(0.0, texture_height - 1.0))
+
+        for tri in triangles:
+            indexes = list(tri)
+            src = source_points[indexes].astype(np.float32)
+            dst = projected[indexes, :2].astype(np.float32)
+            if self._triangle_area(src) < 0.5 or self._triangle_area(dst) < 0.5:
+                continue
+            is_back_facing = self._triangle_is_back_facing(src, dst)
+
+            min_x = max(0, int(math.floor(float(dst[:, 0].min()))) - 2)
+            max_x = min(canvas_width, int(math.ceil(float(dst[:, 0].max()))) + 3)
+            min_y = max(0, int(math.floor(float(dst[:, 1].min()))) - 2)
+            max_y = min(canvas_height, int(math.ceil(float(dst[:, 1].max()))) + 3)
+            if max_x - min_x < 2 or max_y - min_y < 2:
+                continue
+
+            local_dst = dst - np.array([min_x, min_y], dtype=np.float32)
+            mask = np.zeros((max_y - min_y, max_x - min_x), dtype=np.uint8)
+            cv2.fillConvexPoly(mask, np.round(local_dst).astype(np.int32), 255, lineType=cv2.LINE_AA)
+            triangle_depth = self._interpolate_triangle_depth(local_dst, depth[indexes], mask.shape)
+            if triangle_depth is None:
+                continue
+            roi = canvas[min_y:max_y, min_x:max_x]
+            z_roi = z_buffer[min_y:max_y, min_x:max_x]
+            visible = (mask > 0) & (triangle_depth < z_roi)
+            if not np.any(visible):
+                continue
+            if is_back_facing:
+                mean_depth = float(np.mean(depth[indexes]))
+                shade = int(max(18, min(42, round(30 + mean_depth * 16))))
+                roi[visible] = np.array([shade // 2, shade // 2 + 2, shade], dtype=np.uint8)
+                z_roi[visible] = triangle_depth[visible]
+                continue
+
+            try:
+                matrix = cv2.getAffineTransform(src, local_dst)
+                warped = cv2.warpAffine(
+                    texture,
+                    matrix,
+                    (max_x - min_x, max_y - min_y),
+                    flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REFLECT_101,
+                )
+            except cv2.error:
+                continue
+
+            roi[visible] = warped[visible]
+            z_roi[visible] = triangle_depth[visible]
+
+        bytes_per_line = canvas_width * 3
+        image = QImage(canvas.data, canvas_width, canvas_height, bytes_per_line, QImage.Format.Format_RGB888)
+        return image.copy()
+
+    def _interpolate_triangle_depth(
+        self,
+        projected_triangle: np.ndarray,
+        triangle_depth: np.ndarray,
+        shape: tuple[int, int],
+    ) -> np.ndarray | None:
+        if projected_triangle.shape[0] < 3 or len(triangle_depth) < 3:
+            return None
+        height, width = shape
+        if width <= 0 or height <= 0:
+            return None
+
+        a, b, c = projected_triangle[:3, :2].astype(np.float32)
+        z0, z1, z2 = [float(value) for value in triangle_depth[:3]]
+        denominator = float((b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]))
+        if abs(denominator) < 1e-6:
+            return None
+
+        yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+        w0 = ((b[1] - c[1]) * (xx - c[0]) + (c[0] - b[0]) * (yy - c[1])) / denominator
+        w1 = ((c[1] - a[1]) * (xx - c[0]) + (a[0] - c[0]) * (yy - c[1])) / denominator
+        w2 = 1.0 - w0 - w1
+        return (w0 * z0 + w1 * z1 + w2 * z2).astype(np.float32, copy=False)
+
+    def _build_texture_triangles(self) -> list[tuple[int, int, int]]:
+        if self._texture_triangles is not None:
+            return self._texture_triangles
+        if self.points is None or self.texture_rgb is None:
+            self._texture_triangles = []
+            return self._texture_triangles
+
+        topology_triangles = self._mediapipe_tesselation_triangles(len(self.points))
+        if topology_triangles:
+            self._texture_triangles = topology_triangles
+            return self._texture_triangles
+
+        texture_height, texture_width = self.texture_rgb.shape[:2]
+        if texture_width < 2 or texture_height < 2:
+            self._texture_triangles = []
+            return self._texture_triangles
+
+        raw_points = self.points[:, :2].astype(np.float32, copy=True)
+        valid_indexes: list[int] = []
+        valid_points: list[tuple[float, float]] = []
+        for index, (x, y) in enumerate(raw_points):
+            if not math.isfinite(float(x)) or not math.isfinite(float(y)):
+                continue
+            clamped_x = min(max(float(x), 0.01), max(0.01, texture_width - 1.01))
+            clamped_y = min(max(float(y), 0.01), max(0.01, texture_height - 1.01))
+            valid_indexes.append(index)
+            valid_points.append((clamped_x, clamped_y))
+
+        if len(valid_points) < 3:
+            self._texture_triangles = []
+            return self._texture_triangles
+
+        try:
+            subdiv = cv2.Subdiv2D((0, 0, texture_width, texture_height))
+            for point in valid_points:
+                subdiv.insert(point)
+            raw_triangles = subdiv.getTriangleList()
+        except cv2.error:
+            self._texture_triangles = []
+            return self._texture_triangles
+
+        point_array = np.asarray(valid_points, dtype=np.float32)
+        triangles: list[tuple[int, int, int]] = []
+        seen: set[tuple[int, int, int]] = set()
+        for raw_triangle in raw_triangles:
+            coords = np.asarray(raw_triangle, dtype=np.float32).reshape(3, 2)
+            if (
+                np.any(coords[:, 0] < -0.5)
+                or np.any(coords[:, 0] > texture_width + 0.5)
+                or np.any(coords[:, 1] < -0.5)
+                or np.any(coords[:, 1] > texture_height + 0.5)
+            ):
+                continue
+            indexes: list[int] = []
+            for coord in coords:
+                distances = np.sum((point_array - coord) ** 2, axis=1)
+                nearest_position = int(np.argmin(distances))
+                if float(distances[nearest_position]) > 9.0:
+                    indexes = []
+                    break
+                indexes.append(valid_indexes[nearest_position])
+            if len(set(indexes)) != 3:
+                continue
+            triangle = tuple(indexes)
+            key = tuple(sorted(triangle))
+            if key in seen:
+                continue
+            seen.add(key)
+            triangles.append(triangle)
+
+        self._texture_triangles = triangles
+        return self._texture_triangles
+
+    def _mediapipe_tesselation_triangles(self, landmark_count: int) -> list[tuple[int, int, int]]:
+        try:
+            from mediapipe.tasks.python.vision import face_landmarker
+        except Exception:
+            return []
+
+        connections = face_landmarker.FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION
+        triangles: list[tuple[int, int, int]] = []
+        seen: set[tuple[int, int, int]] = set()
+
+        def add_triangle(indexes: list[int] | tuple[int, int, int]) -> None:
+            if len(indexes) != 3 or any(index < 0 or index >= landmark_count for index in indexes):
+                return
+            if len(set(indexes)) != 3:
+                return
+            key = tuple(sorted(indexes))
+            if key in seen:
+                return
+            seen.add(key)
+            triangles.append((int(indexes[0]), int(indexes[1]), int(indexes[2])))
+
+        for offset in range(0, len(connections) - 2, 3):
+            trio = connections[offset : offset + 3]
+            indexes = [int(trio[0].start), int(trio[0].end), int(trio[1].end)]
+            if len(set(indexes)) != 3:
+                ordered: list[int] = []
+                for connection in trio:
+                    for value in (int(connection.start), int(connection.end)):
+                        if value not in ordered:
+                            ordered.append(value)
+                indexes = ordered[:3]
+            add_triangle(indexes)
+
+        self._append_eye_region_triangles(
+            triangles,
+            seen,
+            landmark_count,
+            eye_loop=[33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
+            iris_indexes=[468, 469, 470, 471, 472],
+        )
+        self._append_eye_region_triangles(
+            triangles,
+            seen,
+            landmark_count,
+            eye_loop=[263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466],
+            iris_indexes=[473, 474, 475, 476, 477],
+        )
+        self._append_local_region_triangles(
+            triangles,
+            seen,
+            landmark_count,
+            indexes=[
+                168,
+                6,
+                197,
+                195,
+                5,
+                4,
+                1,
+                19,
+                94,
+                2,
+                98,
+                97,
+                326,
+                327,
+                294,
+                278,
+                344,
+                440,
+                275,
+                45,
+                220,
+                115,
+                48,
+                64,
+            ],
+            min_area=0.35,
+        )
+        return triangles
+
+    def _append_eye_region_triangles(
+        self,
+        triangles: list[tuple[int, int, int]],
+        seen: set[tuple[int, int, int]],
+        landmark_count: int,
+        *,
+        eye_loop: list[int],
+        iris_indexes: list[int],
+    ) -> None:
+        if self.points is None:
+            return
+        indexes = [index for index in [*eye_loop, *iris_indexes] if 0 <= index < landmark_count]
+        if len(indexes) < 6:
+            return
+
+        def add_triangle(triangle: list[int] | tuple[int, int, int]) -> None:
+            if len(triangle) != 3 or any(index < 0 or index >= landmark_count for index in triangle):
+                return
+            if len(set(triangle)) != 3:
+                return
+            source = self.points[list(triangle), :2]
+            if self._triangle_area(source) < 0.25:
+                return
+            key = tuple(sorted(int(index) for index in triangle))
+            if key in seen:
+                return
+            seen.add(key)
+            triangles.append((int(triangle[0]), int(triangle[1]), int(triangle[2])))
+
+        if len(iris_indexes) >= 5 and all(0 <= index < landmark_count for index in iris_indexes[:5]):
+            center = iris_indexes[0]
+            ring = iris_indexes[1:5]
+            for position, current in enumerate(ring):
+                add_triangle((center, current, ring[(position + 1) % len(ring)]))
+
+        local_triangles = self._local_delaunay_triangles(indexes)
+        for triangle in local_triangles:
+            add_triangle(triangle)
+
+    def _append_local_region_triangles(
+        self,
+        triangles: list[tuple[int, int, int]],
+        seen: set[tuple[int, int, int]],
+        landmark_count: int,
+        *,
+        indexes: list[int],
+        min_area: float = 0.25,
+    ) -> None:
+        if self.points is None:
+            return
+        valid_indexes = [index for index in indexes if 0 <= index < landmark_count]
+        if len(valid_indexes) < 3:
+            return
+        for triangle in self._local_delaunay_triangles(valid_indexes):
+            if len(set(triangle)) != 3:
+                continue
+            source = self.points[list(triangle), :2]
+            if self._triangle_area(source) < min_area:
+                continue
+            key = tuple(sorted(int(index) for index in triangle))
+            if key in seen:
+                continue
+            seen.add(key)
+            triangles.append((int(triangle[0]), int(triangle[1]), int(triangle[2])))
+
+    def _local_delaunay_triangles(self, indexes: list[int]) -> list[tuple[int, int, int]]:
+        if self.points is None or len(indexes) < 3:
+            return []
+        source = self.points[indexes, :2].astype(np.float32, copy=True)
+        if not np.isfinite(source).all():
+            return []
+        min_x = float(source[:, 0].min())
+        min_y = float(source[:, 1].min())
+        max_x = float(source[:, 0].max())
+        max_y = float(source[:, 1].max())
+        if max_x - min_x < 2.0 or max_y - min_y < 2.0:
+            return []
+
+        pad = 4.0
+        rect = (
+            int(math.floor(min_x - pad)),
+            int(math.floor(min_y - pad)),
+            int(math.ceil(max_x - min_x + pad * 2.0)),
+            int(math.ceil(max_y - min_y + pad * 2.0)),
+        )
+        if rect[2] <= 0 or rect[3] <= 0:
+            return []
+
+        try:
+            subdiv = cv2.Subdiv2D(rect)
+            for point in source:
+                subdiv.insert((float(point[0]), float(point[1])))
+            raw_triangles = subdiv.getTriangleList()
+        except cv2.error:
+            return []
+
+        triangles: list[tuple[int, int, int]] = []
+        for raw_triangle in raw_triangles:
+            coords = np.asarray(raw_triangle, dtype=np.float32).reshape(3, 2)
+            triangle: list[int] = []
+            for coord in coords:
+                distances = np.sum((source - coord) ** 2, axis=1)
+                nearest_position = int(np.argmin(distances))
+                if float(distances[nearest_position]) > 9.0:
+                    triangle = []
+                    break
+                triangle.append(indexes[nearest_position])
+            if len(set(triangle)) == 3:
+                triangles.append((triangle[0], triangle[1], triangle[2]))
+        return triangles
+
+    def _triangle_area(self, points: np.ndarray) -> float:
+        if points.shape[0] < 3:
+            return 0.0
+        return abs(self._signed_triangle_area(points)) * 0.5
+
+    def _signed_triangle_area(self, points: np.ndarray) -> float:
+        if points.shape[0] < 3:
+            return 0.0
+        a, b, c = points[:3, :2]
+        return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+
+    def _triangle_is_back_facing(self, source: np.ndarray, projected: np.ndarray) -> bool:
+        del source, projected
+        front_factor = math.cos(self.yaw) * math.cos(self.pitch)
+        return front_factor < -0.12
+
+    def _clean_points(self, points: list | None) -> np.ndarray | None:
+        if not points:
+            return None
+        try:
+            arr = np.asarray(points, dtype=np.float32)
+        except (TypeError, ValueError):
+            return None
+        if arr.ndim != 2 or arr.shape[1] < 3 or arr.shape[0] < 3:
+            return None
+        arr = arr[:, :3]
+        if not np.isfinite(arr).all():
+            return None
+        return arr
+
+
 def table_item(value: object) -> QTableWidgetItem:
     item = QTableWidgetItem(str(value))
     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
     return item
+
+
+def identity_result_summary(result: IdentityResult | None) -> str:
+    if result is None or not result.candidates:
+        return "Identity: unknown"
+    best = result.candidates[0]
+    return (
+        f"Identity: {result.decision} - {best.profile.person_name} "
+        f"(score {best.score:.4f}, margin {best.margin:.4f}, confidence {best.confidence * 100:.1f}%)"
+    )
+
+
+def identity_candidate_person(result: IdentityResult | None) -> str:
+    if result is None or result.decision not in {"confirmed", "review"} or not result.candidates:
+        return ""
+    return result.candidates[0].profile.person_name
+
+
+def identity_candidate_decision(result: IdentityResult | None) -> str:
+    return result.decision if result is not None else "unknown"
+
+
+def identity_candidate_confidence(result: IdentityResult | None) -> str:
+    if result is None or not result.candidates:
+        return ""
+    return f"{result.candidates[0].confidence * 100:.1f}%"
 
 
 class StudioPage(QWidget):
@@ -1055,6 +1710,12 @@ class LibraryPage(StudioPage):
         super().__init__(window)
         self.records = []
         self.selected_record_id: int | None = None
+        self.ai_suggestion_generation = 0
+        self.ai_identity_result: IdentityResult | None = None
+        self.ai_suggested_person = ""
+        self.pending_landmarks3d_record_id: int | None = None
+        self.pending_face_mesh_record_id: int | None = None
+        self.face_mesh_inflight_ids: set[int] = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
@@ -1164,6 +1825,26 @@ class LibraryPage(StudioPage):
         self.preview = make_preview_label("Select a face")
         self.preview.setMinimumSize(320, 320)
         self.preview_focus = make_focus_button(self.preview)
+        self.landmark3d_view = Landmark3DView()
+        self.face_mesh_view = Landmark3DView()
+        self.face_mesh_mode = QComboBox()
+        self.face_mesh_mode.addItem("Points", "points")
+        self.face_mesh_mode.addItem("Textured", "textured")
+        self.face_mesh_mode.currentIndexChanged.connect(self.on_face_mesh_mode_changed)
+        dense_mesh_panel = QWidget()
+        dense_mesh_layout = QVBoxLayout(dense_mesh_panel)
+        dense_mesh_layout.setContentsMargins(0, 0, 0, 0)
+        dense_mesh_layout.setSpacing(6)
+        dense_mesh_controls = QHBoxLayout()
+        dense_mesh_controls.setContentsMargins(6, 4, 6, 0)
+        dense_mesh_controls.addWidget(QLabel("View"))
+        dense_mesh_controls.addWidget(self.face_mesh_mode, 1)
+        dense_mesh_layout.addLayout(dense_mesh_controls)
+        dense_mesh_layout.addWidget(self.face_mesh_view, 1)
+        visual_tabs = QTabWidget()
+        visual_tabs.addTab(make_focus_overlay(self.preview, self.preview_focus), "Image")
+        visual_tabs.addTab(self.landmark3d_view, "3D Landmarks")
+        visual_tabs.addTab(dense_mesh_panel, "Dense Mesh")
         metadata_box = QGroupBox("Selected Face")
         metadata_form = QFormLayout(metadata_box)
         self.person_edit = QLineEdit()
@@ -1215,7 +1896,7 @@ class LibraryPage(StudioPage):
         tabs.addTab(metadata_box, "Selected")
         tabs.addTab(batch_box, "Batch")
         tabs.addTab(activity_box, "Activity")
-        right.addWidget(make_focus_overlay(self.preview, self.preview_focus))
+        right.addWidget(visual_tabs, 1)
         right.addWidget(tabs, 1)
         body.addWidget(right_panel, 0)
         layout.addLayout(body, 1)
@@ -1334,6 +2015,9 @@ class LibraryPage(StudioPage):
         if not path:
             self.table.setRowCount(0)
             set_image(self.preview, None, "No database")
+            self.landmark3d_view.set_message("No database")
+            self.face_mesh_view.set_texture_image(None)
+            self.face_mesh_view.set_message("No database")
             return
         try:
             records, metadata = load_records(
@@ -1354,6 +2038,12 @@ class LibraryPage(StudioPage):
 
         self.records = records
         self.table.setRowCount(len(records))
+        if not records:
+            self.selected_record_id = None
+            set_image(self.preview, None, "Select a face")
+            self.landmark3d_view.set_message("Select a face")
+            self.face_mesh_view.set_texture_image(None)
+            self.face_mesh_view.set_message("Select a face")
         for row, record in enumerate(records):
             self.table.setItem(row, 0, table_item(record.id))
             self.table.setItem(row, 1, table_item(record.file_name))
@@ -1388,12 +2078,104 @@ class LibraryPage(StudioPage):
         record = self.records[row]
         self.selected_record_id = record.id
         set_record_preview(self.preview, record, self.window.current_database)
+        self.update_landmark3d_view(record)
+        self.update_face_mesh_view(record)
         self.person_edit.setText(record.person_name)
         self.tags_edit.setText(record.tag_text)
         index = self.review_combo.findText(record.review_state)
         self.review_combo.setCurrentIndex(index if index >= 0 else 0)
         self.ignored_check.setChecked(record.ignored)
         self.notes_edit.setPlainText(record.notes)
+
+    def on_face_mesh_mode_changed(self) -> None:
+        mode = str(self.face_mesh_mode.currentData() or "points")
+        self.face_mesh_view.set_render_mode(mode)
+
+    def update_landmark3d_view(self, record: FaceRecord) -> None:
+        if record.landmarks3d:
+            self.pending_landmarks3d_record_id = None
+            self.landmark3d_view.set_points(record.landmarks3d)
+            return
+        if not self.window.current_database:
+            self.landmark3d_view.set_message("No database")
+            return
+        if not record.source_path or not Path(record.source_path).exists():
+            self.landmark3d_view.set_message("3D landmarks unavailable")
+            return
+        self.pending_landmarks3d_record_id = record.id
+        self.landmark3d_view.set_message("Analyzing 3D landmarks...")
+        self.run_task(
+            "Analyzing 3D landmarks...",
+            load_or_build_landmarks3d,
+            lambda result, face_id=record.id: self.on_landmarks3d_ready(face_id, result),
+            self.window.current_database,
+            record,
+            on_progress=None,
+        )
+
+    def on_landmarks3d_ready(self, face_id: int, result: object) -> None:
+        if self.selected_record_id != face_id or self.pending_landmarks3d_record_id != face_id:
+            return
+        self.pending_landmarks3d_record_id = None
+        if result:
+            landmarks3d = result
+            self.landmark3d_view.set_points(landmarks3d)
+            for record in self.records:
+                if record.id == face_id:
+                    record.landmarks3d = landmarks3d  # type: ignore[assignment]
+                    break
+            self.window.set_status(f"3D landmarks ready for face {face_id}.")
+        else:
+            self.landmark3d_view.set_message("3D landmarks unavailable")
+
+    def update_face_mesh_view(self, record: FaceRecord) -> None:
+        self.face_mesh_view.set_texture_image(record_texture_image_from_source(record))
+        self.face_mesh_view.set_render_mode(str(self.face_mesh_mode.currentData() or "points"))
+        if record.face_mesh3d:
+            self.pending_face_mesh_record_id = None
+            self.face_mesh_view.set_points(record.face_mesh3d, edges=[])
+            return
+        if not self.window.current_database:
+            self.face_mesh_view.set_message("No database")
+            return
+        if not record.source_path or not Path(record.source_path).exists():
+            self.face_mesh_view.set_message("Dense mesh unavailable")
+            return
+        self.pending_face_mesh_record_id = record.id
+        self.face_mesh_view.set_message("Analyzing dense mesh...")
+        if record.id in self.face_mesh_inflight_ids:
+            return
+        self.face_mesh_inflight_ids.add(record.id)
+        self.run_task(
+            "Analyzing dense face mesh...",
+            load_or_build_face_mesh3d,
+            lambda result, face_id=record.id: self.on_face_mesh_ready(face_id, result),
+            self.window.current_database,
+            record,
+            on_progress=None,
+        )
+
+    def on_face_mesh_ready(self, face_id: int, result: object) -> None:
+        self.face_mesh_inflight_ids.discard(face_id)
+        if result and not isinstance(result, str):
+            for record in self.records:
+                if record.id == face_id:
+                    record.face_mesh3d = result  # type: ignore[assignment]
+                    break
+
+        if self.selected_record_id != face_id:
+            return
+        if self.pending_face_mesh_record_id == face_id:
+            self.pending_face_mesh_record_id = None
+        if isinstance(result, str):
+            self.face_mesh_view.set_message(result)
+            self.window.set_status(result)
+        elif result:
+            face_mesh3d = result
+            self.face_mesh_view.set_points(face_mesh3d, edges=[])
+            self.window.set_status(f"Dense mesh ready for face {face_id}.")
+        else:
+            self.face_mesh_view.set_message("Dense mesh unavailable")
 
     def save_selected_metadata(self) -> None:
         if not self.window.current_database or self.selected_record_id is None:
@@ -1541,18 +2323,23 @@ class PeoplePage(StudioPage):
         self.filter_text = QLineEdit()
         self.filter_text.setPlaceholderText("person name or notes")
         reload_btn = QPushButton("Reload")
+        train_profiles_btn = QPushButton("Train Identity Profiles")
         reload_btn.clicked.connect(self.reload_people)
+        train_profiles_btn.clicked.connect(self.train_identity_profiles)
         self.filter_text.returnPressed.connect(self.reload_people)
         grid.addWidget(QLabel("Database"), 0, 0)
         grid.addWidget(self.db_path, 0, 1, 1, 4)
         grid.addWidget(reload_btn, 0, 5)
+        grid.addWidget(train_profiles_btn, 0, 6)
         grid.addWidget(QLabel("Filter"), 1, 0)
-        grid.addWidget(self.filter_text, 1, 1, 1, 5)
+        grid.addWidget(self.filter_text, 1, 1, 1, 6)
         layout.addWidget(controls)
 
         body = QHBoxLayout()
-        self.people_table = QTableWidget(0, 5)
-        self.people_table.setHorizontalHeaderLabels(["Name", "Faces", "Avg Q", "Rev", "Ign"])
+        self.people_table = QTableWidget(0, 9)
+        self.people_table.setHorizontalHeaderLabels(
+            ["Name", "Faces", "Avg Q", "Rev", "Ign", "Identity", "Samples", "Proto", "Accept"]
+        )
         self.people_table.verticalHeader().setVisible(False)
         self.people_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.people_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -1562,6 +2349,10 @@ class PeoplePage(StudioPage):
         self.people_table.setColumnWidth(2, 65)
         self.people_table.setColumnWidth(3, 45)
         self.people_table.setColumnWidth(4, 45)
+        self.people_table.setColumnWidth(5, 80)
+        self.people_table.setColumnWidth(6, 70)
+        self.people_table.setColumnWidth(7, 60)
+        self.people_table.setColumnWidth(8, 70)
         self.people_table.horizontalHeader().setStretchLastSection(True)
         body.addWidget(self.people_table, 1)
 
@@ -1601,9 +2392,12 @@ class PeoplePage(StudioPage):
         form.addRow("", merge_btn)
         form.addRow("", clear_btn)
         self.summary = QLabel("No person selected")
+        self.profile_status = QLabel("Identity profile: not trained")
+        self.profile_status.setWordWrap(True)
         right.addWidget(make_focus_overlay(self.preview, self.preview_focus))
         right.addWidget(editor)
         right.addWidget(self.summary)
+        right.addWidget(self.profile_status)
         right.addStretch()
         body.addLayout(right, 1)
         layout.addLayout(body, 1)
@@ -1629,6 +2423,14 @@ class PeoplePage(StudioPage):
             self.people_table.setItem(row, 2, table_item(f"{person.average_quality:.3f}"))
             self.people_table.setItem(row, 3, table_item(person.review_count))
             self.people_table.setItem(row, 4, table_item(person.ignored_count))
+            self.people_table.setItem(row, 5, table_item(person.identity_status or "not trained"))
+            self.people_table.setItem(row, 6, table_item(person.identity_sample_count or ""))
+            self.people_table.setItem(row, 7, table_item(person.identity_prototype_count or ""))
+            self.people_table.setItem(
+                row,
+                8,
+                table_item(f"{person.identity_accept_threshold:.3f}" if person.identity_accept_threshold else ""),
+            )
         self.refresh_merge_targets()
         self.member_table.setRowCount(0)
         self.current_person = None
@@ -1657,6 +2459,39 @@ class PeoplePage(StudioPage):
             f"{person.name}: {person.face_count} face(s), {person.review_count} review item(s), "
             f"avg quality {person.average_quality:.3f}"
         )
+        if person.identity_status:
+            self.profile_status.setText(
+                f"Identity profile: {person.identity_status}, samples {person.identity_sample_count}, "
+                f"prototypes {person.identity_prototype_count}, accept {person.identity_accept_threshold:.3f}"
+            )
+        else:
+            self.profile_status.setText("Identity profile: not trained")
+
+    def train_identity_profiles(self) -> None:
+        if not self.window.current_database:
+            self.show_error("Open or create a database first.")
+            return
+        self.run_task(
+            "Training identity profiles...",
+            rebuild_identity_profiles,
+            self.on_identity_profiles_trained,
+            self.window.current_database,
+        )
+
+    def on_identity_profiles_trained(self, result: object) -> None:
+        summary = result
+        profiles_built = getattr(summary, "profiles_built", 0)
+        weak_profiles = getattr(summary, "weak_profiles", 0)
+        samples_used = getattr(summary, "samples_used", 0)
+        self.window.set_status(
+            f"Identity profiles trained: {profiles_built} profile(s), {weak_profiles} weak, {samples_used} sample(s)."
+        )
+        messages = list(getattr(summary, "messages", []) or [])
+        if messages:
+            self.summary.setText("\n".join(messages[:6]))
+        self.reload_people()
+        self.window.search_page.refresh_filter_options()
+        self.window.review_page.reload_records()
 
     def load_members(self, person: PersonSummary) -> None:
         if not self.window.current_database:
@@ -1789,6 +2624,7 @@ class SearchPage(StudioPage):
         self.search_generation = 0
         self.active_search_generation = 0
         self.hits: list[SearchHit] = []
+        self.identity_result: IdentityResult | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
@@ -1873,6 +2709,20 @@ class SearchPage(StudioPage):
         previews.addWidget(make_focus_overlay(self.result_preview, self.result_focus), 1)
         body.addWidget(preview_panel, 0)
 
+        results_panel = QWidget()
+        results_layout = QVBoxLayout(results_panel)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(8)
+        self.identity_label = QLabel("Identity: not searched")
+        self.identity_label.setWordWrap(True)
+        self.identity_table = QTableWidget(0, 6)
+        self.identity_table.setHorizontalHeaderLabels(["Rank", "Person", "Decision", "Score", "Confidence", "Evidence"])
+        self.identity_table.verticalHeader().setVisible(False)
+        self.identity_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.identity_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.identity_table.setMaximumHeight(120)
+        self.identity_table.horizontalHeader().setStretchLastSection(True)
+        self.identity_table.itemSelectionChanged.connect(self.show_selected_identity_evidence)
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             ["Rank", "ID", "Name", "Person", "Tags", "Cosine", "Similarity", "Quality"]
@@ -1882,7 +2732,10 @@ class SearchPage(StudioPage):
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self.show_selected_result)
-        body.addWidget(self.table, 1)
+        results_layout.addWidget(self.identity_label)
+        results_layout.addWidget(self.identity_table)
+        results_layout.addWidget(self.table, 1)
+        body.addWidget(results_panel, 1)
         layout.addLayout(body, 1)
 
     def open_database(self) -> None:
@@ -1913,6 +2766,9 @@ class SearchPage(StudioPage):
         self.query_face_list.clear()
         self.query_face = None
         self.table.setRowCount(0)
+        self.identity_table.setRowCount(0)
+        self.identity_label.setText("Identity: not searched")
+        self.identity_result = None
         self.hits = []
         set_image(self.result_preview, None, "Result")
         try:
@@ -1975,6 +2831,9 @@ class SearchPage(StudioPage):
         self.active_search_generation = generation
         self.hits = []
         self.table.setRowCount(0)
+        self.identity_table.setRowCount(0)
+        self.identity_label.setText("Identity: searching...")
+        self.identity_result = None
 
         def task(progress=None) -> dict[str, object]:
             primary = PrimaryFace(face=selected_face, detected_count=detected_count)
@@ -1993,7 +2852,14 @@ class SearchPage(StudioPage):
                 include_ignored=self.include_ignored.isChecked(),
                 progress=tagged_progress,
             )
-            return {"generation": generation, "primary": primary, "hits": hits, "metadata": metadata}
+            identity = identify_person(database_path, primary.face.embedding, top_k=5)
+            return {
+                "generation": generation,
+                "primary": primary,
+                "hits": hits,
+                "metadata": metadata,
+                "identity": identity,
+            }
 
         self.current_search_database = database_path
         self.run_task(
@@ -2041,6 +2907,9 @@ class SearchPage(StudioPage):
         self.active_search_generation = 0
         self.query_face = data["primary"]
         self.hits = list(data["hits"])
+        identity = data.get("identity")
+        self.identity_result = identity if isinstance(identity, IdentityResult) else None
+        self.populate_identity_result(self.identity_result)
         self.query_preview.set_faces(self.query_faces, self.selected_query_index)
         self.table.setRowCount(len(self.hits))
         for row, hit in enumerate(self.hits):
@@ -2061,6 +2930,39 @@ class SearchPage(StudioPage):
             f"Search complete: {len(self.hits)} result(s). "
             f"Query quality {self.query_face.face.quality_score:.3f}"
         )
+
+    def populate_identity_result(self, result: IdentityResult | None) -> None:
+        self.identity_label.setText(identity_result_summary(result))
+        candidates = list(result.candidates if result else [])
+        self.identity_table.setRowCount(len(candidates))
+        for row, candidate in enumerate(candidates):
+            self.identity_table.setItem(row, 0, table_item(row + 1))
+            self.identity_table.setItem(row, 1, table_item(candidate.profile.person_name))
+            self.identity_table.setItem(row, 2, table_item(result.decision if row == 0 and result else "candidate"))
+            self.identity_table.setItem(row, 3, table_item(f"{candidate.score:.4f}"))
+            self.identity_table.setItem(row, 4, table_item(f"{candidate.confidence * 100:.1f}%"))
+            self.identity_table.setItem(row, 5, table_item(candidate.evidence_face_id or ""))
+        if candidates:
+            self.identity_table.selectRow(0)
+
+    def show_selected_identity_evidence(self) -> None:
+        if not self.identity_result:
+            return
+        selected = self.identity_table.selectionModel().selectedRows()
+        if not selected:
+            return
+        row = selected[0].row()
+        if row >= len(self.identity_result.candidates):
+            return
+        face_id = self.identity_result.candidates[row].evidence_face_id
+        if not face_id:
+            return
+        database_path = self.db_path.text() or self.window.current_database
+        try:
+            preview = load_preview(database_path, face_id)
+            set_image(self.result_preview, preview_png_to_pil(preview) if preview else None, "No preview")
+        except Exception:
+            pass
 
     def show_selected_result(self) -> None:
         selected = self.table.selectionModel().selectedRows()
@@ -2102,6 +3004,9 @@ class ReviewPage(StudioPage):
         super().__init__(window)
         self.records = []
         self.selected_record_id: int | None = None
+        self.ai_suggestion_generation = 0
+        self.ai_identity_result: IdentityResult | None = None
+        self.ai_suggested_person = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
@@ -2175,11 +3080,20 @@ class ReviewPage(StudioPage):
         self.ignored_check = QCheckBox("Ignore in search")
         self.notes_edit = QTextEdit()
         self.notes_edit.setMinimumHeight(100)
+        self.ai_suggestion_label = QLabel("AI Suggested Person: not checked")
+        self.ai_suggestion_label.setWordWrap(True)
+        confirm_ai_btn = QPushButton("Confirm AI Person")
+        reject_ai_btn = QPushButton("Reject AI Suggestion")
+        confirm_ai_btn.clicked.connect(self.confirm_ai_suggestion)
+        reject_ai_btn.clicked.connect(self.reject_ai_suggestion)
         form.addRow("Person", self.person_edit)
         form.addRow("Tags", self.tags_edit)
         form.addRow("Review", self.review_combo)
         form.addRow("", self.ignored_check)
         form.addRow("Notes", self.notes_edit)
+        form.addRow("AI Suggested Person", self.ai_suggestion_label)
+        form.addRow("", confirm_ai_btn)
+        form.addRow("", reject_ai_btn)
         right.addWidget(make_focus_overlay(self.preview, self.preview_focus))
         right.addWidget(editor)
         right.addStretch()
@@ -2231,6 +3145,82 @@ class ReviewPage(StudioPage):
         self.review_combo.setCurrentIndex(index if index >= 0 else 0)
         self.ignored_check.setChecked(record.ignored)
         self.notes_edit.setPlainText(record.notes)
+        self.update_ai_suggestion(record)
+
+    def update_ai_suggestion(self, record: FaceRecord) -> None:
+        if not self.window.current_database:
+            return
+        self.ai_suggestion_generation += 1
+        generation = self.ai_suggestion_generation
+        self.ai_identity_result = None
+        self.ai_suggested_person = ""
+        self.ai_suggestion_label.setText("Checking identity profiles...")
+
+        def task() -> dict[str, object]:
+            result = identify_person(self.window.current_database, record.embedding, top_k=3)
+            return {"generation": generation, "face_id": record.id, "identity": result}
+
+        self.run_task("Checking AI suggested person...", task, self.on_ai_suggestion_ready)
+
+    def on_ai_suggestion_ready(self, result: object) -> None:
+        if not isinstance(result, dict):
+            return
+        generation = int(result.get("generation", 0))
+        face_id = int(result.get("face_id", 0))
+        if generation != self.ai_suggestion_generation or face_id != (self.selected_record_id or 0):
+            return
+        identity = result.get("identity")
+        self.ai_identity_result = identity if isinstance(identity, IdentityResult) else None
+        self.ai_suggested_person = identity_candidate_person(self.ai_identity_result)
+        self.ai_suggestion_label.setText(identity_result_summary(self.ai_identity_result))
+
+    def confirm_ai_suggestion(self) -> None:
+        if not self.window.current_database or self.selected_record_id is None:
+            self.show_error("Select a review item first.")
+            return
+        if not self.ai_suggested_person:
+            self.show_error("No AI suggested person is available.")
+            return
+        person_name = self.ai_suggested_person
+        face_id = int(self.selected_record_id)
+
+        def task() -> str:
+            assign_person(self.window.current_database, face_id, person_name)
+            update_review(self.window.current_database, face_id, ignored=False, review_state="reviewed")
+            rebuild_identity_profiles(self.window.current_database)
+            return person_name
+
+        self.run_task("Confirming AI suggested person...", task, self.on_ai_suggestion_confirmed)
+
+    def on_ai_suggestion_confirmed(self, result: object) -> None:
+        person_name = str(result)
+        self.window.set_status(f"Confirmed AI suggested person: {person_name}.")
+        self.reload_records()
+        self.window.overview_page.reload_summary()
+        self.window.people_page.reload_people()
+        self.window.library_page.reload_records()
+        self.window.search_page.refresh_filter_options()
+
+    def reject_ai_suggestion(self) -> None:
+        record = self.current_record()
+        if not record or not self.window.current_database:
+            self.show_error("Select a review item first.")
+            return
+        if not self.ai_suggested_person:
+            self.show_error("No AI suggested person is available.")
+            return
+        note = self.notes_edit.toPlainText().strip()
+        rejection = f"AI suggestion rejected: {self.ai_suggested_person}"
+        if rejection not in note:
+            note = f"{note}\n{rejection}".strip()
+        try:
+            update_review(self.window.current_database, record.id, notes=note)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self.notes_edit.setPlainText(note)
+        self.ai_suggestion_label.setText(f"Rejected: {self.ai_suggested_person}")
+        self.window.set_status(f"Rejected AI suggestion for face {record.id}.")
 
     def save_selected_metadata(self) -> None:
         if not self.window.current_database or self.selected_record_id is None:
@@ -2728,6 +3718,7 @@ class CameraPage(StudioPage):
         self.latest_matched_face_indexes: set[int] = set()
         self.latest_faces_at = 0.0
         self.latest_database = ""
+        self.identity_vote_history: dict[int, list[str]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
@@ -2803,9 +3794,21 @@ class CameraPage(StudioPage):
         self.match_focus = make_focus_button(self.match_preview)
         self.match_status = QLabel("No camera result")
         self.match_status.setWordWrap(True)
-        self.match_table = QTableWidget(0, 7)
+        self.match_table = QTableWidget(0, 11)
         self.match_table.setHorizontalHeaderLabels(
-            ["Face", "ID", "Name", "Person", "Cosine", "Similarity", "Quality"]
+            [
+                "Face",
+                "Identity",
+                "Decision",
+                "Conf",
+                "Evidence",
+                "ID",
+                "Name",
+                "Person",
+                "Cosine",
+                "Similarity",
+                "Quality",
+            ]
         )
         self.match_table.verticalHeader().setVisible(False)
         self.match_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -2848,6 +3851,7 @@ class CameraPage(StudioPage):
         self.capture = capture
         self.latest_faces = []
         self.latest_matched_face_indexes = set()
+        self.identity_vote_history = {}
         self.processing_frame = False
         self.last_process_at = 0.0
         self.camera_timer.start()
@@ -2905,7 +3909,10 @@ class CameraPage(StudioPage):
             recognized_faces = get_engine(prefer_gpu=True).extract_faces_from_bgr(recognition_frame, "camera")
             faces = scale_camera_faces_to_frame(recognized_faces, frame_for_processing, scale_x, scale_y)
             rows: list[dict[str, object]] = []
+            identities: list[dict[str, object]] = []
             for face_index, face in enumerate(faces):
+                identity = identify_person(database_path, face.embedding, top_k=3)
+                identities.append({"face_index": face_index, "identity": identity})
                 hits, _ = search_database(
                     database_path,
                     face.embedding,
@@ -2915,7 +3922,13 @@ class CameraPage(StudioPage):
                 )
                 for rank, hit in enumerate(hits, start=1):
                     rows.append({"face_index": face_index, "rank": rank, "hit": hit})
-            return {"database": database_path, "frame": frame_for_processing, "faces": faces, "rows": rows}
+            return {
+                "database": database_path,
+                "frame": frame_for_processing,
+                "faces": faces,
+                "rows": rows,
+                "identities": identities,
+            }
 
         self.window.run_task(
             "Recognizing camera frame...",
@@ -2938,38 +3951,129 @@ class CameraPage(StudioPage):
         frame = result.get("frame")
         faces = list(result.get("faces", []))
         rows = list(result.get("rows", []))
+        identity_rows = list(result.get("identities", []))
+        identity_results: dict[int, IdentityResult] = {}
+        for row in identity_rows:
+            if not isinstance(row, dict):
+                continue
+            identity = row.get("identity")
+            if isinstance(identity, IdentityResult):
+                identity_results[int(row.get("face_index", 0))] = identity
         self.latest_faces = faces
-        self.latest_matched_face_indexes = {int(row["face_index"]) for row in rows if row.get("hit") is not None}
+        self.latest_matched_face_indexes = {
+            int(row["face_index"])
+            for row in rows
+            if row.get("hit") is not None
+        }
+        self.latest_matched_face_indexes.update(
+            face_index
+            for face_index, identity in identity_results.items()
+            if identity.decision in {"confirmed", "review"} and identity.candidates
+        )
         self.latest_faces_at = time.monotonic()
+        self.identity_vote_history = {
+            face_index: history
+            for face_index, history in self.identity_vote_history.items()
+            if face_index < len(faces)
+        }
         if frame is not None:
             self.camera_preview.set_preview_image(
                 draw_camera_faces(frame, faces, self.latest_matched_face_indexes),
                 "Camera",
             )
-        self.update_match_results(database_path, faces, rows)
+        self.update_match_results(database_path, faces, rows, identity_results)
 
-    def update_match_results(self, database_path: str, faces: list[AnalyzedFace], rows: list[dict[str, object]]) -> None:
-        rows.sort(key=lambda row: getattr(row.get("hit"), "cosine", -2.0), reverse=True)
-        self.match_table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
+    def update_match_results(
+        self,
+        database_path: str,
+        faces: list[AnalyzedFace],
+        rows: list[dict[str, object]],
+        identity_results: dict[int, IdentityResult],
+    ) -> None:
+        rows_by_face: dict[int, list[dict[str, object]]] = {}
+        for row in rows:
+            rows_by_face.setdefault(int(row.get("face_index", 0)), []).append(row)
+        for face_rows in rows_by_face.values():
+            face_rows.sort(key=lambda row: getattr(row.get("hit"), "cosine", -2.0), reverse=True)
+
+        display_rows: list[dict[str, object]] = []
+        for face_index, _face in enumerate(faces):
+            face_rows = rows_by_face.get(face_index) or []
+            if face_rows:
+                display_rows.extend(face_rows)
+            else:
+                display_rows.append({"face_index": face_index, "rank": 0, "hit": None})
+
+        smoothed_names = {
+            face_index: self.smoothed_identity_name(face_index, identity_results.get(face_index))
+            for face_index in range(len(faces))
+        }
+        self.match_table.setRowCount(len(display_rows))
+        best_identity_row: tuple[int, float, int, int, IdentityResult] | None = None
+        best_hit_row: dict[str, object] | None = None
+        for row_index, row in enumerate(display_rows):
+            face_index = int(row.get("face_index", 0))
             hit = row.get("hit")
-            if not isinstance(hit, SearchHit):
-                continue
-            self.match_table.setItem(row_index, 0, table_item(int(row["face_index"]) + 1))
-            self.match_table.setItem(row_index, 1, table_item(hit.record.id))
-            self.match_table.setItem(row_index, 2, table_item(hit.record.file_name))
-            self.match_table.setItem(row_index, 3, table_item(hit.record.person_name))
-            self.match_table.setItem(row_index, 4, table_item(f"{hit.cosine:.4f}"))
-            self.match_table.setItem(row_index, 5, table_item(f"{hit.similarity:.2f}%"))
-            self.match_table.setItem(row_index, 6, table_item(f"{hit.record.quality_score:.3f}"))
+            identity = identity_results.get(face_index)
+            identity_name = smoothed_names.get(face_index, "")
+            decision = identity.decision if identity is not None else "unknown"
+            candidate = identity.candidates[0] if identity and identity.candidates else None
+            confidence = f"{candidate.confidence * 100:.1f}%" if candidate else ""
+            evidence = candidate.evidence_face_id if candidate else ""
+            if identity_name and candidate and identity_name != candidate.profile.person_name:
+                decision = "smoothed"
 
-        if rows:
-            best = rows[0]["hit"]
+            self.match_table.setItem(row_index, 0, table_item(face_index + 1))
+            self.match_table.setItem(row_index, 1, table_item(identity_name or ""))
+            self.match_table.setItem(row_index, 2, table_item(decision if identity_name else "unknown"))
+            self.match_table.setItem(row_index, 3, table_item(confidence))
+            self.match_table.setItem(row_index, 4, table_item(evidence))
+            if isinstance(hit, SearchHit):
+                self.match_table.setItem(row_index, 5, table_item(hit.record.id))
+                self.match_table.setItem(row_index, 6, table_item(hit.record.file_name))
+                self.match_table.setItem(row_index, 7, table_item(hit.record.person_name))
+                self.match_table.setItem(row_index, 8, table_item(f"{hit.cosine:.4f}"))
+                self.match_table.setItem(row_index, 9, table_item(f"{hit.similarity:.2f}%"))
+                self.match_table.setItem(row_index, 10, table_item(f"{hit.record.quality_score:.3f}"))
+                if best_hit_row is None or hit.cosine > getattr(best_hit_row.get("hit"), "cosine", -2.0):
+                    best_hit_row = row
+            else:
+                for column in range(5, 11):
+                    self.match_table.setItem(row_index, column, table_item(""))
+
+            if identity is not None and identity.decision in {"confirmed", "review"} and identity.candidates:
+                priority = 2 if identity.decision == "confirmed" else 1
+                identity_key = (priority, identity.candidates[0].score)
+                if best_identity_row is None or identity_key > (best_identity_row[0], best_identity_row[1]):
+                    best_identity_row = (priority, identity.candidates[0].score, row_index, face_index, identity)
+
+        if best_identity_row is not None:
+            _priority, _score, row_index, face_index, identity = best_identity_row
+            candidate = identity.candidates[0]
+            if candidate.evidence_face_id:
+                try:
+                    preview = load_preview(database_path, candidate.evidence_face_id)
+                    set_image(self.match_preview, preview_png_to_pil(preview) if preview else None, "No preview")
+                except Exception:
+                    set_image(self.match_preview, None, "No preview")
+            else:
+                set_image(self.match_preview, None, "No preview")
+            self.match_table.selectRow(row_index)
+            self.match_status.setText(
+                f"Face {face_index + 1}: identity {candidate.profile.person_name} "
+                f"({identity.decision}, confidence {candidate.confidence * 100:.1f}%, "
+                f"score {candidate.score:.4f})"
+            )
+            self.window.set_status(self.match_status.text())
+            return
+
+        if best_hit_row is not None:
+            best = best_hit_row.get("hit")
             if isinstance(best, SearchHit):
                 set_record_preview(self.match_preview, best.record, database_path)
                 self.match_table.selectRow(0)
                 self.match_status.setText(
-                    f"Face {int(rows[0]['face_index']) + 1}: best match {best.record.file_name}, "
+                    f"Face {int(best_hit_row['face_index']) + 1}: best match {best.record.file_name}, "
                     f"{best.similarity:.2f}%"
                 )
                 self.window.set_status(self.match_status.text())
@@ -2981,6 +4085,27 @@ class CameraPage(StudioPage):
         else:
             self.match_status.setText("No face detected in the current camera frame.")
         self.window.set_status(self.match_status.text())
+
+    def smoothed_identity_name(self, face_index: int, identity: IdentityResult | None) -> str:
+        current = ""
+        if identity is not None and identity.decision in {"confirmed", "review"} and identity.candidates:
+            current = identity.candidates[0].profile.person_name
+        history = self.identity_vote_history.setdefault(face_index, [])
+        history.append(current)
+        if len(history) > 6:
+            del history[:-6]
+        votes: dict[str, tuple[int, int]] = {}
+        for position, name in enumerate(history):
+            if not name:
+                continue
+            count, _latest = votes.get(name, (0, -1))
+            votes[name] = (count + 1, position)
+        if not votes:
+            return current
+        stable_name, (stable_count, _latest) = max(votes.items(), key=lambda item: (item[1][0], item[1][1]))
+        if stable_count >= 2:
+            return stable_name
+        return current
 
 
 class RuntimePage(StudioPage):
@@ -3455,6 +4580,33 @@ class FscStudioWindow(QMainWindow):
                 border: 1px solid #cfd7e3;
                 border-radius: 8px;
                 color: #6b7280;
+            }
+            QTabWidget::pane {
+                background: #ffffff;
+                border: 1px solid #cfd7e3;
+                border-radius: 8px;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: #e9edf3;
+                color: #243141;
+                border: 1px solid #c8d2de;
+                border-bottom-color: #cfd7e3;
+                border-top-left-radius: 5px;
+                border-top-right-radius: 5px;
+                padding: 7px 14px;
+                margin-right: 3px;
+                font-weight: 600;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #111827;
+                border-color: #93a4b8;
+                border-bottom-color: #ffffff;
+            }
+            QTabBar::tab:!selected:hover {
+                background: #dbe3ec;
+                color: #111827;
             }
             #Metric {
                 background: #ffffff;

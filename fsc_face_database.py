@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 
 
-DB_FORMAT_VERSION = "4"
+DB_FORMAT_VERSION = "7"
 DEFAULT_EXTENSION = ".fscdb"
 METRIC_NAME = "cosine_normed_embedding"
 DEFAULT_REVIEW_STATE = "open"
@@ -34,6 +34,8 @@ class FaceRecord:
     bbox: list
     kps: list
     landmarks: list | None
+    landmarks3d: list | None
+    face_mesh3d: list | None
     det_score: float
     quality_score: float
     quality: dict
@@ -116,6 +118,18 @@ def connect_database(database_path: str | Path) -> sqlite3.Connection:
         _migrate_v3_to_v4(conn)
         metadata = read_metadata(conn)
         version = metadata.get("format_version")
+    if version == "4":
+        _migrate_v4_to_v5(conn)
+        metadata = read_metadata(conn)
+        version = metadata.get("format_version")
+    if version == "5":
+        _migrate_v5_to_v6(conn)
+        metadata = read_metadata(conn)
+        version = metadata.get("format_version")
+    if version == "6":
+        _migrate_v6_to_v7(conn)
+        metadata = read_metadata(conn)
+        version = metadata.get("format_version")
 
     if version != DB_FORMAT_VERSION:
         conn.close()
@@ -136,6 +150,8 @@ def insert_face(conn: sqlite3.Connection, record: dict[str, object]) -> int:
             bbox_json,
             kps_json,
             landmarks_json,
+            landmarks3d_json,
+            face_mesh3d_json,
             det_score,
             quality_score,
             quality_json,
@@ -146,7 +162,7 @@ def insert_face(conn: sqlite3.Connection, record: dict[str, object]) -> int:
             review_state,
             notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(record.get("file_name", "")),
@@ -156,6 +172,8 @@ def insert_face(conn: sqlite3.Connection, record: dict[str, object]) -> int:
             _json_dump(record.get("bbox", [])),
             _json_dump(record.get("kps", [])),
             _json_dump(record.get("landmarks")),
+            _json_dump(record.get("landmarks3d")),
+            _json_dump(record.get("face_mesh3d")),
             float(record.get("det_score", 0.0)),
             float(record.get("quality_score", 0.0)),
             _json_dump(record.get("quality", {})),
@@ -229,6 +247,30 @@ def load_face_preview(database_path: str | Path, face_id: int) -> bytes | None:
         if row is None:
             return None
         return row["preview_png"]
+    finally:
+        conn.close()
+
+
+def update_face_landmarks3d(database_path: str | Path, face_id: int, landmarks3d: object) -> None:
+    conn = connect_database(database_path)
+    try:
+        conn.execute(
+            "UPDATE faces SET landmarks3d_json = ? WHERE id = ?",
+            (_json_dump(landmarks3d), int(face_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_face_mesh3d(database_path: str | Path, face_id: int, face_mesh3d: object) -> None:
+    conn = connect_database(database_path)
+    try:
+        conn.execute(
+            "UPDATE faces SET face_mesh3d_json = ? WHERE id = ?",
+            (_json_dump(face_mesh3d), int(face_id)),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -515,6 +557,8 @@ def _select_face_records(
             f.bbox_json,
             f.kps_json,
             f.landmarks_json,
+            f.landmarks3d_json,
+            f.face_mesh3d_json,
             f.det_score,
             f.quality_score,
             f.quality_json,
@@ -580,6 +624,8 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             bbox_json TEXT,
             kps_json TEXT,
             landmarks_json TEXT,
+            landmarks3d_json TEXT,
+            face_mesh3d_json TEXT,
             det_score REAL,
             quality_score REAL NOT NULL DEFAULT 0,
             quality_json TEXT,
@@ -598,6 +644,24 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY(face_id, tag_id)
         );
 
+        CREATE TABLE person_identity_profiles (
+            person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+            sample_count INTEGER NOT NULL,
+            prototype_count INTEGER NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            centroid_blob BLOB NOT NULL,
+            prototypes_blob BLOB NOT NULL,
+            accept_threshold REAL NOT NULL,
+            review_threshold REAL NOT NULL,
+            mean_similarity REAL NOT NULL,
+            min_similarity REAL NOT NULL,
+            max_similarity REAL NOT NULL,
+            quality_mean REAL NOT NULL,
+            evidence_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'weak',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX idx_faces_file_name ON faces(file_name);
         CREATE INDEX idx_faces_quality_score ON faces(quality_score);
         CREATE INDEX idx_faces_person_id ON faces(person_id);
@@ -608,6 +672,30 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def create_identity_profile_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS person_identity_profiles (
+            person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+            sample_count INTEGER NOT NULL,
+            prototype_count INTEGER NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            centroid_blob BLOB NOT NULL,
+            prototypes_blob BLOB NOT NULL,
+            accept_threshold REAL NOT NULL,
+            review_threshold REAL NOT NULL,
+            mean_similarity REAL NOT NULL,
+            min_similarity REAL NOT NULL,
+            max_similarity REAL NOT NULL,
+            quality_mean REAL NOT NULL,
+            evidence_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'weak',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
 
 def _default_metadata(extra: dict[str, object] | None) -> dict[str, object]:
@@ -638,6 +726,8 @@ def _row_to_record(row: sqlite3.Row) -> FaceRecord:
         bbox=_json_load(row["bbox_json"], []),
         kps=_json_load(row["kps_json"], []),
         landmarks=_json_load(row["landmarks_json"], None),
+        landmarks3d=_json_load(row["landmarks3d_json"], None),
+        face_mesh3d=_json_load(row["face_mesh3d_json"], None),
         det_score=float(row["det_score"] or 0.0),
         quality_score=float(row["quality_score"] or 0.0),
         quality=_json_load(row["quality_json"], {}),
@@ -733,8 +823,46 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
     write_metadata(
         conn,
         {
-            "format_version": DB_FORMAT_VERSION,
+            "format_version": "4",
             "migrated_from": "3",
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "faces")
+    _add_column_if_missing(conn, columns, "landmarks3d_json", "TEXT")
+    write_metadata(
+        conn,
+        {
+            "format_version": "5",
+            "migrated_from": "4",
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "faces")
+    _add_column_if_missing(conn, columns, "face_mesh3d_json", "TEXT")
+    write_metadata(
+        conn,
+        {
+            "format_version": "6",
+            "migrated_from": "5",
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    create_identity_profile_schema(conn)
+    write_metadata(
+        conn,
+        {
+            "format_version": DB_FORMAT_VERSION,
+            "migrated_from": "6",
             "migrated_at": datetime.now(timezone.utc).isoformat(),
         },
     )
