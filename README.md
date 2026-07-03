@@ -70,6 +70,17 @@ w600k_r50.onnx
 .\.venv312\Scripts\python.exe fsc_studio.py
 ```
 
+## Release Builds
+
+Windows release packaging scripts live in `packaging/`. They build installers with an embedded Python runtime, so end users do not need to install Python.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant universal
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant cpu -OutputRoot release\optimized_cpu
+```
+
+`universal` includes CPU and GPU ONNX Runtime overlays and asks the user which runtime to install after CUDA/NVIDIA detection. Generated installers are written under `release/`, which is intentionally ignored by Git.
+
 ## Data Privacy
 
 Face databases and photos can contain sensitive biometric data. Keep `.fscdb`, `.dtb`, image folders, and generated previews out of public commits.

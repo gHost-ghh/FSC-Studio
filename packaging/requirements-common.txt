@@ -1,0 +1,14 @@
+PySide6-Essentials==6.11.1
+numpy==2.5.0
+opencv-python==4.13.0.92
+Pillow==12.2.0
+onnx==1.22.0
+scikit-image==0.26.0
+scipy==1.18.0
+requests==2.34.2
+tqdm==4.68.3
+flatbuffers==25.12.19
+packaging==26.2
+protobuf==7.35.1
+typing_extensions==4.15.0
+ml_dtypes==0.5.4

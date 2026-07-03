@@ -15,6 +15,8 @@ from PIL import Image, ImageDraw
 PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_ROOT = PROJECT_DIR / "model" / "insightface"
 MODEL_NAME = "buffalo_l"
+FORCE_CPU_ENV = "FSC_FORCE_CPU"
+RUNTIME_MODE_ENV = "FSC_RUNTIME_MODE"
 DEFAULT_CANVAS_IMAGE_SIZE = 396
 
 
@@ -56,6 +58,7 @@ class AnalyzedFace:
 class FaceEngine:
     def __init__(self, prefer_gpu: bool = True) -> None:
         MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+        prefer_gpu = should_prefer_gpu(prefer_gpu)
         self.info = self._load_app(prefer_gpu)
 
     def _load_app(self, prefer_gpu: bool) -> EngineInfo:
@@ -189,6 +192,18 @@ def get_engine(prefer_gpu: bool = True, force_reload: bool = False) -> FaceEngin
     if force_reload or _ENGINE is None:
         _ENGINE = FaceEngine(prefer_gpu=prefer_gpu)
     return _ENGINE
+
+
+def should_prefer_gpu(prefer_gpu: bool = True) -> bool:
+    mode = os.environ.get(RUNTIME_MODE_ENV, "").strip().lower()
+    force_cpu = os.environ.get(FORCE_CPU_ENV, "").strip().lower()
+    if force_cpu in {"1", "true", "yes", "on"}:
+        return False
+    if mode in {"cpu", "force-cpu"}:
+        return False
+    if mode in {"gpu", "cuda", "auto-gpu"}:
+        return True
+    return bool(prefer_gpu)
 
 
 def _add_nvidia_dll_directories() -> list[str]:
