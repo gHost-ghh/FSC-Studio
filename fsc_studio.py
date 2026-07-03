@@ -978,7 +978,7 @@ class Landmark3DView(QWidget):
         depth_span = max(1e-6, max_depth - min_depth)
 
         if self.render_mode == "textured":
-            textured = self._render_textured_mesh(projected, depth, projection_context)
+            textured = self._render_textured_mesh(projected, depth)
             if textured is not None:
                 painter.drawImage(0, 0, textured)
                 painter.setPen(QPen(QColor("#334155"), 1))
@@ -1107,19 +1107,10 @@ class Landmark3DView(QWidget):
         projected[:, 2] = rotated[:, 2]
         return projected
 
-    def _normalized_points_with_context(
-        self,
-        points: np.ndarray,
-        context: tuple[np.ndarray, float, float, float, float],
-    ) -> np.ndarray:
-        center, scale, _, _, _ = context
-        return (points - center.reshape(1, 3)) / scale
-
     def _render_textured_mesh(
         self,
         projected: np.ndarray,
         depth: np.ndarray,
-        projection_context: tuple[np.ndarray, float, float, float, float],
     ) -> QImage | None:
         if self.points is None or self.texture_rgb is None:
             return None
@@ -1133,7 +1124,6 @@ class Landmark3DView(QWidget):
         z_buffer = np.full((canvas_height, canvas_width), np.inf, dtype=np.float32)
         texture = self.texture_rgb
         texture_height, texture_width = texture.shape[:2]
-        self._render_generic_head(canvas, z_buffer, projection_context, depth)
         source_points = self.points[:, :2].astype(np.float32, copy=True)
         source_points[:, 0] = np.clip(source_points[:, 0], 0.0, max(0.0, texture_width - 1.0))
         source_points[:, 1] = np.clip(source_points[:, 1], 0.0, max(0.0, texture_height - 1.0))
@@ -1189,359 +1179,6 @@ class Landmark3DView(QWidget):
         bytes_per_line = canvas_width * 3
         image = QImage(canvas.data, canvas_width, canvas_height, bytes_per_line, QImage.Format.Format_RGB888)
         return image.copy()
-
-    def _render_generic_head(
-        self,
-        canvas: np.ndarray,
-        z_buffer: np.ndarray,
-        projection_context: tuple[np.ndarray, float, float, float, float],
-        face_depth: np.ndarray,
-    ) -> None:
-        if self.points is None or len(self.points) < 10:
-            return
-        normalized_face = self._normalized_points_with_context(self.points, projection_context)
-        vertices, triangles = self._build_generic_head_model(normalized_face)
-        if len(vertices) < 3 or not triangles:
-            return
-
-        projected = self._project_normalized_points(vertices, projection_context)
-        draw_depth = projected[:, 2].astype(np.float32, copy=True)
-        if draw_depth.size and face_depth.size:
-            draw_depth += float(np.max(face_depth)) + 0.025 - float(np.min(draw_depth))
-        self._rasterize_gray_triangles(canvas, z_buffer, projected, draw_depth, triangles)
-
-    def _build_generic_head_model(self, normalized_face: np.ndarray) -> tuple[np.ndarray, list[tuple[int, int, int]]]:
-        face_oval_indexes = [
-            10,
-            338,
-            297,
-            332,
-            284,
-            251,
-            389,
-            356,
-            454,
-            323,
-            361,
-            288,
-            397,
-            365,
-            379,
-            378,
-            400,
-            377,
-            152,
-            148,
-            176,
-            149,
-            150,
-            136,
-            172,
-            58,
-            132,
-            93,
-            234,
-            127,
-            162,
-            21,
-            54,
-            103,
-            67,
-            109,
-        ]
-        min_values = normalized_face.min(axis=0)
-        max_values = normalized_face.max(axis=0)
-        face_width = max(float(max_values[0] - min_values[0]), 0.30)
-        face_height = max(float(max_values[1] - min_values[1]), 0.40)
-        face_depth = max(float(max_values[2] - min_values[2]), 0.18)
-        valid_oval_indexes = [index for index in face_oval_indexes if 0 <= index < len(normalized_face)]
-        if len(valid_oval_indexes) >= 12:
-            face_oval = normalized_face[valid_oval_indexes].astype(np.float32, copy=True)
-        else:
-            face_oval = self._fallback_face_oval(normalized_face, min_values, max_values)
-        face_oval = self._densify_closed_loop(face_oval, subdivisions=3)
-
-        center_x = float((min_values[0] + max_values[0]) * 0.5)
-        center_y = float((min_values[1] + max_values[1]) * 0.5 - face_height * 0.04)
-        center_z = float(np.percentile(normalized_face[:, 2], 76) + face_depth * 0.18)
-
-        head_rx = max(face_width * 0.56, 0.38)
-        head_ry = max(face_height * 0.74, 0.52)
-        head_rz = max(face_width * 0.52, face_depth * 1.10, 0.36)
-        aperture_rx = max(face_width * 0.53, 0.34)
-        aperture_ry = max(face_height * 0.57, 0.40)
-        front_cut_z = center_z + head_rz * 0.04
-
-        vertices: list[tuple[float, float, float]] = []
-        triangles: list[tuple[int, int, int]] = []
-
-        def add_vertex(point: tuple[float, float, float]) -> int:
-            vertices.append(point)
-            return len(vertices) - 1
-
-        def add_loop_quads(inner: list[int], outer: list[int]) -> None:
-            count = min(len(inner), len(outer))
-            if count < 3:
-                return
-            for index in range(count):
-                a = inner[index]
-                b = inner[(index + 1) % count]
-                c = outer[index]
-                d = outer[(index + 1) % count]
-                triangles.append((a, c, b))
-                triangles.append((b, c, d))
-
-        def is_inside_face_aperture(point: tuple[float, float, float]) -> bool:
-            x, y, z = point
-            if z >= front_cut_z:
-                return False
-            dx = (x - center_x) / aperture_rx
-            dy = (y - center_y) / aperture_ry
-            return dx * dx + dy * dy < 1.12
-
-        def append_ellipsoid(
-            center: tuple[float, float, float],
-            radii: tuple[float, float, float],
-            *,
-            lat_steps: int,
-            lon_steps: int,
-            cut_face_opening: bool = False,
-        ) -> None:
-            start = len(vertices)
-            cx, cy, cz = center
-            rx, ry, rz = radii
-            for lat_index in range(lat_steps + 1):
-                lat = -math.pi / 2.0 + math.pi * lat_index / lat_steps
-                cos_lat = math.cos(lat)
-                sin_lat = math.sin(lat)
-                for lon_index in range(lon_steps):
-                    lon = 2.0 * math.pi * lon_index / lon_steps
-                    vertices.append(
-                        (
-                            cx + rx * cos_lat * math.sin(lon),
-                            cy + ry * sin_lat,
-                            cz + rz * cos_lat * math.cos(lon),
-                        )
-                    )
-            for lat_index in range(lat_steps):
-                row = start + lat_index * lon_steps
-                next_row = start + (lat_index + 1) * lon_steps
-                for lon_index in range(lon_steps):
-                    a = row + lon_index
-                    b = row + (lon_index + 1) % lon_steps
-                    c = next_row + lon_index
-                    d = next_row + (lon_index + 1) % lon_steps
-                    for triangle in ((a, c, b), (b, c, d)):
-                        if cut_face_opening:
-                            centroid = tuple(
-                                float(sum(vertices[index][axis] for index in triangle) / 3.0)
-                                for axis in range(3)
-                            )
-                            if is_inside_face_aperture(centroid):
-                                continue
-                        triangles.append(triangle)
-
-        def append_face_transition() -> None:
-            seam: list[int] = []
-            rim: list[int] = []
-            outer: list[int] = []
-            skull: list[int] = []
-            back: list[int] = []
-            half_width = max(face_width * 0.5, 1e-6)
-            half_height = max(face_height * 0.5, 1e-6)
-            for point in face_oval:
-                px, py, pz = [float(value) for value in point[:3]]
-                dx = px - center_x
-                dy = py - center_y
-                side = min(1.0, abs(dx) / half_width)
-                top = min(1.0, max(0.0, -dy / half_height))
-                bottom = min(1.0, max(0.0, dy / half_height))
-                rim_x = center_x + dx * (1.045 + side * 0.035)
-                rim_y = center_y + dy * (1.035 + top * 0.10 + bottom * 0.025) - top * face_height * 0.018
-                outer_x = center_x + dx * (1.16 + side * 0.10)
-                outer_y = center_y + dy * (1.13 + top * 0.24 + bottom * 0.04) - top * face_height * 0.075
-                skull_x = center_x + dx * (1.26 + side * 0.08)
-                skull_y = center_y + dy * (1.18 + top * 0.34 - bottom * 0.10) - top * face_height * 0.14
-                back_x = center_x + dx * (0.54 + side * 0.08)
-                back_y = center_y + dy * (1.02 + top * 0.12 - bottom * 0.28) - top * face_height * 0.08
-                seam_z = pz + face_depth * 0.035
-                rim_z = max(pz + face_depth * 0.09, center_z - head_rz * 0.58)
-                outer_z = max(pz + face_depth * 0.18, center_z - head_rz * 0.18 + side * head_rz * 0.08)
-                skull_z = max(outer_z + head_rz * (0.24 + side * 0.14 + top * 0.08), center_z + head_rz * 0.16)
-                back_z = max(skull_z + head_rz * 0.34, center_z + head_rz * 0.78)
-                seam.append(add_vertex((px, py, seam_z)))
-                rim.append(add_vertex((rim_x, rim_y, rim_z)))
-                outer.append(add_vertex((outer_x, outer_y, outer_z)))
-                skull.append(add_vertex((skull_x, skull_y, skull_z)))
-                back.append(add_vertex((back_x, back_y, back_z)))
-            add_loop_quads(seam, rim)
-            add_loop_quads(rim, outer)
-            add_loop_quads(outer, skull)
-            add_loop_quads(skull, back)
-            back_center = add_vertex((center_x, center_y - face_height * 0.06, center_z + head_rz * 1.05))
-            count = len(back)
-            for index in range(count):
-                triangles.append((back[index], back_center, back[(index + 1) % count]))
-
-        def append_neck() -> None:
-            segments = 18
-            neck_top = float(max_values[1] - face_height * 0.015)
-            neck_bottom = float(max_values[1] + face_height * 0.40)
-            neck_center_z = center_z + head_rz * 0.28
-            ring_specs = [
-                (neck_top, face_width * 0.19, head_rz * 0.19),
-                ((neck_top + neck_bottom) * 0.50, face_width * 0.25, head_rz * 0.22),
-                (neck_bottom, face_width * 0.34, head_rz * 0.27),
-            ]
-            rings: list[list[int]] = []
-            for y, rx, rz in ring_specs:
-                ring: list[int] = []
-                for index in range(segments):
-                    angle = 2.0 * math.pi * index / segments
-                    ring.append(
-                        add_vertex(
-                            (
-                                center_x + rx * math.sin(angle),
-                                y,
-                                neck_center_z + rz * math.cos(angle),
-                            )
-                        )
-                    )
-                rings.append(ring)
-            for index in range(len(rings) - 1):
-                add_loop_quads(rings[index], rings[index + 1])
-
-        def append_ear(side: float) -> None:
-            segments = 20
-            cx = center_x + side * head_rx * 1.30
-            cy = center_y + face_height * 0.01
-            cz = center_z + head_rz * 0.18
-            outer: list[int] = []
-            inner: list[int] = []
-            concha: list[int] = []
-            for index in range(segments):
-                angle = 2.0 * math.pi * index / segments
-                sin_a = math.sin(angle)
-                cos_a = math.cos(angle)
-                outer.append(
-                    add_vertex(
-                        (
-                            cx + side * head_rx * 0.045 * (0.35 + 0.65 * cos_a),
-                            cy + head_ry * 0.255 * sin_a,
-                            cz + head_rz * 0.180 * cos_a,
-                        )
-                    )
-                )
-                inner.append(
-                    add_vertex(
-                        (
-                            cx + side * head_rx * 0.060 * (0.15 + 0.85 * cos_a),
-                            cy + head_ry * 0.155 * sin_a,
-                            cz + head_rz * 0.105 * cos_a - head_rz * 0.018,
-                        )
-                    )
-                )
-                concha.append(
-                    add_vertex(
-                        (
-                            cx + side * head_rx * 0.076 * (0.10 + 0.90 * cos_a),
-                            cy + head_ry * 0.066 * sin_a,
-                            cz + head_rz * 0.045 * cos_a - head_rz * 0.042,
-                        )
-                    )
-                )
-            add_loop_quads(outer, inner)
-            add_loop_quads(inner, concha)
-
-        append_face_transition()
-        append_ear(-1.0)
-        append_ear(1.0)
-        append_neck()
-        return np.asarray(vertices, dtype=np.float32), triangles
-
-    def _densify_closed_loop(self, points: np.ndarray, *, subdivisions: int) -> np.ndarray:
-        if len(points) < 3 or subdivisions <= 1:
-            return points
-        dense: list[np.ndarray] = []
-        count = len(points)
-        for index in range(count):
-            current = points[index]
-            following = points[(index + 1) % count]
-            for step in range(subdivisions):
-                alpha = step / subdivisions
-                dense.append((current * (1.0 - alpha) + following * alpha).astype(np.float32, copy=False))
-        return np.asarray(dense, dtype=np.float32)
-
-    def _fallback_face_oval(
-        self,
-        normalized_face: np.ndarray,
-        min_values: np.ndarray,
-        max_values: np.ndarray,
-    ) -> np.ndarray:
-        del normalized_face
-        center_x = float((min_values[0] + max_values[0]) * 0.5)
-        center_y = float((min_values[1] + max_values[1]) * 0.5)
-        center_z = float((min_values[2] + max_values[2]) * 0.5)
-        rx = max(float(max_values[0] - min_values[0]) * 0.50, 0.20)
-        ry = max(float(max_values[1] - min_values[1]) * 0.50, 0.25)
-        rz = max(float(max_values[2] - min_values[2]) * 0.20, 0.05)
-        points: list[tuple[float, float, float]] = []
-        for index in range(36):
-            angle = -math.pi / 2.0 + 2.0 * math.pi * index / 36.0
-            points.append(
-                (
-                    center_x + rx * math.cos(angle),
-                    center_y + ry * math.sin(angle),
-                    center_z + rz * math.cos(angle),
-                )
-            )
-        return np.asarray(points, dtype=np.float32)
-
-    def _rasterize_gray_triangles(
-        self,
-        canvas: np.ndarray,
-        z_buffer: np.ndarray,
-        projected: np.ndarray,
-        depth: np.ndarray,
-        triangles: list[tuple[int, int, int]],
-    ) -> None:
-        canvas_height, canvas_width = canvas.shape[:2]
-        min_depth = float(np.min(depth)) if depth.size else 0.0
-        max_depth = float(np.max(depth)) if depth.size else 1.0
-        depth_span = max(1e-6, max_depth - min_depth)
-
-        for tri in triangles:
-            indexes = list(tri)
-            if any(index < 0 or index >= len(projected) for index in indexes):
-                continue
-            dst = projected[indexes, :2].astype(np.float32)
-            if self._triangle_area(dst) < 0.35:
-                continue
-            min_x = max(0, int(math.floor(float(dst[:, 0].min()))) - 1)
-            max_x = min(canvas_width, int(math.ceil(float(dst[:, 0].max()))) + 2)
-            min_y = max(0, int(math.floor(float(dst[:, 1].min()))) - 1)
-            max_y = min(canvas_height, int(math.ceil(float(dst[:, 1].max()))) + 2)
-            if max_x - min_x < 2 or max_y - min_y < 2:
-                continue
-
-            local_dst = dst - np.array([min_x, min_y], dtype=np.float32)
-            mask = np.zeros((max_y - min_y, max_x - min_x), dtype=np.uint8)
-            cv2.fillConvexPoly(mask, np.round(local_dst).astype(np.int32), 255, lineType=cv2.LINE_AA)
-            triangle_depth = self._interpolate_triangle_depth(local_dst, depth[indexes], mask.shape)
-            if triangle_depth is None:
-                continue
-
-            roi = canvas[min_y:max_y, min_x:max_x]
-            z_roi = z_buffer[min_y:max_y, min_x:max_x]
-            visible = (mask > 0) & (triangle_depth < z_roi)
-            if not np.any(visible):
-                continue
-
-            mean_depth = float(np.mean(depth[indexes]))
-            depth_ratio = (mean_depth - min_depth) / depth_span
-            shade = int(max(88, min(126, round(118 - depth_ratio * 20))))
-            roi[visible] = np.array([shade, shade, shade], dtype=np.uint8)
-            z_roi[visible] = triangle_depth[visible]
 
     def _project_overlay_landmarks(
         self,
@@ -2278,6 +1915,9 @@ class LibraryPage(StudioPage):
         self.face_mesh_mode.addItem("Points", "points")
         self.face_mesh_mode.addItem("Textured", "textured")
         self.face_mesh_mode.currentIndexChanged.connect(self.on_face_mesh_mode_changed)
+        self.face_mesh_landmarks_check = QCheckBox("3D Landmarks")
+        self.face_mesh_landmarks_check.setChecked(True)
+        self.face_mesh_landmarks_check.toggled.connect(self.on_face_mesh_landmarks_toggled)
         dense_mesh_panel = QWidget()
         dense_mesh_layout = QVBoxLayout(dense_mesh_panel)
         dense_mesh_layout.setContentsMargins(0, 0, 0, 0)
@@ -2286,6 +1926,7 @@ class LibraryPage(StudioPage):
         dense_mesh_controls.setContentsMargins(6, 4, 6, 0)
         dense_mesh_controls.addWidget(QLabel("View"))
         dense_mesh_controls.addWidget(self.face_mesh_mode, 1)
+        dense_mesh_controls.addWidget(self.face_mesh_landmarks_check)
         dense_mesh_layout.addLayout(dense_mesh_controls)
         dense_mesh_layout.addWidget(self.face_mesh_view, 1)
         visual_tabs = QTabWidget()
@@ -2540,6 +2181,17 @@ class LibraryPage(StudioPage):
         mode = str(self.face_mesh_mode.currentData() or "points")
         self.face_mesh_view.set_render_mode(mode)
 
+    def on_face_mesh_landmarks_toggled(self, checked: bool) -> None:
+        if not checked:
+            self.face_mesh_view.set_overlay_points(None)
+            return
+        if self.selected_record_id is None:
+            return
+        for record in self.records:
+            if record.id == self.selected_record_id:
+                self.face_mesh_view.set_overlay_points(record.landmarks3d)
+                return
+
     def update_landmark3d_view(self, record: FaceRecord) -> None:
         if record.landmarks3d:
             self.pending_landmarks3d_record_id = None
@@ -2573,14 +2225,15 @@ class LibraryPage(StudioPage):
                 if record.id == face_id:
                     record.landmarks3d = landmarks3d  # type: ignore[assignment]
                     break
-            self.face_mesh_view.set_overlay_points(landmarks3d)
+            if self.face_mesh_landmarks_check.isChecked():
+                self.face_mesh_view.set_overlay_points(landmarks3d)
             self.window.set_status(f"3D landmarks ready for face {face_id}.")
         else:
             self.landmark3d_view.set_message("3D landmarks unavailable")
 
     def update_face_mesh_view(self, record: FaceRecord) -> None:
         self.face_mesh_view.set_texture_image(record_texture_image_from_source(record))
-        self.face_mesh_view.set_overlay_points(record.landmarks3d)
+        self.face_mesh_view.set_overlay_points(record.landmarks3d if self.face_mesh_landmarks_check.isChecked() else None)
         self.face_mesh_view.set_render_mode(str(self.face_mesh_mode.currentData() or "points"))
         if record.face_mesh3d:
             self.pending_face_mesh_record_id = None
