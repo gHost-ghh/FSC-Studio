@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 
 
-DB_FORMAT_VERSION = "7"
+DB_FORMAT_VERSION = "8"
 DEFAULT_EXTENSION = ".fscdb"
 METRIC_NAME = "cosine_normed_embedding"
 DEFAULT_REVIEW_STATE = "open"
@@ -128,6 +128,10 @@ def connect_database(database_path: str | Path) -> sqlite3.Connection:
         version = metadata.get("format_version")
     if version == "6":
         _migrate_v6_to_v7(conn)
+        metadata = read_metadata(conn)
+        version = metadata.get("format_version")
+    if version == "7":
+        _migrate_v7_to_v8(conn)
         metadata = read_metadata(conn)
         version = metadata.get("format_version")
 
@@ -651,6 +655,14 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             embedding_dim INTEGER NOT NULL,
             centroid_blob BLOB NOT NULL,
             prototypes_blob BLOB NOT NULL,
+            exemplar_blob BLOB,
+            exemplar_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            exemplar_weights_blob BLOB,
+            hard_negative_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            thresholds_json TEXT NOT NULL DEFAULT '{}',
+            calibration_json TEXT NOT NULL DEFAULT '{}',
+            strategy_version TEXT NOT NULL DEFAULT 'gallery_v2',
+            scoring_model_version TEXT NOT NULL DEFAULT 'numpy_gallery_v1',
             accept_threshold REAL NOT NULL,
             review_threshold REAL NOT NULL,
             mean_similarity REAL NOT NULL,
@@ -684,6 +696,14 @@ def create_identity_profile_schema(conn: sqlite3.Connection) -> None:
             embedding_dim INTEGER NOT NULL,
             centroid_blob BLOB NOT NULL,
             prototypes_blob BLOB NOT NULL,
+            exemplar_blob BLOB,
+            exemplar_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            exemplar_weights_blob BLOB,
+            hard_negative_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            thresholds_json TEXT NOT NULL DEFAULT '{}',
+            calibration_json TEXT NOT NULL DEFAULT '{}',
+            strategy_version TEXT NOT NULL DEFAULT 'gallery_v2',
+            scoring_model_version TEXT NOT NULL DEFAULT 'numpy_gallery_v1',
             accept_threshold REAL NOT NULL,
             review_threshold REAL NOT NULL,
             mean_similarity REAL NOT NULL,
@@ -695,6 +715,51 @@ def create_identity_profile_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         """
+    )
+    columns = _table_columns(conn, "person_identity_profiles")
+    _add_table_column_if_missing(conn, columns, "person_identity_profiles", "exemplar_blob", "BLOB")
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "exemplar_face_ids_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_table_column_if_missing(conn, columns, "person_identity_profiles", "exemplar_weights_blob", "BLOB")
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "hard_negative_face_ids_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "thresholds_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "calibration_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "strategy_version",
+        "TEXT NOT NULL DEFAULT 'legacy_v1'",
+    )
+    _add_table_column_if_missing(
+        conn,
+        columns,
+        "person_identity_profiles",
+        "scoring_model_version",
+        "TEXT NOT NULL DEFAULT 'numpy_gallery_v1'",
     )
 
 
@@ -861,8 +926,20 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     write_metadata(
         conn,
         {
-            "format_version": DB_FORMAT_VERSION,
+            "format_version": "7",
             "migrated_from": "6",
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    create_identity_profile_schema(conn)
+    write_metadata(
+        conn,
+        {
+            "format_version": DB_FORMAT_VERSION,
+            "migrated_from": "7",
             "migrated_at": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -874,8 +951,18 @@ def _add_column_if_missing(
     name: str,
     declaration: str,
 ) -> None:
+    _add_table_column_if_missing(conn, columns, "faces", name, declaration)
+
+
+def _add_table_column_if_missing(
+    conn: sqlite3.Connection,
+    columns: set[str],
+    table_name: str,
+    name: str,
+    declaration: str,
+) -> None:
     if name not in columns:
-        conn.execute(f"ALTER TABLE faces ADD COLUMN {name} {declaration}")
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {declaration}")
         columns.add(name)
 
 

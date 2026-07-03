@@ -8,6 +8,7 @@ The public repository is intentionally source-only. It does not include private 
 
 - Multi-face image import into SQLite `.fscdb` databases.
 - Face similarity search using normalized InsightFace embeddings.
+- Apple Photos-style local identity gallery learning: canonical exemplars, hard negatives, calibrated thresholds, and strict/balanced/broad identity modes.
 - One-to-one face comparison.
 - Live webcam search against the current database.
 - Library browsing, people assignment, tags, review state, ignored records, notes, duplicate detection, and CSV export.
@@ -43,6 +44,15 @@ py -3.12 -m venv .venv312
 .\.venv312\Scripts\python.exe -m pip install --upgrade pip
 .\.venv312\Scripts\python.exe -m pip install -e ".[gpu]"
 ```
+
+Optional research training tools for the local identity scorer:
+
+```powershell
+.\.venv312\Scripts\python.exe -m pip install -e ".[gpu,training]"
+.\.venv312\Scripts\python.exe tools\train_identity_scorer.py D:\path\to\identity_folders
+```
+
+The training dataset folder must contain one subfolder per identity. The script does not download public face datasets; users are responsible for dataset permissions and privacy. If `model/identity_scorer.onnx` exists, FSC Studio will use it for the identity gallery scorer; otherwise it falls back to the built-in NumPy scorer.
 
 ## Model Files
 
@@ -84,6 +94,8 @@ powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant cp
 ## Data Privacy
 
 Face databases and photos can contain sensitive biometric data. Keep `.fscdb`, `.dtb`, image folders, and generated previews out of public commits.
+
+Identity Gallery data in `.fscdb` v8 stores learned local identity templates derived from face embeddings. Treat these templates as biometric data. Public datasets such as VGGFace2, Glint360K, and InsightFace training sets often have research or non-commercial restrictions; do not redistribute their images, embeddings, or trained scorer outputs unless their licenses allow it.
 
 ## License
 

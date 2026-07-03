@@ -32,6 +32,9 @@ gpu = [
 dense-mesh = [
     "mediapipe==0.10.35",
 ]
+training = [
+    "torch>=2.4",
+]
 
 [tool.setuptools]
 py-modules = [

@@ -2478,9 +2478,9 @@ class PeoplePage(StudioPage):
         layout.addWidget(controls)
 
         body = QHBoxLayout()
-        self.people_table = QTableWidget(0, 9)
+        self.people_table = QTableWidget(0, 11)
         self.people_table.setHorizontalHeaderLabels(
-            ["Name", "Faces", "Avg Q", "Rev", "Ign", "Identity", "Samples", "Proto", "Accept"]
+            ["Name", "Faces", "Avg Q", "Rev", "Ign", "Identity", "Samples", "Exemplars", "Accept", "Health", "Scorer"]
         )
         self.people_table.verticalHeader().setVisible(False)
         self.people_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -2493,8 +2493,10 @@ class PeoplePage(StudioPage):
         self.people_table.setColumnWidth(4, 45)
         self.people_table.setColumnWidth(5, 80)
         self.people_table.setColumnWidth(6, 70)
-        self.people_table.setColumnWidth(7, 60)
+        self.people_table.setColumnWidth(7, 80)
         self.people_table.setColumnWidth(8, 70)
+        self.people_table.setColumnWidth(9, 150)
+        self.people_table.setColumnWidth(10, 130)
         self.people_table.horizontalHeader().setStretchLastSection(True)
         body.addWidget(self.people_table, 1)
 
@@ -2573,6 +2575,8 @@ class PeoplePage(StudioPage):
                 8,
                 table_item(f"{person.identity_accept_threshold:.3f}" if person.identity_accept_threshold else ""),
             )
+            self.people_table.setItem(row, 9, table_item(person.identity_health))
+            self.people_table.setItem(row, 10, table_item(person.identity_scoring_model_version))
         self.refresh_merge_targets()
         self.member_table.setRowCount(0)
         self.current_person = None
@@ -2604,7 +2608,8 @@ class PeoplePage(StudioPage):
         if person.identity_status:
             self.profile_status.setText(
                 f"Identity profile: {person.identity_status}, samples {person.identity_sample_count}, "
-                f"prototypes {person.identity_prototype_count}, accept {person.identity_accept_threshold:.3f}"
+                f"exemplars {person.identity_prototype_count}, accept {person.identity_accept_threshold:.3f}, "
+                f"health {person.identity_health or 'unknown'}, scorer {person.identity_scoring_model_version or 'unknown'}"
             )
         else:
             self.profile_status.setText("Identity profile: not trained")
@@ -2971,6 +2976,7 @@ class SearchPage(StudioPage):
         self.search_generation += 1
         generation = self.search_generation
         self.active_search_generation = generation
+        identity_mode = self.window.current_identity_mode()
         self.hits = []
         self.table.setRowCount(0)
         self.identity_table.setRowCount(0)
@@ -2994,7 +3000,12 @@ class SearchPage(StudioPage):
                 include_ignored=self.include_ignored.isChecked(),
                 progress=tagged_progress,
             )
-            identity = identify_person(database_path, primary.face.embedding, top_k=5)
+            identity = identify_person(
+                database_path,
+                primary.face.embedding,
+                top_k=5,
+                identity_mode=identity_mode,
+            )
             return {
                 "generation": generation,
                 "primary": primary,
@@ -3297,9 +3308,15 @@ class ReviewPage(StudioPage):
         self.ai_identity_result = None
         self.ai_suggested_person = ""
         self.ai_suggestion_label.setText("Checking identity profiles...")
+        identity_mode = self.window.current_identity_mode()
 
         def task() -> dict[str, object]:
-            result = identify_person(self.window.current_database, record.embedding, top_k=3)
+            result = identify_person(
+                self.window.current_database,
+                record.embedding,
+                top_k=3,
+                identity_mode=identity_mode,
+            )
             return {"generation": generation, "face_id": record.id, "identity": result}
 
         self.run_task("Checking AI suggested person...", task, self.on_ai_suggestion_ready)
@@ -4041,6 +4058,7 @@ class CameraPage(StudioPage):
         threshold = self.threshold.value()
         top_k = self.top_k.value()
         process_size = self.process_size.value()
+        identity_mode = self.window.current_identity_mode()
         frame_for_processing = frame.copy()
 
         def task() -> dict[str, object]:
@@ -4053,7 +4071,12 @@ class CameraPage(StudioPage):
             rows: list[dict[str, object]] = []
             identities: list[dict[str, object]] = []
             for face_index, face in enumerate(faces):
-                identity = identify_person(database_path, face.embedding, top_k=3)
+                identity = identify_person(
+                    database_path,
+                    face.embedding,
+                    top_k=3,
+                    identity_mode=identity_mode,
+                )
                 identities.append({"face_index": face_index, "identity": identity})
                 hits, _ = search_database(
                     database_path,
@@ -4494,6 +4517,14 @@ class FscStudioWindow(QMainWindow):
         self.language_combo.currentIndexChanged.connect(self.apply_language)
         language_layout.addWidget(self.language_label)
         language_layout.addWidget(self.language_combo)
+        self.identity_mode_label = QLabel("Identity Mode")
+        self.identity_mode_label.setObjectName("SidebarLabel")
+        self.identity_mode_combo = QComboBox()
+        self.identity_mode_combo.addItem("Strict", "strict")
+        self.identity_mode_combo.addItem("Balanced", "balanced")
+        self.identity_mode_combo.addItem("Broad", "broad")
+        language_layout.addWidget(self.identity_mode_label)
+        language_layout.addWidget(self.identity_mode_combo)
         sidebar_layout.addWidget(language_box)
         outer.addWidget(sidebar_panel)
 
@@ -4563,6 +4594,9 @@ class FscStudioWindow(QMainWindow):
     def set_status(self, text: str) -> None:
         self.status.setText(text)
 
+    def current_identity_mode(self) -> str:
+        return str(self.identity_mode_combo.currentData() or "strict")
+
     def run_task(
         self,
         status: str,
@@ -4594,6 +4628,7 @@ class FscStudioWindow(QMainWindow):
         CURRENT_LANGUAGE = language
         self.setWindowTitle(tr_text("FSC Studio", language))
         self.language_label.setText(tr_text("Language", language))
+        self.identity_mode_label.setText(tr_text("Identity Mode", language))
         for row, name in enumerate(self.page_names):
             item = self.sidebar.item(row)
             if item:

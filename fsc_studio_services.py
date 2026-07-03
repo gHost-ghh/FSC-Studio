@@ -70,9 +70,19 @@ MEDIAPIPE_FACE_LANDMARKER_URL = (
 )
 IDENTITY_MIN_STRONG_SAMPLES = 3
 IDENTITY_MAX_PROTOTYPES = 5
+IDENTITY_MAX_EXEMPLARS = 12
 IDENTITY_DEFAULT_MIN_QUALITY = 0.35
 IDENTITY_PROTOTYPE_DIVERSITY = 0.965
-IDENTITY_MARGIN_THRESHOLD = 0.035
+IDENTITY_EXEMPLAR_DIVERSITY = 0.985
+IDENTITY_GALLERY_STRATEGY_VERSION = "gallery_v2"
+IDENTITY_NUMPY_SCORER_VERSION = "numpy_gallery_v1"
+IDENTITY_SCORER_MODEL_PATH = Path(__file__).resolve().parent / "model" / "identity_scorer.onnx"
+IDENTITY_MODE_ORDER = ("strict", "balanced", "broad")
+IDENTITY_MODE_DEFAULTS = {
+    "strict": {"accept": 0.62, "review": 0.52, "margin": 0.055},
+    "balanced": {"accept": 0.57, "review": 0.47, "margin": 0.040},
+    "broad": {"accept": 0.52, "review": 0.42, "margin": 0.025},
+}
 
 
 @dataclass
@@ -127,6 +137,8 @@ class IdentityProfile:
     embedding_dim: int
     centroid: np.ndarray
     prototypes: np.ndarray
+    exemplars: np.ndarray
+    exemplar_weights: np.ndarray
     accept_threshold: float
     review_threshold: float
     mean_similarity: float
@@ -134,7 +146,14 @@ class IdentityProfile:
     max_similarity: float
     quality_mean: float
     evidence_face_ids: list[int]
+    exemplar_face_ids: list[int]
+    hard_negative_face_ids: list[int]
+    hard_negative_embeddings: np.ndarray | None
+    thresholds: dict[str, dict[str, float]]
+    calibration: dict[str, object]
     status: str
+    strategy_version: str
+    scoring_model_version: str
     updated_at: str
 
 
@@ -145,6 +164,8 @@ class IdentityCandidate:
     margin: float
     confidence: float
     evidence_face_id: int | None
+    scoring_model_version: str = IDENTITY_NUMPY_SCORER_VERSION
+    mode: str = "strict"
 
 
 @dataclass
@@ -205,6 +226,9 @@ class PersonSummary:
     identity_prototype_count: int = 0
     identity_accept_threshold: float = 0.0
     identity_updated_at: str = ""
+    identity_strategy_version: str = ""
+    identity_scoring_model_version: str = ""
+    identity_health: str = ""
 
 
 @dataclass
@@ -248,6 +272,9 @@ _SEARCH_INDEX_CACHE: dict[str, FaceSearchIndex] = {}
 _SEARCH_INDEX_LOCK = threading.RLock()
 _IDENTITY_PROFILE_CACHE: dict[str, IdentityProfileIndex] = {}
 _IDENTITY_PROFILE_LOCK = threading.RLock()
+_IDENTITY_SCORER_LOCK = threading.RLock()
+_IDENTITY_SCORER_SESSION = None
+_IDENTITY_SCORER_CACHE_KEY: tuple[str, int, int] | None = None
 _FACE_LANDMARKER_LOCK = threading.RLock()
 _FACE_LANDMARKER = None
 
@@ -625,6 +652,9 @@ def load_person_summaries(
                 profile.prototype_count AS identity_prototype_count,
                 profile.accept_threshold AS identity_accept_threshold,
                 profile.updated_at AS identity_updated_at,
+                profile.strategy_version AS identity_strategy_version,
+                profile.scoring_model_version AS identity_scoring_model_version,
+                profile.calibration_json AS identity_calibration_json,
                 (
                     SELECT f2.id
                     FROM faces f2
@@ -637,32 +667,39 @@ def load_person_summaries(
             LEFT JOIN person_identity_profiles profile ON profile.person_id = p.id
             {where_sql}
             GROUP BY p.id, p.name, p.notes, profile.status, profile.sample_count, profile.prototype_count,
-                     profile.accept_threshold, profile.updated_at
+                     profile.accept_threshold, profile.updated_at, profile.strategy_version,
+                     profile.scoring_model_version, profile.calibration_json
             ORDER BY face_count DESC, p.name COLLATE NOCASE
             {limit_sql}
             """,
             params,
         ).fetchall()
-        return [
-            PersonSummary(
-                id=int(row["id"]),
-                name=str(row["name"]),
-                notes=str(row["notes"] or ""),
-                face_count=int(row["face_count"] or 0),
-                average_quality=float(row["average_quality"] or 0.0),
-                ignored_count=int(row["ignored_count"] or 0),
-                review_count=int(row["review_count"] or 0),
-                representative_face_id=(
-                    int(row["representative_face_id"]) if row["representative_face_id"] is not None else None
-                ),
-                identity_status=str(row["identity_status"] or ""),
-                identity_sample_count=int(row["identity_sample_count"] or 0),
-                identity_prototype_count=int(row["identity_prototype_count"] or 0),
-                identity_accept_threshold=float(row["identity_accept_threshold"] or 0.0),
-                identity_updated_at=str(row["identity_updated_at"] or ""),
+        summaries: list[PersonSummary] = []
+        for row in rows:
+            calibration = _json_dict(str(row["identity_calibration_json"] or "{}"))
+            summaries.append(
+                PersonSummary(
+                    id=int(row["id"]),
+                    name=str(row["name"]),
+                    notes=str(row["notes"] or ""),
+                    face_count=int(row["face_count"] or 0),
+                    average_quality=float(row["average_quality"] or 0.0),
+                    ignored_count=int(row["ignored_count"] or 0),
+                    review_count=int(row["review_count"] or 0),
+                    representative_face_id=(
+                        int(row["representative_face_id"]) if row["representative_face_id"] is not None else None
+                    ),
+                    identity_status=str(row["identity_status"] or ""),
+                    identity_sample_count=int(row["identity_sample_count"] or 0),
+                    identity_prototype_count=int(row["identity_prototype_count"] or 0),
+                    identity_accept_threshold=float(row["identity_accept_threshold"] or 0.0),
+                    identity_updated_at=str(row["identity_updated_at"] or ""),
+                    identity_strategy_version=str(row["identity_strategy_version"] or ""),
+                    identity_scoring_model_version=str(row["identity_scoring_model_version"] or ""),
+                    identity_health=str(calibration.get("health") or ""),
+                )
             )
-            for row in rows
-        ]
+        return summaries
     finally:
         conn.close()
 
@@ -942,6 +979,21 @@ def rebuild_identity_profiles(
     min_quality: float = IDENTITY_DEFAULT_MIN_QUALITY,
     max_prototypes: int = IDENTITY_MAX_PROTOTYPES,
 ) -> IdentityTrainingSummary:
+    return rebuild_identity_gallery_profiles(
+        database_path,
+        person_ids=person_ids,
+        min_quality=min_quality,
+        max_exemplars=max(IDENTITY_MAX_EXEMPLARS, int(max_prototypes)),
+    )
+
+
+def rebuild_identity_gallery_profiles(
+    database_path: str | Path,
+    person_ids: Iterable[int] | None = None,
+    *,
+    min_quality: float = IDENTITY_DEFAULT_MIN_QUALITY,
+    max_exemplars: int = IDENTITY_MAX_EXEMPLARS,
+) -> IdentityTrainingSummary:
     normalized = normalize_database_path(database_path)
     target_ids = [int(value) for value in person_ids] if person_ids is not None else None
     messages: list[str] = []
@@ -1001,6 +1053,8 @@ def rebuild_identity_profiles(
         for row in face_rows:
             rows_by_person.setdefault(int(row["person_id"]), []).append(row)
 
+        all_rows = list(face_rows)
+
         if target_ids is None:
             conn.execute("DELETE FROM person_identity_profiles")
         else:
@@ -1015,7 +1069,8 @@ def rebuild_identity_profiles(
                 person_id,
                 person_name,
                 person_face_rows,
-                max_prototypes=max_prototypes,
+                negative_rows=[row for row in all_rows if int(row["person_id"]) != person_id],
+                max_exemplars=max_exemplars,
             )
             if profile is None:
                 skipped_people += 1
@@ -1027,8 +1082,9 @@ def rebuild_identity_profiles(
             if profile.status == "weak":
                 weak_profiles += 1
             messages.append(
-                f"{person_name}: {profile.sample_count} sample(s), {profile.prototype_count} prototype(s), "
-                f"{profile.status}, accept {profile.accept_threshold:.3f}."
+                f"{person_name}: {profile.sample_count} sample(s), {profile.prototype_count} exemplar(s), "
+                f"{profile.status}, health {profile.calibration.get('health', 'unknown')}, "
+                f"strict accept {profile.accept_threshold:.3f}."
             )
         conn.commit()
     finally:
@@ -1049,7 +1105,9 @@ def identify_person(
     query_embedding: np.ndarray,
     *,
     top_k: int = 5,
+    identity_mode: str = "strict",
 ) -> IdentityResult:
+    mode = _normalize_identity_mode(identity_mode)
     index = get_identity_profile_index(database_path)
     if not index.profiles:
         return IdentityResult("unknown", [], "No trained identity profiles.")
@@ -1059,24 +1117,10 @@ def identify_person(
 
     scored: list[tuple[IdentityProfile, float, int | None]] = []
     for profile in index.profiles:
-        if profile.embedding_dim != query.size or profile.prototype_count <= 0:
+        exemplars = _profile_exemplars(profile)
+        if profile.embedding_dim != query.size or exemplars.size == 0:
             continue
-        prototype_scores = profile.prototypes @ query
-        best_index = int(np.argmax(prototype_scores))
-        best_score = float(prototype_scores[best_index])
-        centroid_score = float(profile.centroid @ query)
-        if centroid_score > best_score:
-            evidence_face_id = profile.evidence_face_ids[0] if profile.evidence_face_ids else None
-            score = centroid_score
-        else:
-            evidence_face_id = (
-                profile.evidence_face_ids[best_index]
-                if best_index < len(profile.evidence_face_ids)
-                else profile.evidence_face_ids[0]
-                if profile.evidence_face_ids
-                else None
-            )
-            score = best_score
+        score, evidence_face_id = _score_identity_profile(profile, query)
         scored.append((profile, score, evidence_face_id))
 
     scored.sort(key=lambda item: item[1], reverse=True)
@@ -1093,18 +1137,21 @@ def identify_person(
                 profile=profile,
                 score=float(score),
                 margin=margin,
-                confidence=_identity_confidence(profile, float(score), margin),
+                confidence=_identity_confidence(profile, float(score), margin, mode),
                 evidence_face_id=evidence_face_id,
+                scoring_model_version=profile.scoring_model_version,
+                mode=mode,
             )
         )
 
     best = candidates[0]
-    if best.score < best.profile.review_threshold:
+    thresholds = _profile_thresholds_for_mode(best.profile, mode)
+    if best.score < thresholds["review"]:
         return IdentityResult("unknown", candidates, "No person passes the review threshold.")
     if best.profile.status == "weak":
         return IdentityResult("review", candidates, "Best profile is weak; manual confirmation is required.")
-    if best.score >= best.profile.accept_threshold and best.margin >= IDENTITY_MARGIN_THRESHOLD:
-        return IdentityResult("confirmed", candidates, "Identity confirmed by trained profile.")
+    if best.score >= thresholds["accept"] and best.margin >= thresholds["margin"]:
+        return IdentityResult("confirmed", candidates, f"Identity confirmed by {mode} gallery profile.")
     return IdentityResult("review", candidates, "Identity is plausible but needs review.")
 
 
@@ -1387,6 +1434,14 @@ def load_identity_profiles(database_path: str | Path) -> list[IdentityProfile]:
                 profile.embedding_dim,
                 profile.centroid_blob,
                 profile.prototypes_blob,
+                profile.exemplar_blob,
+                profile.exemplar_face_ids_json,
+                profile.exemplar_weights_blob,
+                profile.hard_negative_face_ids_json,
+                profile.thresholds_json,
+                profile.calibration_json,
+                profile.strategy_version,
+                profile.scoring_model_version,
                 profile.accept_threshold,
                 profile.review_threshold,
                 profile.mean_similarity,
@@ -1406,6 +1461,7 @@ def load_identity_profiles(database_path: str | Path) -> list[IdentityProfile]:
             profile = _identity_profile_from_row(row)
             if profile is not None:
                 profiles.append(profile)
+        _load_hard_negative_embeddings(conn, profiles)
         return profiles
     finally:
         conn.close()
@@ -1453,7 +1509,8 @@ def _build_identity_profile_from_rows(
     person_name: str,
     rows: list[sqlite3.Row],
     *,
-    max_prototypes: int,
+    negative_rows: list[sqlite3.Row],
+    max_exemplars: int,
 ) -> IdentityProfile | None:
     vectors: list[np.ndarray] = []
     face_ids: list[int] = []
@@ -1479,13 +1536,14 @@ def _build_identity_profile_from_rows(
     weights = np.clip(qualities_array, 0.10, 1.0)
     centroid = _normalize_vector(np.average(matrix, axis=0, weights=weights))
 
-    selected_positions = _select_identity_prototype_positions(
+    selected_positions = _select_identity_exemplar_positions(
         matrix,
         qualities_array,
-        max_prototypes=max_prototypes,
+        max_exemplars=max_exemplars,
     )
-    prototypes = matrix[selected_positions].astype(np.float32, copy=True)
-    evidence_face_ids = [face_ids[position] for position in selected_positions]
+    exemplars = matrix[selected_positions].astype(np.float32, copy=True)
+    exemplar_face_ids = [face_ids[position] for position in selected_positions]
+    exemplar_weights = _exemplar_weights(matrix, qualities_array, selected_positions)
 
     pairwise_scores = _upper_pairwise_scores(matrix)
     if pairwise_scores.size:
@@ -1497,32 +1555,54 @@ def _build_identity_profile_from_rows(
         mean_similarity = min_similarity = max_similarity = 1.0
         score_std = 0.0
 
+    negative_matrix, negative_face_ids = _rows_to_embedding_matrix(negative_rows, expected_dim=dim)
+    negative_scores = _score_matrix_against_profile(
+        centroid,
+        exemplars,
+        exemplar_weights,
+        negative_matrix,
+        hard_negative_embeddings=None,
+    )
+    hard_negative_face_ids = _select_hard_negative_face_ids(negative_scores, negative_face_ids)
+    hard_negative_embeddings = _hard_negative_embeddings(negative_scores, negative_matrix)
+    positive_scores = _leave_one_out_profile_scores(matrix, qualities_array)
+    thresholds, calibration = _calibrate_identity_thresholds(
+        sample_count=len(vectors),
+        positive_scores=positive_scores,
+        negative_scores=negative_scores,
+        mean_similarity=mean_similarity,
+        score_std=score_std,
+    )
     sample_count = len(vectors)
-    if sample_count >= IDENTITY_MIN_STRONG_SAMPLES:
-        accept_threshold = _clamp(mean_similarity - max(0.035, score_std * 1.25), 0.42, 0.72)
-        review_threshold = _clamp(accept_threshold - 0.08, 0.30, accept_threshold - 0.02)
-        status = "strong"
-    else:
-        accept_threshold = 0.90
-        review_threshold = _clamp(mean_similarity - 0.12 if sample_count > 1 else 0.45, 0.35, 0.55)
-        status = "weak"
+    status = "strong" if sample_count >= IDENTITY_MIN_STRONG_SAMPLES else "weak"
+    calibration["health"] = _identity_profile_health(sample_count, positive_scores, negative_scores, status)
+    strict_thresholds = thresholds["strict"]
 
     return IdentityProfile(
         person_id=int(person_id),
         person_name=person_name,
         sample_count=sample_count,
-        prototype_count=int(prototypes.shape[0]),
+        prototype_count=int(exemplars.shape[0]),
         embedding_dim=int(dim),
         centroid=centroid.astype(np.float32, copy=False),
-        prototypes=prototypes,
-        accept_threshold=float(accept_threshold),
-        review_threshold=float(review_threshold),
+        prototypes=exemplars,
+        exemplars=exemplars,
+        exemplar_weights=exemplar_weights,
+        accept_threshold=float(strict_thresholds["accept"]),
+        review_threshold=float(strict_thresholds["review"]),
         mean_similarity=mean_similarity,
         min_similarity=min_similarity,
         max_similarity=max_similarity,
         quality_mean=float(qualities_array.mean()) if qualities_array.size else 0.0,
-        evidence_face_ids=evidence_face_ids,
+        evidence_face_ids=exemplar_face_ids,
+        exemplar_face_ids=exemplar_face_ids,
+        hard_negative_face_ids=hard_negative_face_ids,
+        hard_negative_embeddings=hard_negative_embeddings,
+        thresholds=thresholds,
+        calibration=calibration,
         status=status,
+        strategy_version=IDENTITY_GALLERY_STRATEGY_VERSION,
+        scoring_model_version=_active_identity_scorer_version(),
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -1537,6 +1617,14 @@ def _save_identity_profile_on_connection(conn: sqlite3.Connection, profile: Iden
             embedding_dim,
             centroid_blob,
             prototypes_blob,
+            exemplar_blob,
+            exemplar_face_ids_json,
+            exemplar_weights_blob,
+            hard_negative_face_ids_json,
+            thresholds_json,
+            calibration_json,
+            strategy_version,
+            scoring_model_version,
             accept_threshold,
             review_threshold,
             mean_similarity,
@@ -1547,7 +1635,7 @@ def _save_identity_profile_on_connection(conn: sqlite3.Connection, profile: Iden
             status,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             profile.person_id,
@@ -1556,6 +1644,14 @@ def _save_identity_profile_on_connection(conn: sqlite3.Connection, profile: Iden
             profile.embedding_dim,
             profile.centroid.astype(np.float32, copy=False).tobytes(),
             profile.prototypes.astype(np.float32, copy=False).reshape(-1).tobytes(),
+            profile.exemplars.astype(np.float32, copy=False).reshape(-1).tobytes(),
+            json.dumps(profile.exemplar_face_ids, separators=(",", ":")),
+            profile.exemplar_weights.astype(np.float32, copy=False).reshape(-1).tobytes(),
+            json.dumps(profile.hard_negative_face_ids, separators=(",", ":")),
+            json.dumps(profile.thresholds, separators=(",", ":")),
+            json.dumps(profile.calibration, separators=(",", ":")),
+            profile.strategy_version,
+            profile.scoring_model_version,
             profile.accept_threshold,
             profile.review_threshold,
             profile.mean_similarity,
@@ -1580,14 +1676,33 @@ def _identity_profile_from_row(row: sqlite3.Row) -> IdentityProfile | None:
         evidence_face_ids = [int(value) for value in json.loads(str(row["evidence_face_ids_json"] or "[]"))]
     except (TypeError, ValueError, json.JSONDecodeError):
         evidence_face_ids = []
+    exemplar_blob = row["exemplar_blob"] if "exemplar_blob" in row.keys() else None
+    exemplar_weights_blob = row["exemplar_weights_blob"] if "exemplar_weights_blob" in row.keys() else None
+    exemplar_face_ids = _json_int_list(row["exemplar_face_ids_json"] if "exemplar_face_ids_json" in row.keys() else "[]")
+    hard_negative_face_ids = _json_int_list(
+        row["hard_negative_face_ids_json"] if "hard_negative_face_ids_json" in row.keys() else "[]"
+    )
+    exemplars = np.frombuffer(exemplar_blob, dtype=np.float32) if exemplar_blob else prototypes
+    if exemplars.size % dim != 0 or exemplars.size == 0:
+        exemplars = prototypes
+    exemplar_count = int(exemplars.size // dim)
+    weights = np.frombuffer(exemplar_weights_blob, dtype=np.float32) if exemplar_weights_blob else np.empty((0,), dtype=np.float32)
+    if weights.size != exemplar_count:
+        weights = np.ones((exemplar_count,), dtype=np.float32)
+    if not exemplar_face_ids:
+        exemplar_face_ids = list(evidence_face_ids)
+    thresholds = _normalize_thresholds(_json_dict(row["thresholds_json"] if "thresholds_json" in row.keys() else "{}"))
+    calibration = _json_dict(row["calibration_json"] if "calibration_json" in row.keys() else "{}")
     return IdentityProfile(
         person_id=int(row["person_id"]),
         person_name=str(row["person_name"]),
         sample_count=int(row["sample_count"]),
-        prototype_count=prototype_count,
+        prototype_count=exemplar_count,
         embedding_dim=dim,
         centroid=centroid.astype(np.float32, copy=True),
         prototypes=prototypes.astype(np.float32, copy=True).reshape(prototype_count, dim),
+        exemplars=exemplars.astype(np.float32, copy=True).reshape(exemplar_count, dim),
+        exemplar_weights=weights.astype(np.float32, copy=True),
         accept_threshold=float(row["accept_threshold"]),
         review_threshold=float(row["review_threshold"]),
         mean_similarity=float(row["mean_similarity"]),
@@ -1595,9 +1710,440 @@ def _identity_profile_from_row(row: sqlite3.Row) -> IdentityProfile | None:
         max_similarity=float(row["max_similarity"]),
         quality_mean=float(row["quality_mean"]),
         evidence_face_ids=evidence_face_ids,
+        exemplar_face_ids=exemplar_face_ids,
+        hard_negative_face_ids=hard_negative_face_ids,
+        hard_negative_embeddings=None,
+        thresholds=thresholds,
+        calibration=calibration,
         status=str(row["status"] or "weak"),
+        strategy_version=str(row["strategy_version"] if "strategy_version" in row.keys() else "legacy_v1"),
+        scoring_model_version=str(
+            row["scoring_model_version"] if "scoring_model_version" in row.keys() else IDENTITY_NUMPY_SCORER_VERSION
+        ),
         updated_at=str(row["updated_at"] or ""),
     )
+
+
+def _load_hard_negative_embeddings(conn: sqlite3.Connection, profiles: list[IdentityProfile]) -> None:
+    needed_ids = sorted({face_id for profile in profiles for face_id in profile.hard_negative_face_ids})
+    if not needed_ids:
+        return
+    placeholders = ",".join("?" for _ in needed_ids)
+    rows = conn.execute(
+        f"SELECT id, embedding_blob, embedding_dim FROM faces WHERE id IN ({placeholders})",
+        needed_ids,
+    ).fetchall()
+    by_id: dict[int, np.ndarray] = {}
+    for row in rows:
+        dim = int(row["embedding_dim"])
+        embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32)
+        if dim > 0 and embedding.size == dim:
+            by_id[int(row["id"])] = _normalize_vector(embedding.astype(np.float32, copy=True))
+    for profile in profiles:
+        vectors = [by_id[face_id] for face_id in profile.hard_negative_face_ids if face_id in by_id]
+        if vectors:
+            profile.hard_negative_embeddings = np.vstack(vectors).astype(np.float32, copy=False)
+
+
+def _json_int_list(value: object) -> list[int]:
+    try:
+        return [int(item) for item in json.loads(str(value or "[]"))]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _json_dict(value: object) -> dict[str, object]:
+    try:
+        data = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _normalize_identity_mode(identity_mode: str) -> str:
+    mode = str(identity_mode or "strict").strip().lower()
+    return mode if mode in IDENTITY_MODE_DEFAULTS else "strict"
+
+
+def _normalize_thresholds(raw: dict[str, object]) -> dict[str, dict[str, float]]:
+    thresholds: dict[str, dict[str, float]] = {}
+    for mode, defaults in IDENTITY_MODE_DEFAULTS.items():
+        item = raw.get(mode)
+        source = item if isinstance(item, dict) else {}
+        thresholds[mode] = {
+            "accept": float(source.get("accept", defaults["accept"])),
+            "review": float(source.get("review", defaults["review"])),
+            "margin": float(source.get("margin", defaults["margin"])),
+        }
+    return thresholds
+
+
+def _profile_thresholds_for_mode(profile: IdentityProfile, mode: str) -> dict[str, float]:
+    return _normalize_thresholds(profile.thresholds).get(_normalize_identity_mode(mode), IDENTITY_MODE_DEFAULTS["strict"])
+
+
+def _profile_exemplars(profile: IdentityProfile) -> np.ndarray:
+    if profile.exemplars.size:
+        return profile.exemplars
+    return profile.prototypes
+
+
+def _select_identity_exemplar_positions(
+    matrix: np.ndarray,
+    qualities: np.ndarray,
+    *,
+    max_exemplars: int,
+) -> list[int]:
+    if matrix.shape[0] == 0:
+        return []
+    consistency = matrix @ _normalize_vector(matrix.mean(axis=0))
+    if matrix.shape[0] > 1:
+        pairwise = matrix @ matrix.T
+        np.fill_diagonal(pairwise, np.nan)
+        with np.errstate(invalid="ignore"):
+            consistency = np.nanmean(pairwise, axis=1)
+        consistency = np.nan_to_num(consistency, nan=1.0)
+    quality_norm = np.clip(qualities, 0.0, 1.0)
+    order_score = quality_norm * 0.62 + consistency * 0.38
+    order = np.lexsort((np.arange(matrix.shape[0]), -order_score))
+    selected: list[int] = []
+    limit = max(1, int(max_exemplars))
+    for position in order:
+        index = int(position)
+        if not selected:
+            selected.append(index)
+        else:
+            similarities = matrix[selected] @ matrix[index]
+            if float(similarities.max()) < IDENTITY_EXEMPLAR_DIVERSITY or len(selected) < min(3, matrix.shape[0]):
+                selected.append(index)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _exemplar_weights(matrix: np.ndarray, qualities: np.ndarray, positions: list[int]) -> np.ndarray:
+    if not positions:
+        return np.empty((0,), dtype=np.float32)
+    if matrix.shape[0] > 1:
+        pairwise = matrix @ matrix.T
+        np.fill_diagonal(pairwise, np.nan)
+        with np.errstate(invalid="ignore"):
+            consistency = np.nanmean(pairwise, axis=1)
+        consistency = np.nan_to_num(consistency, nan=1.0)
+    else:
+        consistency = np.ones((matrix.shape[0],), dtype=np.float32)
+    raw = []
+    for position in positions:
+        quality = float(np.clip(qualities[position], 0.10, 1.0))
+        centrality = float(np.clip((consistency[position] + 1.0) * 0.5, 0.10, 1.0))
+        raw.append(max(0.05, quality * 0.65 + centrality * 0.35))
+    weights = np.asarray(raw, dtype=np.float32)
+    total = float(weights.sum())
+    if total > 1e-8:
+        weights = weights / total
+    return weights.astype(np.float32, copy=False)
+
+
+def _rows_to_embedding_matrix(rows: list[sqlite3.Row], *, expected_dim: int) -> tuple[np.ndarray, list[int]]:
+    vectors: list[np.ndarray] = []
+    face_ids: list[int] = []
+    for row in rows:
+        dim = int(row["embedding_dim"])
+        embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32)
+        if dim != expected_dim or embedding.size != expected_dim:
+            continue
+        vectors.append(_normalize_vector(embedding.astype(np.float32, copy=True)))
+        face_ids.append(int(row["id"]))
+    if not vectors:
+        return np.empty((0, expected_dim), dtype=np.float32), []
+    return np.vstack(vectors).astype(np.float32, copy=False), face_ids
+
+
+def _score_identity_profile(profile: IdentityProfile, query: np.ndarray) -> tuple[float, int | None]:
+    exemplars = _profile_exemplars(profile)
+    weights = profile.exemplar_weights
+    if weights.size != exemplars.shape[0]:
+        weights = np.ones((exemplars.shape[0],), dtype=np.float32) / max(1, exemplars.shape[0])
+    score, best_index = _score_identity_components(
+        profile.centroid,
+        exemplars,
+        weights,
+        query,
+        hard_negative_embeddings=profile.hard_negative_embeddings,
+    )
+    if best_index < len(profile.exemplar_face_ids):
+        evidence_face_id = profile.exemplar_face_ids[best_index]
+    elif best_index < len(profile.evidence_face_ids):
+        evidence_face_id = profile.evidence_face_ids[best_index]
+    else:
+        evidence_face_id = profile.evidence_face_ids[0] if profile.evidence_face_ids else None
+    return score, evidence_face_id
+
+
+def _score_matrix_against_profile(
+    centroid: np.ndarray,
+    exemplars: np.ndarray,
+    exemplar_weights: np.ndarray,
+    query_matrix: np.ndarray,
+    *,
+    hard_negative_embeddings: np.ndarray | None,
+) -> np.ndarray:
+    if query_matrix.size == 0:
+        return np.empty((0,), dtype=np.float32)
+    scores = [
+        _score_identity_components(
+            centroid,
+            exemplars,
+            exemplar_weights,
+            query_matrix[index],
+            hard_negative_embeddings=hard_negative_embeddings,
+        )[0]
+        for index in range(query_matrix.shape[0])
+    ]
+    return np.asarray(scores, dtype=np.float32)
+
+
+def _score_identity_components(
+    centroid: np.ndarray,
+    exemplars: np.ndarray,
+    exemplar_weights: np.ndarray,
+    query: np.ndarray,
+    *,
+    hard_negative_embeddings: np.ndarray | None,
+) -> tuple[float, int]:
+    exemplar_scores = exemplars @ query
+    best_index = int(np.argmax(exemplar_scores)) if exemplar_scores.size else 0
+    best = float(exemplar_scores[best_index]) if exemplar_scores.size else float(centroid @ query)
+    top_count = min(3, exemplar_scores.size)
+    top_mean = float(np.mean(np.sort(exemplar_scores)[-top_count:])) if top_count else best
+    centroid_score = float(centroid @ query)
+    reconstruction_score = _ridge_reconstruction_score(exemplars, query)
+    weight_score = best
+    if exemplar_weights.size == exemplar_scores.size and exemplar_scores.size:
+        weight_score = float(np.sum(exemplar_scores * exemplar_weights))
+    hard_penalty = _hard_negative_penalty(hard_negative_embeddings, query, max(best, centroid_score))
+    features = np.asarray(
+        [
+            best,
+            top_mean,
+            centroid_score,
+            reconstruction_score,
+            weight_score,
+            float(exemplar_scores.size),
+            hard_penalty,
+            1.0,
+        ],
+        dtype=np.float32,
+    )
+    fallback = (
+        best * 0.32
+        + top_mean * 0.20
+        + centroid_score * 0.20
+        + reconstruction_score * 0.20
+        + weight_score * 0.08
+        - hard_penalty
+    )
+    return _optional_identity_scorer_score(features, fallback), best_index
+
+
+def _ridge_reconstruction_score(exemplars: np.ndarray, query: np.ndarray) -> float:
+    if exemplars.size == 0:
+        return 0.0
+    if exemplars.shape[0] == 1:
+        return float(exemplars[0] @ query)
+    gram = exemplars @ exemplars.T
+    rhs = exemplars @ query
+    ridge = np.eye(exemplars.shape[0], dtype=np.float32) * 0.035
+    try:
+        weights = np.linalg.solve(gram + ridge, rhs)
+    except np.linalg.LinAlgError:
+        weights = np.linalg.lstsq(gram + ridge, rhs, rcond=None)[0]
+    weights = np.clip(weights.astype(np.float32, copy=False), 0.0, None)
+    total = float(weights.sum())
+    if total <= 1e-8:
+        return float(np.max(exemplars @ query))
+    reconstruction = weights @ exemplars / total
+    reconstruction = _normalize_vector(reconstruction)
+    return float(reconstruction @ query)
+
+
+def _hard_negative_penalty(
+    hard_negative_embeddings: np.ndarray | None,
+    query: np.ndarray,
+    profile_score: float,
+) -> float:
+    if hard_negative_embeddings is None or hard_negative_embeddings.size == 0:
+        return 0.0
+    hard_best = float(np.max(hard_negative_embeddings @ query))
+    return _clamp((hard_best - profile_score + 0.035) * 0.60, 0.0, 0.12)
+
+
+def _select_hard_negative_face_ids(negative_scores: np.ndarray, negative_face_ids: list[int], limit: int = 12) -> list[int]:
+    if negative_scores.size == 0 or not negative_face_ids:
+        return []
+    order = np.argsort(negative_scores)[::-1][: max(0, int(limit))]
+    return [int(negative_face_ids[int(index)]) for index in order]
+
+
+def _hard_negative_embeddings(negative_scores: np.ndarray, negative_matrix: np.ndarray, limit: int = 12) -> np.ndarray | None:
+    if negative_scores.size == 0 or negative_matrix.size == 0:
+        return None
+    order = np.argsort(negative_scores)[::-1][: max(0, int(limit))]
+    if order.size == 0:
+        return None
+    return negative_matrix[order].astype(np.float32, copy=True)
+
+
+def _leave_one_out_profile_scores(matrix: np.ndarray, qualities: np.ndarray) -> np.ndarray:
+    if matrix.shape[0] < 2:
+        return np.empty((0,), dtype=np.float32)
+    scores: list[float] = []
+    for index in range(matrix.shape[0]):
+        keep = np.arange(matrix.shape[0]) != index
+        support = matrix[keep]
+        support_quality = qualities[keep]
+        weights = np.clip(support_quality, 0.10, 1.0)
+        centroid = _normalize_vector(np.average(support, axis=0, weights=weights))
+        positions = _select_identity_exemplar_positions(
+            support,
+            support_quality,
+            max_exemplars=min(IDENTITY_MAX_EXEMPLARS, max(1, support.shape[0])),
+        )
+        exemplars = support[positions].astype(np.float32, copy=False)
+        exemplar_weights = _exemplar_weights(support, support_quality, positions)
+        scores.append(
+            _score_identity_components(
+                centroid,
+                exemplars,
+                exemplar_weights,
+                matrix[index],
+                hard_negative_embeddings=None,
+            )[0]
+        )
+    return np.asarray(scores, dtype=np.float32)
+
+
+def _calibrate_identity_thresholds(
+    *,
+    sample_count: int,
+    positive_scores: np.ndarray,
+    negative_scores: np.ndarray,
+    mean_similarity: float,
+    score_std: float,
+) -> tuple[dict[str, dict[str, float]], dict[str, object]]:
+    if positive_scores.size:
+        pos_p05 = float(np.percentile(positive_scores, 5))
+        pos_p10 = float(np.percentile(positive_scores, 10))
+        pos_p20 = float(np.percentile(positive_scores, 20))
+        pos_mean = float(positive_scores.mean())
+    else:
+        base = mean_similarity - max(0.04, score_std * 1.2)
+        pos_p05 = pos_p10 = pos_p20 = pos_mean = base
+    if negative_scores.size:
+        neg_p90 = float(np.percentile(negative_scores, 90))
+        neg_p95 = float(np.percentile(negative_scores, 95))
+        neg_p99 = float(np.percentile(negative_scores, 99))
+        neg_max = float(negative_scores.max())
+    else:
+        neg_p90 = neg_p95 = neg_p99 = neg_max = 0.0
+
+    if sample_count < IDENTITY_MIN_STRONG_SAMPLES:
+        strict_accept = 0.92
+        balanced_accept = 0.90
+        broad_accept = 0.88
+    else:
+        strict_accept = _clamp(max(neg_p99 + 0.045, pos_p20 - 0.025), 0.48, 0.94)
+        balanced_accept = _clamp(max(neg_p95 + 0.030, pos_p10 - 0.045), 0.43, strict_accept)
+        broad_accept = _clamp(max(neg_p90 + 0.015, pos_p05 - 0.070), 0.38, balanced_accept)
+    thresholds = {
+        "strict": {
+            "accept": strict_accept,
+            "review": _clamp(strict_accept - 0.100, 0.35, strict_accept - 0.020),
+            "margin": 0.055,
+        },
+        "balanced": {
+            "accept": balanced_accept,
+            "review": _clamp(balanced_accept - 0.115, 0.32, balanced_accept - 0.020),
+            "margin": 0.040,
+        },
+        "broad": {
+            "accept": broad_accept,
+            "review": _clamp(broad_accept - 0.130, 0.28, broad_accept - 0.020),
+            "margin": 0.025,
+        },
+    }
+    calibration: dict[str, object] = {
+        "positive_count": int(positive_scores.size),
+        "negative_count": int(negative_scores.size),
+        "positive_mean": pos_mean,
+        "positive_p05": pos_p05,
+        "positive_p20": pos_p20,
+        "negative_p95": neg_p95,
+        "negative_p99": neg_p99,
+        "negative_max": neg_max,
+        "strict_gap": strict_accept - neg_max if negative_scores.size else None,
+    }
+    return thresholds, calibration
+
+
+def _identity_profile_health(
+    sample_count: int,
+    positive_scores: np.ndarray,
+    negative_scores: np.ndarray,
+    status: str,
+) -> str:
+    if status == "weak":
+        return "weak: add at least 3 confirmed faces"
+    if sample_count < 5:
+        return "fair: add more angles"
+    if positive_scores.size and negative_scores.size:
+        gap = float(np.percentile(positive_scores, 10) - np.percentile(negative_scores, 95))
+        if gap < 0.03:
+            return "risky: close hard negatives"
+        if gap < 0.08:
+            return "fair: narrow margin"
+    return "healthy"
+
+
+def _active_identity_scorer_version() -> str:
+    if _identity_scorer_session() is not None:
+        return f"onnx:{IDENTITY_SCORER_MODEL_PATH.name}"
+    return IDENTITY_NUMPY_SCORER_VERSION
+
+
+def _optional_identity_scorer_score(features: np.ndarray, fallback: float) -> float:
+    session = _identity_scorer_session()
+    if session is None:
+        return float(fallback)
+    try:
+        input_name = session.get_inputs()[0].name
+        output_name = session.get_outputs()[0].name
+        batch = features.astype(np.float32, copy=False).reshape(1, -1)
+        output = session.run([output_name], {input_name: batch})[0]
+        return float(np.asarray(output, dtype=np.float32).reshape(-1)[0])
+    except Exception:
+        return float(fallback)
+
+
+def _identity_scorer_session():
+    global _IDENTITY_SCORER_SESSION, _IDENTITY_SCORER_CACHE_KEY
+    path = IDENTITY_SCORER_MODEL_PATH
+    if not path.exists():
+        return None
+    stat = path.stat()
+    cache_key = (str(path), int(stat.st_size), int(stat.st_mtime_ns))
+    with _IDENTITY_SCORER_LOCK:
+        if _IDENTITY_SCORER_SESSION is not None and _IDENTITY_SCORER_CACHE_KEY == cache_key:
+            return _IDENTITY_SCORER_SESSION
+        try:
+            import onnxruntime
+
+            _IDENTITY_SCORER_SESSION = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            _IDENTITY_SCORER_CACHE_KEY = cache_key
+        except Exception:
+            _IDENTITY_SCORER_SESSION = None
+            _IDENTITY_SCORER_CACHE_KEY = cache_key
+        return _IDENTITY_SCORER_SESSION
 
 
 def _select_identity_prototype_positions(
@@ -1636,10 +2182,11 @@ def _normalize_vector(vector: np.ndarray) -> np.ndarray:
     return (arr / norm).astype(np.float32, copy=False)
 
 
-def _identity_confidence(profile: IdentityProfile, score: float, margin: float) -> float:
-    threshold_span = max(0.04, profile.accept_threshold - profile.review_threshold)
-    score_confidence = _clamp((score - profile.review_threshold) / threshold_span, 0.0, 1.0)
-    margin_confidence = _clamp(margin / max(IDENTITY_MARGIN_THRESHOLD * 2.0, 1e-6), 0.0, 1.0)
+def _identity_confidence(profile: IdentityProfile, score: float, margin: float, identity_mode: str) -> float:
+    thresholds = _profile_thresholds_for_mode(profile, identity_mode)
+    threshold_span = max(0.04, thresholds["accept"] - thresholds["review"])
+    score_confidence = _clamp((score - thresholds["review"]) / threshold_span, 0.0, 1.0)
+    margin_confidence = _clamp(margin / max(thresholds["margin"] * 2.0, 1e-6), 0.0, 1.0)
     if profile.status == "weak":
         return min(0.69, score_confidence * 0.75 + margin_confidence * 0.15)
     return _clamp(score_confidence * 0.68 + margin_confidence * 0.32, 0.0, 1.0)
