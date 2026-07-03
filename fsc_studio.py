@@ -903,6 +903,7 @@ class Landmark3DView(QWidget):
         self.render_mode = "points"
         self.texture_rgb: np.ndarray | None = None
         self.texture_size: tuple[int, int] = (0, 0)
+        self.overlay_points: np.ndarray | None = None
         self._texture_triangles: list[tuple[int, int, int]] | None = None
         self.message = "No 3D landmarks"
         self.yaw = 0.0
@@ -922,6 +923,10 @@ class Landmark3DView(QWidget):
         self.edges = LANDMARK_68_EDGES if edges is None else edges
         self._texture_triangles = None
         self.message = message if cleaned is None else ""
+        self.update()
+
+    def set_overlay_points(self, points: list | None) -> None:
+        self.overlay_points = self._clean_points(points)
         self.update()
 
     def set_texture_image(self, image: Image.Image | None) -> None:
@@ -965,18 +970,20 @@ class Landmark3DView(QWidget):
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.message)
             return
 
-        projected = self._project_points(self.points, rect.width(), rect.height())
+        projection_context = self._projection_context(self.points, rect.width(), rect.height())
+        projected = self._project_points_with_context(self.points, projection_context)
         depth = projected[:, 2]
         min_depth = float(depth.min()) if depth.size else 0.0
         max_depth = float(depth.max()) if depth.size else 1.0
         depth_span = max(1e-6, max_depth - min_depth)
 
         if self.render_mode == "textured":
-            textured = self._render_textured_mesh(projected, depth)
+            textured = self._render_textured_mesh(projected, depth, projection_context)
             if textured is not None:
                 painter.drawImage(0, 0, textured)
                 painter.setPen(QPen(QColor("#334155"), 1))
                 painter.drawRoundedRect(rect, 6, 6)
+                self._draw_overlay_landmarks(painter, projection_context)
                 painter.setPen(QColor("#dbeafe"))
                 painter.drawText(
                     rect.adjusted(8, 6, -8, -6),
@@ -1013,6 +1020,8 @@ class Landmark3DView(QWidget):
                 int(round(radius * 2)),
                 int(round(radius * 2)),
             )
+
+        self._draw_overlay_landmarks(painter, projection_context)
 
         painter.setPen(QColor("#94a3b8"))
         painter.drawText(rect.adjusted(8, 6, -8, -6), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "drag to rotate")
@@ -1057,12 +1066,35 @@ class Landmark3DView(QWidget):
             return
         super().mouseDoubleClickEvent(event)
 
-    def _project_points(self, points: np.ndarray, width: int, height: int) -> np.ndarray:
-        centered = points - points.mean(axis=0, keepdims=True)
+    def _projection_context(self, points: np.ndarray, width: int, height: int) -> tuple[np.ndarray, float, float, float, float]:
+        center = points.mean(axis=0).astype(np.float32, copy=False)
+        centered = points - center.reshape(1, 3)
         span = np.ptp(centered, axis=0)
         scale = max(float(span.max()), 1.0)
-        normalized = centered / scale
+        draw_scale = min(width, height) * 0.72 * self.zoom
+        center_x = self.width() / 2.0
+        center_y = self.height() / 2.0
+        return center, scale, draw_scale, center_x, center_y
 
+    def _project_points(self, points: np.ndarray, width: int, height: int) -> np.ndarray:
+        context = self._projection_context(points, width, height)
+        return self._project_points_with_context(points, context)
+
+    def _project_points_with_context(
+        self,
+        points: np.ndarray,
+        context: tuple[np.ndarray, float, float, float, float],
+    ) -> np.ndarray:
+        center, scale, _, _, _ = context
+        normalized = (points - center.reshape(1, 3)) / scale
+        return self._project_normalized_points(normalized, context)
+
+    def _project_normalized_points(
+        self,
+        normalized: np.ndarray,
+        context: tuple[np.ndarray, float, float, float, float],
+    ) -> np.ndarray:
+        _, _, draw_scale, center_x, center_y = context
         cos_y = math.cos(self.yaw)
         sin_y = math.sin(self.yaw)
         cos_x = math.cos(self.pitch)
@@ -1071,16 +1103,26 @@ class Landmark3DView(QWidget):
         rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cos_x, -sin_x], [0.0, sin_x, cos_x]], dtype=np.float32)
         rotated = normalized @ rot_y.T @ rot_x.T
 
-        draw_scale = min(width, height) * 0.72 * self.zoom
-        center_x = self.width() / 2.0
-        center_y = self.height() / 2.0
         projected = np.empty_like(rotated)
         projected[:, 0] = center_x + rotated[:, 0] * draw_scale
         projected[:, 1] = center_y + rotated[:, 1] * draw_scale
         projected[:, 2] = rotated[:, 2]
         return projected
 
-    def _render_textured_mesh(self, projected: np.ndarray, depth: np.ndarray) -> QImage | None:
+    def _normalized_points_with_context(
+        self,
+        points: np.ndarray,
+        context: tuple[np.ndarray, float, float, float, float],
+    ) -> np.ndarray:
+        center, scale, _, _, _ = context
+        return (points - center.reshape(1, 3)) / scale
+
+    def _render_textured_mesh(
+        self,
+        projected: np.ndarray,
+        depth: np.ndarray,
+        projection_context: tuple[np.ndarray, float, float, float, float],
+    ) -> QImage | None:
         if self.points is None or self.texture_rgb is None:
             return None
         triangles = self._build_texture_triangles()
@@ -1093,6 +1135,7 @@ class Landmark3DView(QWidget):
         z_buffer = np.full((canvas_height, canvas_width), np.inf, dtype=np.float32)
         texture = self.texture_rgb
         texture_height, texture_width = texture.shape[:2]
+        self._render_generic_head(canvas, z_buffer, projection_context, depth)
         source_points = self.points[:, :2].astype(np.float32, copy=True)
         source_points[:, 0] = np.clip(source_points[:, 0], 0.0, max(0.0, texture_width - 1.0))
         source_points[:, 1] = np.clip(source_points[:, 1], 0.0, max(0.0, texture_height - 1.0))
@@ -1148,6 +1191,233 @@ class Landmark3DView(QWidget):
         bytes_per_line = canvas_width * 3
         image = QImage(canvas.data, canvas_width, canvas_height, bytes_per_line, QImage.Format.Format_RGB888)
         return image.copy()
+
+    def _render_generic_head(
+        self,
+        canvas: np.ndarray,
+        z_buffer: np.ndarray,
+        projection_context: tuple[np.ndarray, float, float, float, float],
+        face_depth: np.ndarray,
+    ) -> None:
+        if self.points is None or len(self.points) < 10:
+            return
+        normalized_face = self._normalized_points_with_context(self.points, projection_context)
+        vertices, triangles = self._build_generic_head_model(normalized_face)
+        if len(vertices) < 3 or not triangles:
+            return
+
+        projected = self._project_normalized_points(vertices, projection_context)
+        draw_depth = projected[:, 2].astype(np.float32, copy=True)
+        if draw_depth.size and face_depth.size:
+            # Keep the generic head behind the detected face mesh while retaining
+            # relative depth inside the gray guide model.
+            draw_depth += float(np.max(face_depth)) + 0.035 - float(np.min(draw_depth))
+        self._rasterize_gray_triangles(canvas, z_buffer, projected, draw_depth, triangles)
+
+    def _build_generic_head_model(self, normalized_face: np.ndarray) -> tuple[np.ndarray, list[tuple[int, int, int]]]:
+        min_values = normalized_face.min(axis=0)
+        max_values = normalized_face.max(axis=0)
+        face_width = max(float(max_values[0] - min_values[0]), 0.30)
+        face_height = max(float(max_values[1] - min_values[1]), 0.40)
+        face_depth = max(float(max_values[2] - min_values[2]), 0.18)
+        center_x = float((min_values[0] + max_values[0]) * 0.5)
+        center_y = float((min_values[1] + max_values[1]) * 0.5 - face_height * 0.03)
+        center_z = float(np.percentile(normalized_face[:, 2], 58) + face_depth * 0.25)
+
+        head_rx = max(face_width * 0.60, 0.40)
+        head_ry = max(face_height * 0.70, 0.52)
+        head_rz = max(face_width * 0.50, face_depth * 1.08, 0.34)
+
+        vertices: list[tuple[float, float, float]] = []
+        triangles: list[tuple[int, int, int]] = []
+
+        def append_ellipsoid(
+            center: tuple[float, float, float],
+            radii: tuple[float, float, float],
+            *,
+            lat_steps: int,
+            lon_steps: int,
+        ) -> None:
+            start = len(vertices)
+            cx, cy, cz = center
+            rx, ry, rz = radii
+            for lat_index in range(lat_steps + 1):
+                lat = -math.pi / 2.0 + math.pi * lat_index / lat_steps
+                cos_lat = math.cos(lat)
+                sin_lat = math.sin(lat)
+                for lon_index in range(lon_steps):
+                    lon = 2.0 * math.pi * lon_index / lon_steps
+                    vertices.append(
+                        (
+                            cx + rx * cos_lat * math.sin(lon),
+                            cy + ry * sin_lat,
+                            cz + rz * cos_lat * math.cos(lon),
+                        )
+                    )
+            for lat_index in range(lat_steps):
+                row = start + lat_index * lon_steps
+                next_row = start + (lat_index + 1) * lon_steps
+                for lon_index in range(lon_steps):
+                    a = row + lon_index
+                    b = row + (lon_index + 1) % lon_steps
+                    c = next_row + lon_index
+                    d = next_row + (lon_index + 1) % lon_steps
+                    triangles.append((a, c, b))
+                    triangles.append((b, c, d))
+
+        def append_neck() -> None:
+            start = len(vertices)
+            segments = 18
+            neck_top = float(max_values[1] - face_height * 0.02)
+            neck_bottom = float(max_values[1] + face_height * 0.38)
+            neck_center_z = center_z + head_rz * 0.30
+            ring_specs = [
+                (neck_top, face_width * 0.18, head_rz * 0.18),
+                ((neck_top + neck_bottom) * 0.5, face_width * 0.22, head_rz * 0.21),
+                (neck_bottom, face_width * 0.27, head_rz * 0.24),
+            ]
+            for y, rx, rz in ring_specs:
+                for index in range(segments):
+                    angle = 2.0 * math.pi * index / segments
+                    vertices.append(
+                        (
+                            center_x + rx * math.sin(angle),
+                            y,
+                            neck_center_z + rz * math.cos(angle),
+                        )
+                    )
+            for ring in range(len(ring_specs) - 1):
+                row = start + ring * segments
+                next_row = start + (ring + 1) * segments
+                for index in range(segments):
+                    a = row + index
+                    b = row + (index + 1) % segments
+                    c = next_row + index
+                    d = next_row + (index + 1) % segments
+                    triangles.append((a, c, b))
+                    triangles.append((b, c, d))
+
+        append_ellipsoid(
+            (center_x, center_y, center_z),
+            (head_rx, head_ry, head_rz),
+            lat_steps=12,
+            lon_steps=24,
+        )
+        ear_y = center_y - face_height * 0.02
+        ear_z = center_z + head_rz * 0.08
+        append_ellipsoid(
+            (center_x - head_rx * 1.02, ear_y, ear_z),
+            (head_rx * 0.12, head_ry * 0.19, head_rz * 0.16),
+            lat_steps=7,
+            lon_steps=12,
+        )
+        append_ellipsoid(
+            (center_x + head_rx * 1.02, ear_y, ear_z),
+            (head_rx * 0.12, head_ry * 0.19, head_rz * 0.16),
+            lat_steps=7,
+            lon_steps=12,
+        )
+        append_neck()
+        return np.asarray(vertices, dtype=np.float32), triangles
+
+    def _rasterize_gray_triangles(
+        self,
+        canvas: np.ndarray,
+        z_buffer: np.ndarray,
+        projected: np.ndarray,
+        depth: np.ndarray,
+        triangles: list[tuple[int, int, int]],
+    ) -> None:
+        canvas_height, canvas_width = canvas.shape[:2]
+        min_depth = float(np.min(depth)) if depth.size else 0.0
+        max_depth = float(np.max(depth)) if depth.size else 1.0
+        depth_span = max(1e-6, max_depth - min_depth)
+
+        for tri in triangles:
+            indexes = list(tri)
+            if any(index < 0 or index >= len(projected) for index in indexes):
+                continue
+            dst = projected[indexes, :2].astype(np.float32)
+            if self._triangle_area(dst) < 0.35:
+                continue
+            min_x = max(0, int(math.floor(float(dst[:, 0].min()))) - 1)
+            max_x = min(canvas_width, int(math.ceil(float(dst[:, 0].max()))) + 2)
+            min_y = max(0, int(math.floor(float(dst[:, 1].min()))) - 1)
+            max_y = min(canvas_height, int(math.ceil(float(dst[:, 1].max()))) + 2)
+            if max_x - min_x < 2 or max_y - min_y < 2:
+                continue
+
+            local_dst = dst - np.array([min_x, min_y], dtype=np.float32)
+            mask = np.zeros((max_y - min_y, max_x - min_x), dtype=np.uint8)
+            cv2.fillConvexPoly(mask, np.round(local_dst).astype(np.int32), 255, lineType=cv2.LINE_AA)
+            triangle_depth = self._interpolate_triangle_depth(local_dst, depth[indexes], mask.shape)
+            if triangle_depth is None:
+                continue
+
+            roi = canvas[min_y:max_y, min_x:max_x]
+            z_roi = z_buffer[min_y:max_y, min_x:max_x]
+            visible = (mask > 0) & (triangle_depth < z_roi)
+            if not np.any(visible):
+                continue
+
+            mean_depth = float(np.mean(depth[indexes]))
+            depth_ratio = (mean_depth - min_depth) / depth_span
+            shade = int(max(70, min(142, round(132 - depth_ratio * 46))))
+            roi[visible] = np.array([shade, shade, shade], dtype=np.uint8)
+            z_roi[visible] = triangle_depth[visible]
+
+    def _project_overlay_landmarks(
+        self,
+        projection_context: tuple[np.ndarray, float, float, float, float],
+    ) -> np.ndarray | None:
+        if self.points is None or self.overlay_points is None:
+            return None
+        if len(self.points) < 3 or len(self.overlay_points) < 3:
+            return None
+        mesh_xy = self.points[:, :2].astype(np.float32, copy=False)
+        mesh_z = self.points[:, 2].astype(np.float32, copy=False)
+        nearest_count = min(4, len(mesh_xy))
+        mapped = np.empty((len(self.overlay_points), 3), dtype=np.float32)
+        for index, point in enumerate(self.overlay_points):
+            distances = np.sum((mesh_xy - point[:2]) ** 2, axis=1)
+            if nearest_count == len(mesh_xy):
+                nearest = np.argsort(distances)[:nearest_count]
+            else:
+                nearest = np.argpartition(distances, nearest_count - 1)[:nearest_count]
+            weights = 1.0 / (distances[nearest] + 1e-3)
+            z_value = float(np.sum(mesh_z[nearest] * weights) / np.sum(weights))
+            mapped[index] = [float(point[0]), float(point[1]), z_value]
+        return self._project_points_with_context(mapped, projection_context)
+
+    def _draw_overlay_landmarks(
+        self,
+        painter: QPainter,
+        projection_context: tuple[np.ndarray, float, float, float, float],
+    ) -> None:
+        overlay = self._project_overlay_landmarks(projection_context)
+        if overlay is None:
+            return
+        painter.setPen(QPen(QColor(251, 191, 36, 185), 1))
+        for start, end in LANDMARK_68_EDGES:
+            if start >= len(overlay) or end >= len(overlay):
+                continue
+            x1, y1 = overlay[start, :2]
+            x2, y2 = overlay[end, :2]
+            painter.drawLine(int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
+
+        depth = overlay[:, 2]
+        order = np.argsort(depth)
+        for index in order:
+            x, y, _ = overlay[index]
+            radius = 2.7
+            painter.setPen(QPen(QColor(15, 23, 42, 190), 1))
+            painter.setBrush(QColor(34, 211, 238, 220))
+            painter.drawEllipse(
+                int(round(x - radius)),
+                int(round(y - radius)),
+                int(round(radius * 2)),
+                int(round(radius * 2)),
+            )
 
     def _interpolate_triangle_depth(
         self,
@@ -2017,6 +2287,7 @@ class LibraryPage(StudioPage):
             set_image(self.preview, None, "No database")
             self.landmark3d_view.set_message("No database")
             self.face_mesh_view.set_texture_image(None)
+            self.face_mesh_view.set_overlay_points(None)
             self.face_mesh_view.set_message("No database")
             return
         try:
@@ -2043,6 +2314,7 @@ class LibraryPage(StudioPage):
             set_image(self.preview, None, "Select a face")
             self.landmark3d_view.set_message("Select a face")
             self.face_mesh_view.set_texture_image(None)
+            self.face_mesh_view.set_overlay_points(None)
             self.face_mesh_view.set_message("Select a face")
         for row, record in enumerate(records):
             self.table.setItem(row, 0, table_item(record.id))
@@ -2124,12 +2396,14 @@ class LibraryPage(StudioPage):
                 if record.id == face_id:
                     record.landmarks3d = landmarks3d  # type: ignore[assignment]
                     break
+            self.face_mesh_view.set_overlay_points(landmarks3d)
             self.window.set_status(f"3D landmarks ready for face {face_id}.")
         else:
             self.landmark3d_view.set_message("3D landmarks unavailable")
 
     def update_face_mesh_view(self, record: FaceRecord) -> None:
         self.face_mesh_view.set_texture_image(record_texture_image_from_source(record))
+        self.face_mesh_view.set_overlay_points(record.landmarks3d)
         self.face_mesh_view.set_render_mode(str(self.face_mesh_mode.currentData() or "points"))
         if record.face_mesh3d:
             self.pending_face_mesh_record_id = None
