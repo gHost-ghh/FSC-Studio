@@ -20,7 +20,7 @@ continuing that prototype.
 - SQLite-backed `.fscdb` v8 reader.
 - Vector search over normalized InsightFace embeddings.
 - Identity Gallery identification using existing profile tables.
-- CLI probe for database/search/identity parity checks.
+- CLI probes for database/search/identity and model-path parity checks.
 
 ## Build
 
@@ -38,6 +38,22 @@ cmake --preset msvc-debug
 cmake --build --preset msvc-debug
 ctest --preset msvc-debug
 ```
+
+`msvc-debug` is dependency-light and builds the algorithm core first. Use
+`msvc-release` after vcpkg dependencies are installed to build the SQLite probe
+and Qt shell.
+
+To enable ONNX Runtime C++ model inspection without Qt/SQLite:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch-onnxruntime.ps1 -Version 1.27.0 -Flavor cpu
+cmake --preset msvc-vs-debug -DFSC_ENABLE_ONNX=ON -DONNXRUNTIME_ROOT="D:\FSC\.deps\onnxruntime"
+cmake --build --preset msvc-vs-debug
+.\out\build\msvc-vs-debug\Debug\fsc_vision_probe.exe onnx D:\FSC\model\insightface\models\buffalo_l\det_10g.onnx cpu
+```
+
+The build copies `onnxruntime.dll` next to the probe executable so Windows does
+not accidentally load an older DLL from `System32`.
 
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.

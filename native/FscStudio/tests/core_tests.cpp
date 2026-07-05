@@ -1,6 +1,8 @@
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
+#include "fsc/vision/FaceGeometry.hpp"
+#include "fsc/vision/ModelPaths.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -52,12 +54,55 @@ void identityWeakProfilesRequireReview() {
     assert(result.candidates.front().profile.personName == "Example");
 }
 
+void visionSimilarityTransformMapsReferencePoints() {
+    const auto destination = fsc::vision::arcFace112ReferencePoints();
+    auto source = destination;
+    for (auto& point : source) {
+        point.x = point.x * 1.25f + 12.0f;
+        point.y = point.y * 1.25f - 7.0f;
+    }
+
+    const auto transform = fsc::vision::estimateSimilarityTransform(source, destination);
+    for (size_t i = 0; i < source.size(); ++i) {
+        const auto mapped = fsc::vision::applyTransform(transform, source[i]);
+        assert(std::abs(mapped.x - destination[i].x) < 0.01f);
+        assert(std::abs(mapped.y - destination[i].y) < 0.01f);
+    }
+}
+
+void visionNmsKeepsBestBoxes() {
+    fsc::vision::Detection first;
+    first.box = {0, 0, 100, 100};
+    first.score = 0.95f;
+    fsc::vision::Detection overlap;
+    overlap.box = {5, 5, 105, 105};
+    overlap.score = 0.90f;
+    fsc::vision::Detection separate;
+    separate.box = {220, 220, 260, 260};
+    separate.score = 0.75f;
+
+    const auto keep = fsc::vision::nonMaximumSuppression({overlap, separate, first}, 0.40f, 10);
+    assert(keep.size() == 2);
+    assert(std::abs(keep[0].score - 0.95f) < 1e-6f);
+    assert(std::abs(keep[1].score - 0.75f) < 1e-6f);
+}
+
+void modelPathResolutionUsesBuffaloRoot() {
+    const auto paths = fsc::vision::InsightFaceModelPaths::fromBuffaloL("model/insightface/models");
+    assert(paths.rootDirectory.filename() == "buffalo_l");
+    assert(paths.detectionModelPath.filename() == "det_10g.onnx");
+    assert(fsc::vision::parseRuntimeMode("dml") == fsc::vision::RuntimeMode::DirectMl);
+}
+
 } // namespace
 
 int main() {
     vectorMathNormalizes();
     searchOrdersByCosine();
     identityWeakProfilesRequireReview();
+    visionSimilarityTransformMapsReferencePoints();
+    visionNmsKeepsBestBoxes();
+    modelPathResolutionUsesBuffaloRoot();
     std::cout << "fsc_core_tests passed\n";
     return 0;
 }

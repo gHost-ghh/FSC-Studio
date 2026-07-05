@@ -10,6 +10,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "ON",
+        "FSC_ENABLE_ONNX": "OFF",
         "FSC_BUILD_QT_APP": "OFF"
       }
     },
@@ -22,7 +24,23 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
         "FSC_BUILD_QT_APP": "ON"
+      }
+    },
+    {
+      "name": "msvc-vs-debug",
+      "displayName": "MSVC Visual Studio Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "ON",
+        "FSC_ENABLE_ONNX": "OFF",
+        "FSC_BUILD_QT_APP": "OFF"
       }
     }
   ],
@@ -34,12 +52,25 @@
     {
       "name": "msvc-release",
       "configurePreset": "msvc-release"
+    },
+    {
+      "name": "msvc-vs-debug",
+      "configurePreset": "msvc-vs-debug",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
     {
       "name": "msvc-debug",
       "configurePreset": "msvc-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-debug",
+      "configurePreset": "msvc-vs-debug",
+      "configuration": "Debug",
       "output": {
         "outputOnFailure": true
       }
