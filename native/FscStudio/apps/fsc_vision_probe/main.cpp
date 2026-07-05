@@ -1,9 +1,13 @@
 #include "fsc/vision/FaceGeometry.hpp"
+#include "fsc/vision/Image.hpp"
+#include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 #include "fsc/vision/OnnxRuntimeSession.hpp"
 
 #include <iomanip>
 #include <iostream>
+#include <cmath>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -16,6 +20,7 @@ void printUsage() {
         << "Usage:\n"
         << "  fsc_vision_probe models <model_root>\n"
         << "  fsc_vision_probe onnx <model_path> [auto|cpu|directml]\n"
+        << "  fsc_vision_probe detect <model_root> <image.ppm> [threshold] [embedding_output.txt]\n"
         << "  fsc_vision_probe align\n";
 }
 
@@ -57,6 +62,61 @@ int main(int argc, char** argv) {
             std::cout << "output=" << item.name << "\t" << item.elementType << "\t" << shapeText(item.shape) << "\n";
         }
         return info.provider == "not built with ONNX Runtime" ? 1 : 0;
+    }
+
+    if (command == "detect") {
+#ifdef FSC_ENABLE_ONNX
+        if (argc < 4) {
+            printUsage();
+            return 2;
+        }
+        const float threshold = argc >= 5 ? std::stof(argv[4]) : 0.55f;
+        const std::string embeddingOutputPath = argc >= 6 ? argv[5] : "";
+        const auto models = InsightFaceModelPaths::fromBuffaloL(argv[2]);
+        const auto image = loadPpmRgb(argv[3]);
+        InsightFaceEngine engine(models, RuntimeMode::Cpu);
+        const auto faces = engine.analyze(image, threshold, 10);
+        std::ofstream embeddingOutput;
+        if (!embeddingOutputPath.empty()) {
+            embeddingOutput.open(embeddingOutputPath, std::ios::out | std::ios::trunc);
+            if (!embeddingOutput) {
+                std::cerr << "Failed to open embedding output: " << embeddingOutputPath << "\n";
+                return 1;
+            }
+            embeddingOutput << std::fixed << std::setprecision(9);
+        }
+        std::cout << "faces=" << faces.size() << "\n";
+        for (size_t i = 0; i < faces.size(); ++i) {
+            const auto& face = faces[i];
+            std::cout
+                << "face=" << i
+                << "\tscore=" << std::fixed << std::setprecision(4) << face.detection.score
+                << "\tbox=[" << face.detection.box.x1 << "," << face.detection.box.y1 << ","
+                << face.detection.box.x2 << "," << face.detection.box.y2 << "]"
+                << "\tembedding_dim=" << face.embedding.size();
+            if (!face.embedding.empty()) {
+                double norm = 0.0;
+                for (const float value : face.embedding) {
+                    norm += static_cast<double>(value) * static_cast<double>(value);
+                }
+                std::cout << "\tembedding_norm=" << std::sqrt(norm);
+            }
+            std::cout << "\n";
+            if (embeddingOutput) {
+                for (size_t j = 0; j < face.embedding.size(); ++j) {
+                    if (j > 0) {
+                        embeddingOutput << ",";
+                    }
+                    embeddingOutput << face.embedding[j];
+                }
+                embeddingOutput << "\n";
+            }
+        }
+        return 0;
+#else
+        std::cerr << "detect requires FSC_ENABLE_ONNX=ON.\n";
+        return 1;
+#endif
     }
 
     if (command == "models") {

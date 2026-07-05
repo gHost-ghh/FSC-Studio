@@ -26,12 +26,15 @@ target_compile_definitions(FscCore PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_library(FscVision STATIC
     src/vision/FaceGeometry.cpp
+    src/vision/Image.cpp
     src/vision/ModelPaths.cpp
 )
 target_include_directories(FscVision PUBLIC include)
 target_compile_definitions(FscVision PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(FscVision PUBLIC FscCore)
 if(FSC_ENABLE_ONNX)
     find_package(OnnxRuntime REQUIRED)
+    target_sources(FscVision PRIVATE src/vision/InsightFaceEngine.cpp)
     target_sources(FscVision PRIVATE src/vision/OnnxRuntimeSession.cpp)
     target_compile_definitions(FscVision PUBLIC FSC_ENABLE_ONNX=1)
     target_link_libraries(FscVision PUBLIC OnnxRuntime::OnnxRuntime)

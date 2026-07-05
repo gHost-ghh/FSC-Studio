@@ -36,6 +36,13 @@ Observed local buffalo_l I/O through `fsc_vision_probe` with ONNX Runtime 1.27.0
 - `2d106det.onnx`: `data` float32 `[-1,3,192,192]`, output `fc1` `[1,212]`.
 - `1k3d68.onnx`: `data` float32 `[-1,3,192,192]`, output `fc1` `[1,3309]`.
 
+First native SCRFD + ArcFace parity sample:
+
+- Source image: `D:\FSC\test_img\123s2\baiyh.jpg`, converted to temporary P6 PPM for the native probe.
+- C++ native ONNX CPU: 1 face, score `0.8198`, box `[112.2487,145.7734,367.3689,459.4835]`, embedding dim `512`, norm `1.0000`.
+- Python InsightFace CPU reference: 1 face, score `0.8825`, box `[115.1451,141.5938,367.8138,455.8132]`, embedding dim `512`, norm `1.0000`.
+- C++ embedding vs Python embedding cosine: `0.9801`.
+
 ## Checkpoint 3: Dense Mesh And Camera
 
 Status: pending.
