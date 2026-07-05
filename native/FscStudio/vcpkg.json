@@ -1,0 +1,19 @@
+{
+  "name": "fsc-studio-native",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "sqlite3",
+    "nlohmann-json",
+    "opencv4",
+    "onnxruntime",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "widgets",
+        "gui",
+        "sql"
+      ]
+    }
+  ]
+}

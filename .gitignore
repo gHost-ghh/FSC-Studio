@@ -21,6 +21,14 @@ venv*/
 build/
 dist/
 release/
+bin/
+obj/
+**/bin/
+**/obj/
+native/**/out/
+native/**/vcpkg_installed/
+.deps/
+artifacts/
 *.egg-info/
 *.spec
 *.log
@@ -29,6 +37,7 @@ release/
 *.exe
 *.dll
 *.pyd
+*.obj
 *.7z
 *.zip
 *.cab
