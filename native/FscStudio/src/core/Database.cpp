@@ -838,6 +838,74 @@ std::vector<IdentityProfile> Database::loadIdentityProfiles() const {
     return profiles;
 }
 
+bool Database::imageHashExists(const std::string& imageHash) const {
+    if (imageHash.empty()) {
+        return false;
+    }
+    Statement statement(db_, "SELECT 1 FROM faces WHERE image_hash = ? LIMIT 1");
+    sqlite3_bind_text(statement.get(), 1, imageHash.c_str(), -1, SQLITE_TRANSIENT);
+    return sqlite3_step(statement.get()) == SQLITE_ROW;
+}
+
+int64_t Database::insertFace(const FaceInsertRecord& record) {
+    const char* sql =
+        "INSERT INTO faces ("
+        "file_name, source_path, embedding_blob, embedding_dim, bbox_json, kps_json, "
+        "landmarks_json, landmarks3d_json, face_mesh3d_json, det_score, quality_score, "
+        "quality_json, preview_png, person_id, image_hash, ignored, review_state, notes"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, 0, ?, ?)";
+    Statement statement(db_, sql);
+
+    const auto embedding = normalize(record.embedding);
+    if (embedding.empty()) {
+        throw std::runtime_error("Cannot insert a face without an embedding.");
+    }
+    const int embeddingDim = record.embeddingDim > 0 ? record.embeddingDim : static_cast<int>(embedding.size());
+    if (embeddingDim != static_cast<int>(embedding.size())) {
+        throw std::runtime_error("Face embedding dimension does not match the embedding size.");
+    }
+
+    const auto bboxJson = nlohmann::json(record.bbox).dump();
+    const auto keypointsJson = nlohmann::json(record.keypoints).dump();
+    const auto landmarks2dJson = nlohmann::json(record.landmarks2d).dump();
+    const auto landmarks3dJson = nlohmann::json(record.landmarks3d).dump();
+    const std::string qualityJson = record.qualityJson.empty() ? "{}" : record.qualityJson;
+    const std::string reviewState = record.reviewState.empty() ? "open" : record.reviewState;
+
+    sqlite3_bind_text(statement.get(), 1, record.fileName.c_str(), -1, SQLITE_TRANSIENT);
+    if (record.sourcePath.empty()) {
+        sqlite3_bind_null(statement.get(), 2);
+    } else {
+        sqlite3_bind_text(statement.get(), 2, record.sourcePath.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    bindFloatVector(statement.get(), 3, embedding);
+    sqlite3_bind_int(statement.get(), 4, embeddingDim);
+    sqlite3_bind_text(statement.get(), 5, bboxJson.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 6, keypointsJson.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 7, landmarks2dJson.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 8, landmarks3dJson.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(statement.get(), 9, record.detectionScore);
+    sqlite3_bind_double(statement.get(), 10, record.qualityScore);
+    sqlite3_bind_text(statement.get(), 11, qualityJson.c_str(), -1, SQLITE_TRANSIENT);
+    if (record.personId > 0) {
+        sqlite3_bind_int64(statement.get(), 12, record.personId);
+    } else {
+        sqlite3_bind_null(statement.get(), 12);
+    }
+    if (record.imageHash.empty()) {
+        sqlite3_bind_null(statement.get(), 13);
+    } else {
+        sqlite3_bind_text(statement.get(), 13, record.imageHash.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    sqlite3_bind_text(statement.get(), 14, reviewState.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 15, record.notes.c_str(), -1, SQLITE_TRANSIENT);
+
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(db_));
+    }
+    return sqlite3_last_insert_rowid(db_);
+}
+
 IdentityTrainingSummary Database::rebuildIdentityProfiles(const IdentityTrainingOptions& options) {
     IdentityTrainingSummary summary;
     const bool targeted = !options.personIds.empty();

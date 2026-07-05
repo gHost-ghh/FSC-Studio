@@ -1,14 +1,18 @@
 #include "fsc/core/Database.hpp"
+#include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 
+#include <array>
 #include <cstdlib>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <cmath>
+#include <sstream>
 #include <string>
 
 using namespace fsc::core;
@@ -22,7 +26,8 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
-        << "  fsc_native_probe <database.fscdb> image-search <model_root> <image.ppm> [top_k] [threshold] [strict|balanced|broad]\n";
+        << "  fsc_native_probe <database.fscdb> import-image <model_root> <image_path> [threshold] [person_id]\n"
+        << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n";
 }
 
 IdentityMode parseMode(const std::string& value) {
@@ -60,6 +65,77 @@ void printSearchHits(const std::vector<SearchHit>& hits, int64_t excludeFaceId =
             << hit.record.fileName << "\t"
             << hit.record.personName << "\n";
     }
+}
+
+std::vector<std::vector<double>> keypointRows(const std::array<fsc::vision::Point2f, 5>& points) {
+    std::vector<std::vector<double>> rows;
+    rows.reserve(points.size());
+    for (const auto& point : points) {
+        rows.push_back({point.x, point.y});
+    }
+    return rows;
+}
+
+std::vector<std::vector<double>> landmarkRows(const std::vector<fsc::vision::Point2f>& points) {
+    std::vector<std::vector<double>> rows;
+    rows.reserve(points.size());
+    for (const auto& point : points) {
+        rows.push_back({point.x, point.y});
+    }
+    return rows;
+}
+
+std::vector<std::vector<double>> landmarkRows(const std::vector<fsc::vision::Point3f>& points) {
+    std::vector<std::vector<double>> rows;
+    rows.reserve(points.size());
+    for (const auto& point : points) {
+        rows.push_back({point.x, point.y, point.z});
+    }
+    return rows;
+}
+
+std::string qualityJson(const fsc::vision::AnalyzedFace& face) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(6)
+           << "{\"det_score\":" << face.detection.score
+           << ",\"area_ratio\":" << face.qualityAreaRatio
+           << ",\"sharpness\":" << face.qualitySharpness
+           << ",\"brightness\":" << face.qualityBrightness
+           << ",\"contrast\":" << face.qualityContrast
+           << ",\"native\":true}";
+    return stream.str();
+}
+
+FaceInsertRecord insertRecordFromFace(
+    const std::filesystem::path& imagePath,
+    const fsc::vision::AnalyzedFace& face,
+    int64_t personId,
+    const std::string& imageHash,
+    bool duplicate) {
+    FaceInsertRecord record;
+    record.fileName = imagePath.filename().string();
+    record.sourcePath = imagePath.string();
+    record.embedding = face.embedding;
+    record.embeddingDim = static_cast<int>(face.embedding.size());
+    record.bbox = {
+        face.detection.box.x1,
+        face.detection.box.y1,
+        face.detection.box.x2,
+        face.detection.box.y2,
+    };
+    record.keypoints = keypointRows(face.detection.keypoints);
+    record.landmarks2d = landmarkRows(face.landmarks2d);
+    record.landmarks3d = landmarkRows(face.landmarks3d);
+    record.detectionScore = face.detection.score;
+    record.qualityScore = face.qualityScore;
+    record.qualityJson = qualityJson(face);
+    record.imageHash = imageHash;
+    record.personId = personId;
+    if (duplicate) {
+        record.reviewState = "duplicate";
+        record.notes = "Same source image hash already exists in this database.";
+    }
+    return record;
 }
 
 } // namespace
@@ -134,6 +210,41 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (command == "import-image") {
+#ifdef FSC_ENABLE_ONNX
+            if (argc < 5) {
+                printUsage();
+                return 2;
+            }
+            const float threshold = argc >= 6 ? std::stof(argv[5]) : 0.55f;
+            const int64_t personId = argc >= 7 ? std::strtoll(argv[6], nullptr, 10) : 0;
+            const auto models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(argv[3]);
+            const std::filesystem::path imagePath = argv[4];
+            const auto imageHash = sha256File(imagePath);
+            const bool duplicate = database.imageHashExists(imageHash);
+            const auto image = fsc::vision::loadImageRgb(imagePath);
+            fsc::vision::InsightFaceEngine engine(models, fsc::vision::RuntimeMode::Cpu);
+            const auto faces = engine.analyze(image, threshold, 10);
+            std::cout << "faces=" << faces.size() << "\n";
+            std::cout << "image_hash=" << imageHash << "\n";
+            std::cout << "duplicate=" << (duplicate ? "true" : "false") << "\n";
+            for (size_t i = 0; i < faces.size(); ++i) {
+                const auto id = database.insertFace(insertRecordFromFace(imagePath, faces[i], personId, imageHash, duplicate));
+                std::cout
+                    << "inserted=" << id
+                    << "\tquery_face=" << i
+                    << "\tscore=" << std::fixed << std::setprecision(4) << faces[i].detection.score
+                    << "\tquality=" << faces[i].qualityScore
+                    << "\tlandmarks2d=" << faces[i].landmarks2d.size()
+                    << "\tlandmarks3d=" << faces[i].landmarks3d.size() << "\n";
+            }
+            return 0;
+#else
+            std::cerr << "import-image requires FSC_ENABLE_ONNX=ON.\n";
+            return 1;
+#endif
+        }
+
         if (command == "image-search") {
 #ifdef FSC_ENABLE_ONNX
             if (argc < 5) {
@@ -144,7 +255,7 @@ int main(int argc, char** argv) {
             const float threshold = argc >= 7 ? std::stof(argv[6]) : 0.55f;
             const auto mode = argc >= 8 ? parseMode(argv[7]) : IdentityMode::Strict;
             const auto models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(argv[3]);
-            const auto image = fsc::vision::loadPpmRgb(argv[4]);
+            const auto image = fsc::vision::loadImageRgb(argv[4]);
             fsc::vision::InsightFaceEngine engine(models, fsc::vision::RuntimeMode::Cpu);
             const auto faces = engine.analyze(image, threshold, 10);
             const auto records = database.loadFaces(false);

@@ -17,6 +17,7 @@ struct RgbImage {
 };
 
 RgbImage loadPpmRgb(const std::filesystem::path& path);
+RgbImage loadImageRgb(const std::filesystem::path& path);
 RgbImage resizeBilinear(const RgbImage& image, int width, int height);
 RgbImage letterboxToSquare(const RgbImage& image, int size, float& scale);
 std::uint8_t sampleBilinearChannel(const RgbImage& image, float x, float y, int channel);

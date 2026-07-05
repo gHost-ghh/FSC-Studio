@@ -20,7 +20,7 @@ void printUsage() {
         << "Usage:\n"
         << "  fsc_vision_probe models <model_root>\n"
         << "  fsc_vision_probe onnx <model_path> [auto|cpu|directml]\n"
-        << "  fsc_vision_probe detect <model_root> <image.ppm> [threshold] [embedding_output.txt]\n"
+        << "  fsc_vision_probe detect <model_root> <image_path> [threshold] [embedding_output.txt]\n"
         << "  fsc_vision_probe align\n";
 }
 
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
         const float threshold = argc >= 5 ? std::stof(argv[4]) : 0.55f;
         const std::string embeddingOutputPath = argc >= 6 ? argv[5] : "";
         const auto models = InsightFaceModelPaths::fromBuffaloL(argv[2]);
-        const auto image = loadPpmRgb(argv[3]);
+        const auto image = loadImageRgb(argv[3]);
         InsightFaceEngine engine(models, RuntimeMode::Cpu);
         const auto faces = engine.analyze(image, threshold, 10);
         std::ofstream embeddingOutput;

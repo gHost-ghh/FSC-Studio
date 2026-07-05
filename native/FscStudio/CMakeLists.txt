@@ -22,12 +22,16 @@ if(NOT FSC_CORE_ONLY)
 endif()
 
 add_library(FscCore STATIC
+    src/core/FileHash.cpp
     src/core/IdentityGallery.cpp
     src/core/Search.cpp
     src/core/VectorMath.cpp
 )
 target_include_directories(FscCore PUBLIC include)
 target_compile_definitions(FscCore PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(WIN32)
+    target_link_libraries(FscCore PUBLIC Bcrypt)
+endif()
 
 add_library(FscVision STATIC
     src/vision/FaceGeometry.cpp
@@ -37,6 +41,9 @@ add_library(FscVision STATIC
 target_include_directories(FscVision PUBLIC include)
 target_compile_definitions(FscVision PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(FscVision PUBLIC FscCore)
+if(WIN32)
+    target_link_libraries(FscVision PUBLIC Windowscodecs Ole32)
+endif()
 if(FSC_ENABLE_ONNX)
     find_package(OnnxRuntime REQUIRED)
     target_sources(FscVision PRIVATE src/vision/InsightFaceEngine.cpp)

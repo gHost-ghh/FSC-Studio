@@ -32,6 +32,24 @@ struct FaceRecord {
     std::string createdAt;
 };
 
+struct FaceInsertRecord {
+    std::string fileName;
+    std::string sourcePath;
+    std::vector<float> embedding;
+    int embeddingDim = 0;
+    std::vector<double> bbox;
+    std::vector<std::vector<double>> keypoints;
+    std::vector<std::vector<double>> landmarks2d;
+    std::vector<std::vector<double>> landmarks3d;
+    double detectionScore = 0.0;
+    double qualityScore = 0.0;
+    std::string qualityJson;
+    std::string imageHash;
+    int64_t personId = 0;
+    std::string reviewState = "open";
+    std::string notes;
+};
+
 struct PersonSummary {
     int64_t id = 0;
     std::string name;

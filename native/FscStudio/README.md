@@ -18,9 +18,13 @@ continuing that prototype.
 - CMake/vcpkg project scaffold.
 - Native C++ data model.
 - SQLite-backed `.fscdb` v8 reader.
+- Native `.fscdb` face insertion for analyzed images.
 - Vector search over normalized InsightFace embeddings.
 - Identity Gallery identification using existing profile tables.
-- CLI probes for database/search/identity and model-path parity checks.
+- Identity Gallery profile rebuilding on existing databases.
+- Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
+- Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
+- CLI probes for database/search/identity/import and model-path parity checks.
 
 ## Build
 
@@ -54,6 +58,20 @@ cmake --build --preset msvc-vs-debug
 
 The build copies `onnxruntime.dll` next to the probe executable so Windows does
 not accidentally load an older DLL from `System32`.
+
+For the current SQLite + ONNX probe checkpoint, configure the Visual Studio
+debug tree with vcpkg and the downloaded ONNX Runtime:
+
+```powershell
+$env:VCPKG_ROOT = "D:\FSC\.deps\vcpkg"
+cmake -S . -B out\build\msvc-vs-db-debug -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DFSC_CORE_ONLY=OFF -DFSC_BUILD_QT_APP=OFF -DFSC_ENABLE_ONNX=ON `
+  -DONNXRUNTIME_ROOT="D:\FSC\.deps\onnxruntime"
+cmake --build out\build\msvc-vs-db-debug --config Debug
+ctest --test-dir out\build\msvc-vs-db-debug -C Debug --output-on-failure
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg 5 0.50 strict
+```
 
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.

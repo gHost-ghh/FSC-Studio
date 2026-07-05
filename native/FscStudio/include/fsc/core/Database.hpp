@@ -30,6 +30,8 @@ public:
     [[nodiscard]] std::optional<FaceRecord> loadFace(int64_t faceId) const;
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;
+    [[nodiscard]] bool imageHashExists(const std::string& imageHash) const;
+    int64_t insertFace(const FaceInsertRecord& record);
     IdentityTrainingSummary rebuildIdentityProfiles(const IdentityTrainingOptions& options = {});
 
 private:

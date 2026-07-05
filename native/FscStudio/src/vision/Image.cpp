@@ -4,8 +4,15 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <combaseapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+#endif
 
 namespace fsc::vision {
 namespace {
@@ -38,6 +45,31 @@ std::uint8_t clampByte(float value) {
     return static_cast<std::uint8_t>(std::clamp(value, 0.0f, 255.0f));
 }
 
+#ifdef _WIN32
+void throwIfFailed(HRESULT result, const char* message) {
+    if (FAILED(result)) {
+        throw std::runtime_error(message);
+    }
+}
+
+struct ComInitializer {
+    ComInitializer() {
+        result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(result) && result != RPC_E_CHANGED_MODE) {
+            throw std::runtime_error("Failed to initialize COM for Windows image loading.");
+        }
+    }
+
+    ~ComInitializer() {
+        if (SUCCEEDED(result)) {
+            CoUninitialize();
+        }
+    }
+
+    HRESULT result = S_OK;
+};
+#endif
+
 } // namespace
 
 RgbImage loadPpmRgb(const std::filesystem::path& path) {
@@ -66,6 +98,74 @@ RgbImage loadPpmRgb(const std::filesystem::path& path) {
         throw std::runtime_error("PPM image ended before all pixels were read.");
     }
     return image;
+}
+
+RgbImage loadImageRgb(const std::filesystem::path& path) {
+    const auto extension = path.extension().string();
+    std::string lowerExtension;
+    lowerExtension.reserve(extension.size());
+    for (const char ch : extension) {
+        lowerExtension.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (lowerExtension == ".ppm") {
+        return loadPpmRgb(path);
+    }
+
+#ifdef _WIN32
+    ComInitializer com;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+    throwIfFailed(
+        CoCreateInstance(
+            CLSID_WICImagingFactory,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(factory.GetAddressOf())),
+        "Failed to create Windows Imaging Component factory.");
+
+    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    throwIfFailed(
+        factory->CreateDecoderFromFilename(
+            path.wstring().c_str(),
+            nullptr,
+            GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,
+            decoder.GetAddressOf()),
+        "Failed to open image through Windows Imaging Component.");
+
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+    throwIfFailed(decoder->GetFrame(0, frame.GetAddressOf()), "Failed to read first image frame.");
+
+    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    throwIfFailed(factory->CreateFormatConverter(converter.GetAddressOf()), "Failed to create WIC format converter.");
+    throwIfFailed(
+        converter->Initialize(
+            frame.Get(),
+            GUID_WICPixelFormat24bppRGB,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeCustom),
+        "Failed to convert image to RGB pixels.");
+
+    UINT width = 0;
+    UINT height = 0;
+    throwIfFailed(converter->GetSize(&width, &height), "Failed to read image dimensions.");
+    if (width == 0 || height == 0 || width > static_cast<UINT>(std::numeric_limits<int>::max()) || height > static_cast<UINT>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error("Unsupported image dimensions.");
+    }
+
+    RgbImage image;
+    image.width = static_cast<int>(width);
+    image.height = static_cast<int>(height);
+    const UINT stride = width * 3;
+    image.pixels.resize(static_cast<size_t>(stride) * height);
+    throwIfFailed(
+        converter->CopyPixels(nullptr, stride, static_cast<UINT>(image.pixels.size()), image.pixels.data()),
+        "Failed to copy image pixels.");
+    return image;
+#else
+    throw std::runtime_error("Only PPM image loading is available on this platform.");
+#endif
 }
 
 RgbImage resizeBilinear(const RgbImage& image, int width, int height) {
