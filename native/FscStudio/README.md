@@ -19,6 +19,7 @@ continuing that prototype.
 - Native C++ data model.
 - SQLite-backed `.fscdb` v8 reader.
 - Native `.fscdb` face insertion for analyzed images.
+- Native `.fscdb` v8 creation.
 - Vector search over normalized InsightFace embeddings.
 - Identity Gallery identification using existing profile tables.
 - Identity Gallery profile rebuilding on existing databases.
@@ -71,6 +72,8 @@ cmake -S . -B out\build\msvc-vs-db-debug -G "Visual Studio 17 2022" -A x64 `
 cmake --build out\build\msvc-vs-db-debug --config Debug
 ctest --test-dir out\build\msvc-vs-db-debug -C Debug --output-on-failure
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg 5 0.50 strict
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb create-db
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb import-image D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg 0.50
 ```
 
 The full Qt application is intentionally not the first milestone. The first

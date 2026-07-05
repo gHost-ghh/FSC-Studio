@@ -403,6 +403,100 @@ std::string utcNowText() {
     return stream.str();
 }
 
+void createSchema(sqlite3* db) {
+    execSql(db, R"sql(
+        CREATE TABLE metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE persons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE faces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_name TEXT NOT NULL,
+            source_path TEXT,
+            embedding_blob BLOB NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            bbox_json TEXT,
+            kps_json TEXT,
+            landmarks_json TEXT,
+            landmarks3d_json TEXT,
+            face_mesh3d_json TEXT,
+            det_score REAL,
+            quality_score REAL NOT NULL DEFAULT 0,
+            quality_json TEXT,
+            preview_png BLOB,
+            person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+            image_hash TEXT,
+            ignored INTEGER NOT NULL DEFAULT 0,
+            review_state TEXT NOT NULL DEFAULT 'open',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE face_tags (
+            face_id INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY(face_id, tag_id)
+        );
+
+        CREATE TABLE person_identity_profiles (
+            person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+            sample_count INTEGER NOT NULL,
+            prototype_count INTEGER NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            centroid_blob BLOB NOT NULL,
+            prototypes_blob BLOB NOT NULL,
+            exemplar_blob BLOB,
+            exemplar_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            exemplar_weights_blob BLOB,
+            hard_negative_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            thresholds_json TEXT NOT NULL DEFAULT '{}',
+            calibration_json TEXT NOT NULL DEFAULT '{}',
+            strategy_version TEXT NOT NULL DEFAULT 'gallery_v2',
+            scoring_model_version TEXT NOT NULL DEFAULT 'numpy_gallery_v1',
+            accept_threshold REAL NOT NULL,
+            review_threshold REAL NOT NULL,
+            mean_similarity REAL NOT NULL,
+            min_similarity REAL NOT NULL,
+            max_similarity REAL NOT NULL,
+            quality_mean REAL NOT NULL,
+            evidence_face_ids_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'weak',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX idx_faces_file_name ON faces(file_name);
+        CREATE INDEX idx_faces_quality_score ON faces(quality_score);
+        CREATE INDEX idx_faces_person_id ON faces(person_id);
+        CREATE INDEX idx_faces_image_hash ON faces(image_hash);
+        CREATE INDEX idx_faces_ignored ON faces(ignored);
+        CREATE INDEX idx_faces_review_state ON faces(review_state);
+        CREATE INDEX idx_face_tags_tag_id ON face_tags(tag_id);
+    )sql");
+}
+
+void writeMetadata(sqlite3* db, const std::string& key, const std::string& value) {
+    Statement statement(db, "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)");
+    sqlite3_bind_text(statement.get(), 1, key.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 2, value.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(db));
+    }
+}
+
 IdentityProfile buildIdentityProfileFromFaces(
     int64_t personId,
     const std::string& personName,
@@ -561,6 +655,51 @@ IdentityProfile buildIdentityProfileFromFaces(
 
 
 } // namespace
+
+void Database::createEmpty(std::filesystem::path path, bool replace) {
+    if (path.extension() == ".dtb") {
+        throw std::runtime_error("Legacy .dtb files cannot be overwritten with the native .fscdb schema.");
+    }
+    if (!path.has_extension()) {
+        path += ".fscdb";
+    }
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    if (replace) {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        std::filesystem::remove(path.string() + "-wal", ignored);
+        std::filesystem::remove(path.string() + "-shm", ignored);
+    } else if (std::filesystem::exists(path)) {
+        throw std::runtime_error("Database already exists: " + path.string());
+    }
+
+    sqlite3* db = nullptr;
+    const int code = sqlite3_open_v2(path.string().c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+    if (code != SQLITE_OK) {
+        const std::string message = db == nullptr ? "Failed to create SQLite database." : sqlite3_errmsg(db);
+        if (db != nullptr) {
+            sqlite3_close(db);
+        }
+        throw std::runtime_error(message);
+    }
+
+    try {
+        execSql(db, "PRAGMA journal_mode=WAL");
+        execSql(db, "PRAGMA foreign_keys=ON");
+        createSchema(db);
+        writeMetadata(db, "format_version", "8");
+        writeMetadata(db, "metric", "cosine_normed_embedding");
+        writeMetadata(db, "created_at", utcNowText());
+        writeMetadata(db, "model_name", "buffalo_l");
+        writeMetadata(db, "application", "FSC Studio Native");
+        sqlite3_close(db);
+    } catch (...) {
+        sqlite3_close(db);
+        throw;
+    }
+}
 
 Database::Database(std::filesystem::path path) : path_(std::move(path)) {
     const int code = sqlite3_open_v2(path_.string().c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr);

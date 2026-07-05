@@ -18,6 +18,8 @@ public:
     explicit Database(std::filesystem::path path);
     ~Database();
 
+    static void createEmpty(std::filesystem::path path, bool replace = true);
+
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
     Database(Database&&) noexcept;

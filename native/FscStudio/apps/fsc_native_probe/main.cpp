@@ -22,6 +22,7 @@ namespace {
 void printUsage() {
     std::cout
         << "Usage:\n"
+        << "  fsc_native_probe <database.fscdb> create-db [replace|no-replace]\n"
         << "  fsc_native_probe <database.fscdb> stats\n"
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
@@ -147,8 +148,21 @@ int main(int argc, char** argv) {
     }
 
     try {
-        Database database(argv[1]);
+        const std::filesystem::path databasePath = argv[1];
         const std::string command = argv[2];
+        if (command == "create-db") {
+            const bool replace = argc < 4 || std::string(argv[3]) != "no-replace";
+            Database::createEmpty(databasePath, replace);
+            Database created(databasePath);
+            const auto stats = created.statistics();
+            std::cout << "created=" << databasePath.string() << "\n";
+            std::cout << "format_version=" << stats.formatVersion << "\n";
+            std::cout << "metric=" << stats.metric << "\n";
+            std::cout << "model=" << stats.modelName << "\n";
+            return 0;
+        }
+
+        Database database(databasePath);
         if (command == "stats") {
             const auto stats = database.statistics();
             std::cout << "format_version=" << stats.formatVersion << "\n";
