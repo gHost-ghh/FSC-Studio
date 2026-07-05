@@ -24,11 +24,11 @@ Observed local database probe:
 
 - `fsc_native_probe D:\FSC\new_full.fscdb stats`: format `8`, metric `cosine_normed_embedding`, model `buffalo_l`, faces `130`, people `119`, review `3`, average quality `0.8839`.
 - `fsc_native_probe D:\FSC\new_full.fscdb search 1 5`: returned cosine-ranked candidates from stored float32 embeddings.
-- `fsc_native_probe D:\FSC\new_full.fscdb identify 1 strict`: returned `review`, best profile `白乐航`, score `1.0000`, weak-profile message.
+- `fsc_native_probe D:\FSC\new_full.fscdb identify 1 strict`: returned `review`, best profile for face id `1`, score `1.0000`, weak-profile message.
 
 ## Checkpoint 2: Native InsightFace Inference
 
-Status: started.
+Status: first native image-to-database path verified on one sample.
 
 Acceptance:
 
@@ -48,6 +48,13 @@ First native SCRFD + ArcFace parity sample:
 - C++ native ONNX CPU: 1 face, score `0.8198`, box `[112.2487,145.7734,367.3689,459.4835]`, embedding dim `512`, norm `1.0000`.
 - Python InsightFace CPU reference: 1 face, score `0.8825`, box `[115.1451,141.5938,367.8138,455.8132]`, embedding dim `512`, norm `1.0000`.
 - C++ embedding vs Python embedding cosine: `0.9801`.
+
+First native image search sample:
+
+- Command: `fsc_native_probe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\native\FscStudio\out\probe\baiyh.ppm 5 0.50 strict`.
+- Result: 1 detected face, native embedding norm `1.0000`.
+- Identity Gallery result: `review` because the best profile is weak; best candidate was face id `1` with score `0.9801`.
+- Similar-face search Top 5: face ids `1`, `41`, `52`, `51`, `60`; top hit was the expected source identity.
 
 ## Checkpoint 3: Dense Mesh And Camera
 

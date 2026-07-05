@@ -43,6 +43,14 @@ if(FSC_ENABLE_ONNX)
     target_sources(FscVision PRIVATE src/vision/OnnxRuntimeSession.cpp)
     target_compile_definitions(FscVision PUBLIC FSC_ENABLE_ONNX=1)
     target_link_libraries(FscVision PUBLIC OnnxRuntime::OnnxRuntime)
+    function(fsc_copy_onnx_runtime target_name)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${OnnxRuntime_RUNTIME_LIBRARY}"
+                "$<TARGET_FILE_DIR:${target_name}>"
+            COMMENT "Copying ONNX Runtime DLL next to ${target_name}"
+        )
+    endfunction()
 endif()
 
 if(NOT FSC_CORE_ONLY)
@@ -54,17 +62,15 @@ if(NOT FSC_CORE_ONLY)
     )
     add_executable(fsc_native_probe apps/fsc_native_probe/main.cpp)
     target_link_libraries(fsc_native_probe PRIVATE FscCore FscVision)
+    if(FSC_ENABLE_ONNX)
+        fsc_copy_onnx_runtime(fsc_native_probe)
+    endif()
 endif()
 
 add_executable(fsc_vision_probe apps/fsc_vision_probe/main.cpp)
 target_link_libraries(fsc_vision_probe PRIVATE FscVision)
 if(FSC_ENABLE_ONNX)
-    add_custom_command(TARGET fsc_vision_probe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${OnnxRuntime_RUNTIME_LIBRARY}"
-            "$<TARGET_FILE_DIR:fsc_vision_probe>"
-        COMMENT "Copying ONNX Runtime DLL next to fsc_vision_probe"
-    )
+    fsc_copy_onnx_runtime(fsc_vision_probe)
 endif()
 
 enable_testing()
