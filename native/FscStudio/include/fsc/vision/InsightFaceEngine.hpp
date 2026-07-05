@@ -12,6 +12,8 @@ namespace fsc::vision {
 struct AnalyzedFace {
     Detection detection;
     std::vector<float> embedding;
+    std::vector<Point2f> landmarks2d;
+    std::vector<Point3f> landmarks3d;
 };
 
 class InsightFaceEngine {
@@ -32,6 +34,14 @@ public:
     [[nodiscard]] std::vector<float> extractEmbedding(
         const RgbImage& image,
         const std::array<Point2f, 5>& keypoints) const;
+
+    [[nodiscard]] std::vector<Point2f> extractLandmarks2d(
+        const RgbImage& image,
+        Rectf box) const;
+
+    [[nodiscard]] std::vector<Point3f> extractLandmarks3d(
+        const RgbImage& image,
+        Rectf box) const;
 
     [[nodiscard]] std::vector<AnalyzedFace> analyze(
         const RgbImage& image,

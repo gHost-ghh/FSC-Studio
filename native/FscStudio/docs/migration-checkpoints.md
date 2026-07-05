@@ -52,9 +52,16 @@ First native SCRFD + ArcFace parity sample:
 First native image search sample:
 
 - Command: `fsc_native_probe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\native\FscStudio\out\probe\baiyh.ppm 5 0.50 strict`.
-- Result: 1 detected face, native embedding norm `1.0000`.
+- Result: 1 detected face, native embedding norm `1.0000`, `106` 2D landmarks, `68` 3D landmarks.
 - Identity Gallery result: `review` because the best profile is weak; best candidate was face id `1` with score `0.9801`.
 - Similar-face search Top 5: face ids `1`, `41`, `52`, `51`, `60`; top hit was the expected source identity.
+
+First native landmark parity sample:
+
+- C++ 2D landmark first point: `[236.1922,461.5391]`.
+- Python InsightFace 2D landmark first point with the same box: `[236.1581,461.5482]`.
+- C++ 3D landmark first point: `[107.2578,267.3733,150.0926]`.
+- Python InsightFace 3D landmark first point with the same box: `[107.2689,267.3744,150.3109]`.
 
 ## Checkpoint 3: Dense Mesh And Camera
 

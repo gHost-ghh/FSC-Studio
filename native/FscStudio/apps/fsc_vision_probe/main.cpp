@@ -101,6 +101,17 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "\tembedding_norm=" << std::sqrt(norm);
             }
+            std::cout
+                << "\tlandmarks2d=" << face.landmarks2d.size()
+                << "\tlandmarks3d=" << face.landmarks3d.size();
+            if (!face.landmarks2d.empty()) {
+                const auto& point = face.landmarks2d.front();
+                std::cout << "\tfirst2d=[" << point.x << "," << point.y << "]";
+            }
+            if (!face.landmarks3d.empty()) {
+                const auto& point = face.landmarks3d.front();
+                std::cout << "\tfirst3d=[" << point.x << "," << point.y << "," << point.z << "]";
+            }
             std::cout << "\n";
             if (embeddingOutput) {
                 for (size_t j = 0; j < face.embedding.size(); ++j) {

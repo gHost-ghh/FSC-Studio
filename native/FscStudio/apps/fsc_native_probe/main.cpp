@@ -147,7 +147,9 @@ int main(int argc, char** argv) {
                     << "\tbox=[" << face.detection.box.x1 << "," << face.detection.box.y1 << ","
                     << face.detection.box.x2 << "," << face.detection.box.y2 << "]"
                     << "\tembedding_dim=" << face.embedding.size()
-                    << "\tembedding_norm=" << std::sqrt(embeddingNorm) << "\n";
+                    << "\tembedding_norm=" << std::sqrt(embeddingNorm)
+                    << "\tlandmarks2d=" << face.landmarks2d.size()
+                    << "\tlandmarks3d=" << face.landmarks3d.size() << "\n";
 
                 std::cout << "identity:\n";
                 printIdentityResult(identifyPerson(profiles, face.embedding, mode, 5));

@@ -16,6 +16,13 @@ namespace {
 
 constexpr int DetectorInputSize = 640;
 constexpr int RecognitionInputSize = 112;
+constexpr int LandmarkInputSize = 192;
+
+struct LandmarkCropTransform {
+    float scale = 1.0f;
+    float tx = 0.0f;
+    float ty = 0.0f;
+};
 
 std::wstring widePath(const std::filesystem::path& path) {
     return path.wstring();
@@ -101,6 +108,80 @@ std::vector<float> recognitionTensor(const RgbImage& aligned) {
     return tensor;
 }
 
+std::uint8_t sampleBilinearChannelWithZeroBorder(const RgbImage& image, float x, float y, int channel) {
+    if (image.empty() || channel < 0 || channel >= 3) {
+        return 0;
+    }
+    if (x < 0.0f || y < 0.0f || x > static_cast<float>(image.width - 1) || y > static_cast<float>(image.height - 1)) {
+        return 0;
+    }
+
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int x1 = std::min(x0 + 1, image.width - 1);
+    const int y1 = std::min(y0 + 1, image.height - 1);
+    const float dx = x - static_cast<float>(x0);
+    const float dy = y - static_cast<float>(y0);
+    const auto at = [&](int px, int py) -> float {
+        return static_cast<float>(image.pixels[static_cast<size_t>((py * image.width + px) * 3 + channel)]);
+    };
+    const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * dx;
+    const float bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * dx;
+    return static_cast<std::uint8_t>(std::clamp(top + (bottom - top) * dy, 0.0f, 255.0f));
+}
+
+RgbImage cropForLandmarks(const RgbImage& image, Rectf box, LandmarkCropTransform& transform) {
+    const float width = std::max(1.0f, box.x2 - box.x1);
+    const float height = std::max(1.0f, box.y2 - box.y1);
+    const float centerX = (box.x1 + box.x2) * 0.5f;
+    const float centerY = (box.y1 + box.y2) * 0.5f;
+    transform.scale = LandmarkInputSize / (std::max(width, height) * 1.5f);
+    transform.tx = LandmarkInputSize * 0.5f - centerX * transform.scale;
+    transform.ty = LandmarkInputSize * 0.5f - centerY * transform.scale;
+
+    RgbImage output;
+    output.width = LandmarkInputSize;
+    output.height = LandmarkInputSize;
+    output.pixels.resize(static_cast<size_t>(LandmarkInputSize * LandmarkInputSize * 3));
+    for (int y = 0; y < LandmarkInputSize; ++y) {
+        for (int x = 0; x < LandmarkInputSize; ++x) {
+            const float srcX = (static_cast<float>(x) - transform.tx) / transform.scale;
+            const float srcY = (static_cast<float>(y) - transform.ty) / transform.scale;
+            const size_t offset = static_cast<size_t>((y * LandmarkInputSize + x) * 3);
+            for (int channel = 0; channel < 3; ++channel) {
+                output.pixels[offset + static_cast<size_t>(channel)] =
+                    sampleBilinearChannelWithZeroBorder(image, srcX, srcY, channel);
+            }
+        }
+    }
+    return output;
+}
+
+std::vector<float> landmarkTensor(const RgbImage& crop) {
+    if (crop.width != LandmarkInputSize || crop.height != LandmarkInputSize) {
+        throw std::runtime_error("Landmark crop must be 192x192.");
+    }
+    std::vector<float> tensor(static_cast<size_t>(1 * 3 * LandmarkInputSize * LandmarkInputSize));
+    const int planeSize = LandmarkInputSize * LandmarkInputSize;
+    for (int y = 0; y < LandmarkInputSize; ++y) {
+        for (int x = 0; x < LandmarkInputSize; ++x) {
+            const size_t pixel = static_cast<size_t>((y * LandmarkInputSize + x) * 3);
+            const int index = y * LandmarkInputSize + x;
+            tensor[static_cast<size_t>(0 * planeSize + index)] = static_cast<float>(crop.pixels[pixel]);
+            tensor[static_cast<size_t>(1 * planeSize + index)] = static_cast<float>(crop.pixels[pixel + 1]);
+            tensor[static_cast<size_t>(2 * planeSize + index)] = static_cast<float>(crop.pixels[pixel + 2]);
+        }
+    }
+    return tensor;
+}
+
+std::vector<float> tensorValues(const Ort::Value& value) {
+    const auto* data = value.GetTensorData<float>();
+    const auto info = value.GetTensorTypeAndShapeInfo();
+    const size_t count = info.GetElementCount();
+    return {data, data + count};
+}
+
 float tensorAt(const Ort::Value& value, int row, int col) {
     const auto* data = value.GetTensorData<float>();
     const auto shape = value.GetTensorTypeAndShapeInfo().GetShape();
@@ -131,8 +212,12 @@ public:
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         detector_ = std::make_unique<Ort::Session>(env_, widePath(models_.detectionModelPath).c_str(), options);
         recognizer_ = std::make_unique<Ort::Session>(env_, widePath(models_.recognitionModelPath).c_str(), options);
+        landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark2dModelPath).c_str(), options);
+        landmark3d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark3dModelPath).c_str(), options);
         detectorOutputNames_ = outputNames(*detector_, allocator_);
         recognizerOutputNames_ = outputNames(*recognizer_, allocator_);
+        landmark2dOutputNames_ = outputNames(*landmark2d_, allocator_);
+        landmark3dOutputNames_ = outputNames(*landmark3d_, allocator_);
     }
 
     std::vector<Detection> detect(const RgbImage& image, float threshold, int maxFaces) const {
@@ -236,6 +321,92 @@ public:
         return fsc::core::normalize(embedding);
     }
 
+    std::vector<Point2f> extractLandmarks2d(const RgbImage& image, Rectf box) const {
+        LandmarkCropTransform transform;
+        auto crop = cropForLandmarks(image, box, transform);
+        auto input = landmarkTensor(crop);
+        std::array<int64_t, 4> inputShape{1, 3, LandmarkInputSize, LandmarkInputSize};
+        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        auto inputValue = Ort::Value::CreateTensor<float>(
+            memoryInfo,
+            input.data(),
+            input.size(),
+            inputShape.data(),
+            inputShape.size());
+
+        const char* inputName = "data";
+        const auto outputNamePointers = namePointers(landmark2dOutputNames_);
+        auto outputs = landmark2d_->Run(
+            Ort::RunOptions{nullptr},
+            &inputName,
+            &inputValue,
+            1,
+            outputNamePointers.data(),
+            outputNamePointers.size());
+        const auto values = tensorValues(outputs.front());
+        if (values.size() < 106 * 2 || values.size() % 2 != 0) {
+            throw std::runtime_error("Unexpected 2D landmark output shape.");
+        }
+
+        const size_t pointCount = values.size() / 2;
+        const size_t start = pointCount > 106 ? pointCount - 106 : 0;
+        std::vector<Point2f> landmarks;
+        landmarks.reserve(106);
+        for (size_t i = start; i < pointCount; ++i) {
+            const float cropX = (values[i * 2] + 1.0f) * (LandmarkInputSize * 0.5f);
+            const float cropY = (values[i * 2 + 1] + 1.0f) * (LandmarkInputSize * 0.5f);
+            landmarks.push_back({
+                (cropX - transform.tx) / transform.scale,
+                (cropY - transform.ty) / transform.scale,
+            });
+        }
+        return landmarks;
+    }
+
+    std::vector<Point3f> extractLandmarks3d(const RgbImage& image, Rectf box) const {
+        LandmarkCropTransform transform;
+        auto crop = cropForLandmarks(image, box, transform);
+        auto input = landmarkTensor(crop);
+        std::array<int64_t, 4> inputShape{1, 3, LandmarkInputSize, LandmarkInputSize};
+        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        auto inputValue = Ort::Value::CreateTensor<float>(
+            memoryInfo,
+            input.data(),
+            input.size(),
+            inputShape.data(),
+            inputShape.size());
+
+        const char* inputName = "data";
+        const auto outputNamePointers = namePointers(landmark3dOutputNames_);
+        auto outputs = landmark3d_->Run(
+            Ort::RunOptions{nullptr},
+            &inputName,
+            &inputValue,
+            1,
+            outputNamePointers.data(),
+            outputNamePointers.size());
+        const auto values = tensorValues(outputs.front());
+        if (values.size() < 68 * 3 || values.size() % 3 != 0) {
+            throw std::runtime_error("Unexpected 3D landmark output shape.");
+        }
+
+        const size_t pointCount = values.size() / 3;
+        const size_t start = pointCount > 68 ? pointCount - 68 : 0;
+        std::vector<Point3f> landmarks;
+        landmarks.reserve(68);
+        for (size_t i = start; i < pointCount; ++i) {
+            const float cropX = (values[i * 3] + 1.0f) * (LandmarkInputSize * 0.5f);
+            const float cropY = (values[i * 3 + 1] + 1.0f) * (LandmarkInputSize * 0.5f);
+            const float cropZ = values[i * 3 + 2] * (LandmarkInputSize * 0.5f);
+            landmarks.push_back({
+                (cropX - transform.tx) / transform.scale,
+                (cropY - transform.ty) / transform.scale,
+                cropZ / transform.scale,
+            });
+        }
+        return landmarks;
+    }
+
 private:
     InsightFaceModelPaths models_;
     RuntimeMode mode_;
@@ -243,8 +414,12 @@ private:
     Ort::AllocatorWithDefaultOptions allocator_;
     std::unique_ptr<Ort::Session> detector_;
     std::unique_ptr<Ort::Session> recognizer_;
+    std::unique_ptr<Ort::Session> landmark2d_;
+    std::unique_ptr<Ort::Session> landmark3d_;
     std::vector<std::string> detectorOutputNames_;
     std::vector<std::string> recognizerOutputNames_;
+    std::vector<std::string> landmark2dOutputNames_;
+    std::vector<std::string> landmark3dOutputNames_;
 };
 
 InsightFaceEngine::InsightFaceEngine(InsightFaceModelPaths models, RuntimeMode mode)
@@ -264,10 +439,23 @@ std::vector<float> InsightFaceEngine::extractEmbedding(
     return impl_->extractEmbedding(image, keypoints);
 }
 
+std::vector<Point2f> InsightFaceEngine::extractLandmarks2d(const RgbImage& image, Rectf box) const {
+    return impl_->extractLandmarks2d(image, box);
+}
+
+std::vector<Point3f> InsightFaceEngine::extractLandmarks3d(const RgbImage& image, Rectf box) const {
+    return impl_->extractLandmarks3d(image, box);
+}
+
 std::vector<AnalyzedFace> InsightFaceEngine::analyze(const RgbImage& image, float detectionThreshold, int maxFaces) const {
     std::vector<AnalyzedFace> faces;
     for (auto& detection : detect(image, detectionThreshold, maxFaces)) {
-        faces.push_back({detection, extractEmbedding(image, detection.keypoints)});
+        faces.push_back({
+            detection,
+            extractEmbedding(image, detection.keypoints),
+            extractLandmarks2d(image, detection.box),
+            extractLandmarks3d(image, detection.box),
+        });
     }
     return faces;
 }
