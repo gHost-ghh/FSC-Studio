@@ -7,7 +7,7 @@
 
 ## Checkpoint 1: Native Database And Identity Probe
 
-Status: started.
+Status: verified for local `new_full.fscdb`.
 
 Acceptance:
 
@@ -19,6 +19,12 @@ Acceptance:
 - `fsc_vision_probe models D:\FSC\model\insightface\models` validates all local buffalo_l model paths before ONNX inference is wired.
 - `fsc_vision_probe onnx <model>` inspects model I/O after `FSC_ENABLE_ONNX=ON` is configured.
 - ONNX-enabled probe must copy the matching `onnxruntime.dll` beside the executable; relying on PATH is not enough because Windows can load an older `System32\onnxruntime.dll`.
+
+Observed local database probe:
+
+- `fsc_native_probe D:\FSC\new_full.fscdb stats`: format `8`, metric `cosine_normed_embedding`, model `buffalo_l`, faces `130`, people `119`, review `3`, average quality `0.8839`.
+- `fsc_native_probe D:\FSC\new_full.fscdb search 1 5`: returned cosine-ranked candidates from stored float32 embeddings.
+- `fsc_native_probe D:\FSC\new_full.fscdb identify 1 strict`: returned `review`, best profile `白乐航`, score `1.0000`, weak-profile message.
 
 ## Checkpoint 2: Native InsightFace Inference
 

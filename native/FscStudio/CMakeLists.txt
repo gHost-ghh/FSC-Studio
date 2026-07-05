@@ -14,6 +14,11 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 if(NOT FSC_CORE_ONLY)
     find_package(SQLite3 REQUIRED)
     find_package(nlohmann_json CONFIG REQUIRED)
+    if(TARGET SQLite3::SQLite3)
+        set(FSC_SQLITE_TARGET SQLite3::SQLite3)
+    else()
+        set(FSC_SQLITE_TARGET SQLite::SQLite3)
+    endif()
 endif()
 
 add_library(FscCore STATIC
@@ -44,7 +49,7 @@ if(NOT FSC_CORE_ONLY)
     target_sources(FscCore PRIVATE src/core/Database.cpp)
     target_link_libraries(FscCore
         PUBLIC
-            SQLite::SQLite3
+            ${FSC_SQLITE_TARGET}
             nlohmann_json::nlohmann_json
     )
     add_executable(fsc_native_probe apps/fsc_native_probe/main.cpp)

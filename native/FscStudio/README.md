@@ -39,9 +39,9 @@ cmake --build --preset msvc-debug
 ctest --preset msvc-debug
 ```
 
-`msvc-debug` is dependency-light and builds the algorithm core first. Use
-`msvc-release` after vcpkg dependencies are installed to build the SQLite probe
-and Qt shell.
+`msvc-debug` is dependency-light and builds the algorithm core first. For the
+SQLite probe, configure with vcpkg and `FSC_CORE_ONLY=OFF`. Enable the vcpkg
+`qt-app` feature later when the full Qt shell is ready.
 
 To enable ONNX Runtime C++ model inspection without Qt/SQLite:
 
