@@ -112,4 +112,18 @@ struct IdentityResult {
     std::string message;
 };
 
+struct IdentityTrainingOptions {
+    double minQuality = 0.35;
+    int maxExemplars = 12;
+    std::vector<int64_t> personIds;
+};
+
+struct IdentityTrainingSummary {
+    int profilesBuilt = 0;
+    int weakProfiles = 0;
+    int skippedPeople = 0;
+    int samplesUsed = 0;
+    std::vector<std::string> messages;
+};
+
 } // namespace fsc::core

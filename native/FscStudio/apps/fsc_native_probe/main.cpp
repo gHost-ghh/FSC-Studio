@@ -21,6 +21,7 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> stats\n"
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
+        << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
         << "  fsc_native_probe <database.fscdb> image-search <model_root> <image.ppm> [top_k] [threshold] [strict|balanced|broad]\n";
 }
 
@@ -115,6 +116,21 @@ int main(int argc, char** argv) {
             }
             const auto result = identifyPerson(database.loadIdentityProfiles(), query->embedding, mode, 5);
             printIdentityResult(result);
+            return 0;
+        }
+
+        if (command == "train-profiles") {
+            IdentityTrainingOptions options;
+            options.minQuality = argc >= 4 ? std::stod(argv[3]) : options.minQuality;
+            options.maxExemplars = argc >= 5 ? std::atoi(argv[4]) : options.maxExemplars;
+            const auto summary = database.rebuildIdentityProfiles(options);
+            std::cout << "profiles_built=" << summary.profilesBuilt << "\n";
+            std::cout << "weak_profiles=" << summary.weakProfiles << "\n";
+            std::cout << "skipped_people=" << summary.skippedPeople << "\n";
+            std::cout << "samples_used=" << summary.samplesUsed << "\n";
+            for (const auto& message : summary.messages) {
+                std::cout << "message=" << message << "\n";
+            }
             return 0;
         }
 

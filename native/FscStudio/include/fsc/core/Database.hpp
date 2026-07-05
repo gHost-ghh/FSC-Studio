@@ -30,6 +30,7 @@ public:
     [[nodiscard]] std::optional<FaceRecord> loadFace(int64_t faceId) const;
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;
+    IdentityTrainingSummary rebuildIdentityProfiles(const IdentityTrainingOptions& options = {});
 
 private:
     std::filesystem::path path_;

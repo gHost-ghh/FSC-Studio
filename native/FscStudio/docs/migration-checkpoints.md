@@ -7,7 +7,7 @@
 
 ## Checkpoint 1: Native Database And Identity Probe
 
-Status: verified for local `new_full.fscdb`.
+Status: verified for local `new_full.fscdb`, including native Identity Gallery rebuild on a copied database.
 
 Acceptance:
 
@@ -16,6 +16,7 @@ Acceptance:
 - `fsc_native_probe D:\FSC\new_full.fscdb stats` reads `.fscdb` v8 metadata and counts.
 - `fsc_native_probe D:\FSC\new_full.fscdb search <face_id>` returns cosine-ranked faces.
 - `fsc_native_probe D:\FSC\new_full.fscdb identify <face_id>` returns Identity Gallery candidates from existing profiles.
+- `fsc_native_probe <copy.fscdb> train-profiles` rebuilds local Identity Gallery profiles without Python.
 - `fsc_vision_probe models D:\FSC\model\insightface\models` validates all local buffalo_l model paths before ONNX inference is wired.
 - `fsc_vision_probe onnx <model>` inspects model I/O after `FSC_ENABLE_ONNX=ON` is configured.
 - ONNX-enabled probe must copy the matching `onnxruntime.dll` beside the executable; relying on PATH is not enough because Windows can load an older `System32\onnxruntime.dll`.
@@ -25,6 +26,8 @@ Observed local database probe:
 - `fsc_native_probe D:\FSC\new_full.fscdb stats`: format `8`, metric `cosine_normed_embedding`, model `buffalo_l`, faces `130`, people `119`, review `3`, average quality `0.8839`.
 - `fsc_native_probe D:\FSC\new_full.fscdb search 1 5`: returned cosine-ranked candidates from stored float32 embeddings.
 - `fsc_native_probe D:\FSC\new_full.fscdb identify 1 strict`: returned `review`, best profile for face id `1`, score `1.0000`, weak-profile message.
+- `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_train.fscdb train-profiles 0.35 12`: rebuilt `119` profiles from `127` usable samples on a copied database; `117` profiles were weak because most people have fewer than 3 confirmed faces.
+- `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_train.fscdb identify 1 strict`: returned `review`, best candidate face id `1`, score `1.0000`, weak-profile message after native rebuild.
 
 ## Checkpoint 2: Native InsightFace Inference
 

@@ -6,7 +6,13 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <ctime>
 #include <cstring>
+#include <iomanip>
+#include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -97,6 +103,462 @@ std::vector<std::vector<float>> rowsFromFlat(std::vector<float> flat, int rowCou
     }
     return rows;
 }
+
+struct TrainingFace {
+    int64_t id = 0;
+    int64_t personId = 0;
+    std::string personName;
+    int embeddingDim = 0;
+    std::vector<float> embedding;
+    double quality = 0.0;
+};
+
+void execSql(sqlite3* db, const char* sql) {
+    char* error = nullptr;
+    if (sqlite3_exec(db, sql, nullptr, nullptr, &error) != SQLITE_OK) {
+        std::string message = error == nullptr ? "SQLite command failed." : error;
+        sqlite3_free(error);
+        throw std::runtime_error(message);
+    }
+}
+
+std::string placeholders(size_t count) {
+    std::string output;
+    for (size_t i = 0; i < count; ++i) {
+        output += i == 0 ? "?" : ",?";
+    }
+    return output;
+}
+
+std::vector<float> weightedCentroid(const std::vector<std::vector<float>>& matrix, const std::vector<double>& qualities) {
+    if (matrix.empty()) {
+        return {};
+    }
+    std::vector<float> centroid(matrix.front().size(), 0.0f);
+    double total = 0.0;
+    for (size_t row = 0; row < matrix.size(); ++row) {
+        const double weight = std::clamp(qualities[row], 0.10, 1.0);
+        total += weight;
+        for (size_t dim = 0; dim < centroid.size(); ++dim) {
+            centroid[dim] += static_cast<float>(matrix[row][dim] * weight);
+        }
+    }
+    if (total > 1e-8) {
+        for (auto& value : centroid) {
+            value = static_cast<float>(value / total);
+        }
+    }
+    return normalize(centroid);
+}
+
+std::vector<double> consistencyScores(const std::vector<std::vector<float>>& matrix) {
+    std::vector<double> consistency(matrix.size(), 1.0);
+    if (matrix.size() <= 1) {
+        return consistency;
+    }
+    for (size_t row = 0; row < matrix.size(); ++row) {
+        double total = 0.0;
+        int count = 0;
+        for (size_t other = 0; other < matrix.size(); ++other) {
+            if (row == other) {
+                continue;
+            }
+            total += dot(matrix[row], matrix[other]);
+            ++count;
+        }
+        consistency[row] = count > 0 ? total / count : 1.0;
+    }
+    return consistency;
+}
+
+std::vector<int> selectExemplarPositions(
+    const std::vector<std::vector<float>>& matrix,
+    const std::vector<double>& qualities,
+    int maxExemplars) {
+    if (matrix.empty()) {
+        return {};
+    }
+    const auto consistency = consistencyScores(matrix);
+    std::vector<int> order(matrix.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int left, int right) {
+        const double leftScore = std::clamp(qualities[static_cast<size_t>(left)], 0.0, 1.0) * 0.62 + consistency[static_cast<size_t>(left)] * 0.38;
+        const double rightScore = std::clamp(qualities[static_cast<size_t>(right)], 0.0, 1.0) * 0.62 + consistency[static_cast<size_t>(right)] * 0.38;
+        if (std::abs(leftScore - rightScore) > 1e-12) {
+            return leftScore > rightScore;
+        }
+        return left < right;
+    });
+
+    const int limit = std::max(1, maxExemplars);
+    std::vector<int> selected;
+    for (int index : order) {
+        if (selected.empty()) {
+            selected.push_back(index);
+        } else {
+            double maxSimilarity = -1.0;
+            for (int existing : selected) {
+                maxSimilarity = std::max(maxSimilarity, dot(matrix[static_cast<size_t>(existing)], matrix[static_cast<size_t>(index)]));
+            }
+            if (maxSimilarity < 0.985 || selected.size() < std::min<size_t>(3, matrix.size())) {
+                selected.push_back(index);
+            }
+        }
+        if (selected.size() >= static_cast<size_t>(limit)) {
+            break;
+        }
+    }
+    return selected;
+}
+
+std::vector<float> exemplarWeights(
+    const std::vector<std::vector<float>>& matrix,
+    const std::vector<double>& qualities,
+    const std::vector<int>& positions) {
+    if (positions.empty()) {
+        return {};
+    }
+    const auto consistency = consistencyScores(matrix);
+    std::vector<float> weights;
+    weights.reserve(positions.size());
+    for (int position : positions) {
+        const size_t index = static_cast<size_t>(position);
+        const double quality = std::clamp(qualities[index], 0.10, 1.0);
+        const double centrality = std::clamp((consistency[index] + 1.0) * 0.5, 0.10, 1.0);
+        weights.push_back(static_cast<float>(std::max(0.05, quality * 0.65 + centrality * 0.35)));
+    }
+    const double total = std::accumulate(weights.begin(), weights.end(), 0.0);
+    if (total > 1e-8) {
+        for (auto& weight : weights) {
+            weight = static_cast<float>(weight / total);
+        }
+    }
+    return weights;
+}
+
+std::vector<float> flattenRows(const std::vector<std::vector<float>>& rows) {
+    std::vector<float> output;
+    size_t total = 0;
+    for (const auto& row : rows) {
+        total += row.size();
+    }
+    output.reserve(total);
+    for (const auto& row : rows) {
+        output.insert(output.end(), row.begin(), row.end());
+    }
+    return output;
+}
+
+void bindFloatVector(sqlite3_stmt* stmt, int index, const std::vector<float>& values) {
+    sqlite3_bind_blob(
+        stmt,
+        index,
+        values.data(),
+        static_cast<int>(values.size() * sizeof(float)),
+        SQLITE_TRANSIENT);
+}
+
+nlohmann::json thresholdsJson(const IdentityProfile& profile) {
+    return {
+        {"strict", {{"accept", profile.strict.accept}, {"review", profile.strict.review}, {"margin", profile.strict.margin}}},
+        {"balanced", {{"accept", profile.balanced.accept}, {"review", profile.balanced.review}, {"margin", profile.balanced.margin}}},
+        {"broad", {{"accept", profile.broad.accept}, {"review", profile.broad.review}, {"margin", profile.broad.margin}}},
+    };
+}
+
+double ridgeScore(const std::vector<std::vector<float>>& exemplars, const std::vector<float>& query) {
+    if (exemplars.empty()) {
+        return 0.0;
+    }
+    if (exemplars.size() == 1) {
+        return dot(exemplars.front(), query);
+    }
+
+    const size_t n = exemplars.size();
+    std::vector<std::vector<double>> gram(n, std::vector<double>(n, 0.0));
+    std::vector<double> rhs(n, 0.0);
+    for (size_t row = 0; row < n; ++row) {
+        rhs[row] = dot(exemplars[row], query);
+        for (size_t col = 0; col < n; ++col) {
+            gram[row][col] = dot(exemplars[row], exemplars[col]);
+        }
+        gram[row][row] += 0.035;
+    }
+
+    for (size_t col = 0; col < n; ++col) {
+        size_t pivot = col;
+        for (size_t row = col + 1; row < n; ++row) {
+            if (std::abs(gram[row][col]) > std::abs(gram[pivot][col])) {
+                pivot = row;
+            }
+        }
+        std::swap(gram[col], gram[pivot]);
+        std::swap(rhs[col], rhs[pivot]);
+        const double divisor = std::abs(gram[col][col]) < 1e-9 ? 1e-9 : gram[col][col];
+        for (size_t j = col; j < n; ++j) {
+            gram[col][j] /= divisor;
+        }
+        rhs[col] /= divisor;
+        for (size_t row = 0; row < n; ++row) {
+            if (row == col) {
+                continue;
+            }
+            const double factor = gram[row][col];
+            for (size_t j = col; j < n; ++j) {
+                gram[row][j] -= factor * gram[col][j];
+            }
+            rhs[row] -= factor * rhs[col];
+        }
+    }
+
+    for (auto& weight : rhs) {
+        weight = std::max(0.0, weight);
+    }
+    const double total = std::accumulate(rhs.begin(), rhs.end(), 0.0);
+    if (total <= 1e-8) {
+        double best = -1.0;
+        for (const auto& exemplar : exemplars) {
+            best = std::max(best, dot(exemplar, query));
+        }
+        return best;
+    }
+
+    std::vector<float> reconstruction(query.size(), 0.0f);
+    for (size_t row = 0; row < exemplars.size(); ++row) {
+        for (size_t dim = 0; dim < reconstruction.size(); ++dim) {
+            reconstruction[dim] += static_cast<float>((rhs[row] / total) * exemplars[row][dim]);
+        }
+    }
+    reconstruction = normalize(reconstruction);
+    return dot(reconstruction, query);
+}
+
+double scoreProfileFallback(
+    const std::vector<float>& centroid,
+    const std::vector<std::vector<float>>& exemplars,
+    const std::vector<float>& weights,
+    const std::vector<float>& query) {
+    if (query.empty()) {
+        return 0.0;
+    }
+    std::vector<double> scores;
+    scores.reserve(exemplars.size());
+    for (const auto& exemplar : exemplars) {
+        scores.push_back(exemplar.size() == query.size() ? dot(exemplar, query) : -1.0);
+    }
+    const double centroidScore = centroid.size() == query.size() ? dot(centroid, query) : 0.0;
+    const double best = scores.empty() ? centroidScore : *std::max_element(scores.begin(), scores.end());
+    auto sorted = scores;
+    std::sort(sorted.begin(), sorted.end());
+    const size_t topCount = std::min<size_t>(3, sorted.size());
+    const double topMean = topCount == 0
+        ? best
+        : std::accumulate(sorted.end() - static_cast<std::ptrdiff_t>(topCount), sorted.end(), 0.0) / static_cast<double>(topCount);
+    double weightScore = best;
+    if (weights.size() == scores.size() && !scores.empty()) {
+        weightScore = 0.0;
+        for (size_t index = 0; index < scores.size(); ++index) {
+            weightScore += scores[index] * weights[index];
+        }
+    }
+    const double reconstruction = ridgeScore(exemplars, query);
+    return best * 0.32 + topMean * 0.20 + centroidScore * 0.20 + reconstruction * 0.20 + weightScore * 0.08;
+}
+
+std::vector<double> upperPairwiseScores(const std::vector<std::vector<float>>& matrix) {
+    std::vector<double> scores;
+    if (matrix.size() < 2) {
+        return scores;
+    }
+    for (size_t row = 0; row < matrix.size(); ++row) {
+        for (size_t col = row + 1; col < matrix.size(); ++col) {
+            scores.push_back(dot(matrix[row], matrix[col]));
+        }
+    }
+    return scores;
+}
+
+double percentile(std::vector<double> values, double percent) {
+    if (values.empty()) {
+        return 0.0;
+    }
+    std::sort(values.begin(), values.end());
+    const double position = (values.size() - 1) * percent / 100.0;
+    const auto low = static_cast<size_t>(std::floor(position));
+    const auto high = static_cast<size_t>(std::ceil(position));
+    if (low == high) {
+        return values[low];
+    }
+    const double fraction = position - static_cast<double>(low);
+    return values[low] * (1.0 - fraction) + values[high] * fraction;
+}
+
+std::string utcNowText() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t time = std::chrono::system_clock::to_time_t(now);
+    std::tm utc{};
+    gmtime_s(&utc, &time);
+    std::ostringstream stream;
+    stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    return stream.str();
+}
+
+IdentityProfile buildIdentityProfileFromFaces(
+    int64_t personId,
+    const std::string& personName,
+    const std::vector<TrainingFace>& faces,
+    const std::vector<TrainingFace>& negatives,
+    int maxExemplars) {
+    IdentityProfile profile;
+    profile.personId = personId;
+    profile.personName = personName;
+    if (faces.empty()) {
+        return profile;
+    }
+
+    const int dim = faces.front().embeddingDim;
+    std::vector<std::vector<float>> matrix;
+    std::vector<int64_t> faceIds;
+    std::vector<double> qualities;
+    for (const auto& face : faces) {
+        if (face.embeddingDim == dim && face.embedding.size() == static_cast<size_t>(dim)) {
+            matrix.push_back(normalize(face.embedding));
+            faceIds.push_back(face.id);
+            qualities.push_back(face.quality);
+        }
+    }
+    if (matrix.empty()) {
+        return profile;
+    }
+
+    profile.sampleCount = static_cast<int>(matrix.size());
+    profile.embeddingDim = dim;
+    profile.centroid = weightedCentroid(matrix, qualities);
+
+    const auto selected = selectExemplarPositions(matrix, qualities, maxExemplars);
+    profile.exemplarWeights = exemplarWeights(matrix, qualities, selected);
+    for (int position : selected) {
+        profile.exemplars.push_back(matrix[static_cast<size_t>(position)]);
+        profile.exemplarFaceIds.push_back(faceIds[static_cast<size_t>(position)]);
+    }
+    profile.prototypes = profile.exemplars;
+    profile.prototypeCount = static_cast<int>(profile.exemplars.size());
+    profile.evidenceFaceIds = profile.exemplarFaceIds;
+
+    const auto pairwise = upperPairwiseScores(matrix);
+    if (pairwise.empty()) {
+        profile.meanSimilarity = 1.0;
+        profile.minSimilarity = 1.0;
+        profile.maxSimilarity = 1.0;
+    } else {
+        profile.meanSimilarity = std::accumulate(pairwise.begin(), pairwise.end(), 0.0) / static_cast<double>(pairwise.size());
+        profile.minSimilarity = *std::min_element(pairwise.begin(), pairwise.end());
+        profile.maxSimilarity = *std::max_element(pairwise.begin(), pairwise.end());
+    }
+    const double mean = profile.meanSimilarity;
+    double variance = 0.0;
+    for (const double value : pairwise) {
+        variance += (value - mean) * (value - mean);
+    }
+    const double scoreStd = pairwise.empty() ? 0.0 : std::sqrt(variance / static_cast<double>(pairwise.size()));
+    profile.qualityMean = std::accumulate(qualities.begin(), qualities.end(), 0.0) / static_cast<double>(qualities.size());
+
+    std::vector<std::vector<float>> negativeMatrix;
+    std::vector<int64_t> negativeFaceIds;
+    for (const auto& face : negatives) {
+        if (face.embeddingDim == dim && face.embedding.size() == static_cast<size_t>(dim)) {
+            negativeMatrix.push_back(normalize(face.embedding));
+            negativeFaceIds.push_back(face.id);
+        }
+    }
+
+    std::vector<double> negativeScores;
+    negativeScores.reserve(negativeMatrix.size());
+    for (const auto& negative : negativeMatrix) {
+        negativeScores.push_back(scoreProfileFallback(profile.centroid, profile.exemplars, profile.exemplarWeights, negative));
+    }
+    std::vector<int> negativeOrder(negativeScores.size());
+    std::iota(negativeOrder.begin(), negativeOrder.end(), 0);
+    std::sort(negativeOrder.begin(), negativeOrder.end(), [&](int left, int right) {
+        if (std::abs(negativeScores[static_cast<size_t>(left)] - negativeScores[static_cast<size_t>(right)]) > 1e-12) {
+            return negativeScores[static_cast<size_t>(left)] > negativeScores[static_cast<size_t>(right)];
+        }
+        return left < right;
+    });
+    for (int index : negativeOrder) {
+        if (profile.hardNegativeFaceIds.size() >= 12) {
+            break;
+        }
+        profile.hardNegativeFaceIds.push_back(negativeFaceIds[static_cast<size_t>(index)]);
+    }
+
+    std::vector<double> positiveScores;
+    if (matrix.size() >= 2) {
+        for (size_t holdout = 0; holdout < matrix.size(); ++holdout) {
+            std::vector<std::vector<float>> support;
+            std::vector<double> supportQualities;
+            for (size_t row = 0; row < matrix.size(); ++row) {
+                if (row == holdout) {
+                    continue;
+                }
+                support.push_back(matrix[row]);
+                supportQualities.push_back(qualities[row]);
+            }
+            const auto supportCentroid = weightedCentroid(support, supportQualities);
+            const auto supportPositions = selectExemplarPositions(
+                support,
+                supportQualities,
+                std::min(12, std::max<int>(1, static_cast<int>(support.size()))));
+            std::vector<std::vector<float>> supportExemplars;
+            for (int position : supportPositions) {
+                supportExemplars.push_back(support[static_cast<size_t>(position)]);
+            }
+            const auto supportWeights = exemplarWeights(support, supportQualities, supportPositions);
+            positiveScores.push_back(scoreProfileFallback(supportCentroid, supportExemplars, supportWeights, matrix[holdout]));
+        }
+    }
+
+    const double positiveMean = positiveScores.empty()
+        ? profile.meanSimilarity - std::max(0.04, scoreStd * 1.2)
+        : std::accumulate(positiveScores.begin(), positiveScores.end(), 0.0) / static_cast<double>(positiveScores.size());
+    const double posP05 = positiveScores.empty() ? positiveMean : percentile(positiveScores, 5.0);
+    const double posP10 = positiveScores.empty() ? positiveMean : percentile(positiveScores, 10.0);
+    const double posP20 = positiveScores.empty() ? positiveMean : percentile(positiveScores, 20.0);
+    const double negP90 = negativeScores.empty() ? 0.0 : percentile(negativeScores, 90.0);
+    const double negP95 = negativeScores.empty() ? 0.0 : percentile(negativeScores, 95.0);
+    const double negP99 = negativeScores.empty() ? 0.0 : percentile(negativeScores, 99.0);
+    const double negMax = negativeScores.empty() ? 0.0 : *std::max_element(negativeScores.begin(), negativeScores.end());
+
+    double strictAccept = 0.92;
+    double balancedAccept = 0.90;
+    double broadAccept = 0.88;
+    if (profile.sampleCount >= 3) {
+        strictAccept = std::clamp(std::max(negP99 + 0.045, posP20 - 0.025), 0.48, 0.94);
+        balancedAccept = std::clamp(std::max(negP95 + 0.030, posP10 - 0.045), 0.43, strictAccept);
+        broadAccept = std::clamp(std::max(negP90 + 0.015, posP05 - 0.070), 0.38, balancedAccept);
+    }
+    profile.strict = {strictAccept, std::clamp(strictAccept - 0.100, 0.35, strictAccept - 0.020), 0.055};
+    profile.balanced = {balancedAccept, std::clamp(balancedAccept - 0.115, 0.32, balancedAccept - 0.020), 0.040};
+    profile.broad = {broadAccept, std::clamp(broadAccept - 0.130, 0.28, broadAccept - 0.020), 0.025};
+    profile.acceptThreshold = profile.strict.accept;
+    profile.reviewThreshold = profile.strict.review;
+    profile.status = profile.sampleCount >= 3 ? "strong" : "weak";
+    if (profile.status == "weak") {
+        profile.health = "weak: add at least 3 confirmed faces";
+    } else if (profile.sampleCount < 5) {
+        profile.health = "fair: add more angles";
+    } else if (!positiveScores.empty() && !negativeScores.empty()) {
+        const double gap = percentile(positiveScores, 10.0) - percentile(negativeScores, 95.0);
+        profile.health = gap < 0.03 ? "risky: close hard negatives" : (gap < 0.08 ? "fair: narrow margin" : "healthy");
+    } else {
+        profile.health = "healthy";
+    }
+    profile.strategyVersion = "gallery_v2";
+    profile.scoringModelVersion = "numpy_gallery_v1";
+    profile.updatedAt = utcNowText();
+    return profile;
+}
+
 
 } // namespace
 
@@ -374,6 +836,169 @@ std::vector<IdentityProfile> Database::loadIdentityProfiles() const {
         }
     }
     return profiles;
+}
+
+IdentityTrainingSummary Database::rebuildIdentityProfiles(const IdentityTrainingOptions& options) {
+    IdentityTrainingSummary summary;
+    const bool targeted = !options.personIds.empty();
+
+    std::string peopleSql = "SELECT id, name FROM persons";
+    if (targeted) {
+        peopleSql += " WHERE id IN (" + placeholders(options.personIds.size()) + ")";
+    }
+    peopleSql += " ORDER BY name COLLATE NOCASE";
+    Statement peopleStatement(db_, peopleSql.c_str());
+    for (size_t i = 0; i < options.personIds.size(); ++i) {
+        sqlite3_bind_int64(peopleStatement.get(), static_cast<int>(i + 1), options.personIds[i]);
+    }
+    std::vector<std::pair<int64_t, std::string>> people;
+    while (sqlite3_step(peopleStatement.get()) == SQLITE_ROW) {
+        people.emplace_back(sqlite3_column_int64(peopleStatement.get(), 0), textColumn(peopleStatement.get(), 1));
+    }
+    if (people.empty()) {
+        summary.messages.push_back(targeted ? "No selected people are available for training." : "No named people are available for training.");
+        return summary;
+    }
+
+    std::string facesSql =
+        "SELECT f.id, f.person_id, p.name, f.embedding_blob, f.embedding_dim, COALESCE(f.quality_score, 0) "
+        "FROM faces f JOIN persons p ON p.id = f.person_id "
+        "WHERE f.person_id IS NOT NULL AND f.ignored = 0 AND f.quality_score >= ?";
+    if (targeted) {
+        facesSql += " AND f.person_id IN (" + placeholders(options.personIds.size()) + ")";
+    }
+    facesSql += " ORDER BY p.name COLLATE NOCASE, f.quality_score DESC, f.id ASC";
+    Statement facesStatement(db_, facesSql.c_str());
+    sqlite3_bind_double(facesStatement.get(), 1, options.minQuality);
+    for (size_t i = 0; i < options.personIds.size(); ++i) {
+        sqlite3_bind_int64(facesStatement.get(), static_cast<int>(i + 2), options.personIds[i]);
+    }
+
+    std::vector<TrainingFace> allFaces;
+    while (sqlite3_step(facesStatement.get()) == SQLITE_ROW) {
+        TrainingFace face;
+        face.id = sqlite3_column_int64(facesStatement.get(), 0);
+        face.personId = sqlite3_column_int64(facesStatement.get(), 1);
+        face.personName = textColumn(facesStatement.get(), 2);
+        face.embeddingDim = sqlite3_column_int(facesStatement.get(), 4);
+        face.embedding = normalize(floatBlob(facesStatement.get(), 3, face.embeddingDim));
+        face.quality = sqlite3_column_double(facesStatement.get(), 5);
+        if (!face.embedding.empty()) {
+            allFaces.push_back(std::move(face));
+        }
+    }
+
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        if (targeted) {
+            std::string deleteSql = "DELETE FROM person_identity_profiles WHERE person_id IN (" + placeholders(options.personIds.size()) + ")";
+            Statement deleteStatement(db_, deleteSql.c_str());
+            for (size_t i = 0; i < options.personIds.size(); ++i) {
+                sqlite3_bind_int64(deleteStatement.get(), static_cast<int>(i + 1), options.personIds[i]);
+            }
+            if (sqlite3_step(deleteStatement.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        } else {
+            execSql(db_, "DELETE FROM person_identity_profiles");
+        }
+
+        const char* saveSql =
+            "INSERT OR REPLACE INTO person_identity_profiles ("
+            "person_id, sample_count, prototype_count, embedding_dim, centroid_blob, prototypes_blob, "
+            "exemplar_blob, exemplar_face_ids_json, exemplar_weights_blob, hard_negative_face_ids_json, "
+            "thresholds_json, calibration_json, strategy_version, scoring_model_version, accept_threshold, "
+            "review_threshold, mean_similarity, min_similarity, max_similarity, quality_mean, "
+            "evidence_face_ids_json, status, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+        for (const auto& [personId, personName] : people) {
+            std::vector<TrainingFace> faces;
+            std::vector<TrainingFace> negatives;
+            for (const auto& face : allFaces) {
+                if (face.personId == personId) {
+                    faces.push_back(face);
+                } else {
+                    negatives.push_back(face);
+                }
+            }
+            if (faces.empty()) {
+                ++summary.skippedPeople;
+                std::ostringstream message;
+                message << personName << ": skipped, no usable assigned faces above quality " << std::fixed << std::setprecision(2) << options.minQuality << ".";
+                summary.messages.push_back(message.str());
+                continue;
+            }
+
+            auto profile = buildIdentityProfileFromFaces(personId, personName, faces, negatives, options.maxExemplars);
+            if (profile.centroid.empty() || profile.exemplars.empty()) {
+                ++summary.skippedPeople;
+                summary.messages.push_back(personName + ": skipped, embeddings could not be normalized.");
+                continue;
+            }
+
+            const auto prototypes = flattenRows(profile.prototypes);
+            const auto exemplars = flattenRows(profile.exemplars);
+            const auto thresholds = thresholdsJson(profile).dump();
+            const auto calibration = nlohmann::json{
+                {"positive_count", std::max(0, profile.sampleCount - 1)},
+                {"negative_count", negatives.size()},
+                {"positive_mean", profile.meanSimilarity},
+                {"negative_max", nullptr},
+                {"strict_gap", nullptr},
+                {"health", profile.health},
+            }.dump();
+            const auto exemplarFaceIds = nlohmann::json(profile.exemplarFaceIds).dump();
+            const auto hardNegativeFaceIds = nlohmann::json(profile.hardNegativeFaceIds).dump();
+            const auto evidenceFaceIds = nlohmann::json(profile.evidenceFaceIds).dump();
+
+            Statement saveStatement(db_, saveSql);
+            sqlite3_bind_int64(saveStatement.get(), 1, profile.personId);
+            sqlite3_bind_int(saveStatement.get(), 2, profile.sampleCount);
+            sqlite3_bind_int(saveStatement.get(), 3, profile.prototypeCount);
+            sqlite3_bind_int(saveStatement.get(), 4, profile.embeddingDim);
+            bindFloatVector(saveStatement.get(), 5, profile.centroid);
+            bindFloatVector(saveStatement.get(), 6, prototypes);
+            bindFloatVector(saveStatement.get(), 7, exemplars);
+            sqlite3_bind_text(saveStatement.get(), 8, exemplarFaceIds.c_str(), -1, SQLITE_TRANSIENT);
+            bindFloatVector(saveStatement.get(), 9, profile.exemplarWeights);
+            sqlite3_bind_text(saveStatement.get(), 10, hardNegativeFaceIds.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 11, thresholds.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 12, calibration.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 13, profile.strategyVersion.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 14, profile.scoringModelVersion.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(saveStatement.get(), 15, profile.acceptThreshold);
+            sqlite3_bind_double(saveStatement.get(), 16, profile.reviewThreshold);
+            sqlite3_bind_double(saveStatement.get(), 17, profile.meanSimilarity);
+            sqlite3_bind_double(saveStatement.get(), 18, profile.minSimilarity);
+            sqlite3_bind_double(saveStatement.get(), 19, profile.maxSimilarity);
+            sqlite3_bind_double(saveStatement.get(), 20, profile.qualityMean);
+            sqlite3_bind_text(saveStatement.get(), 21, evidenceFaceIds.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 22, profile.status.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(saveStatement.get(), 23, profile.updatedAt.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(saveStatement.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+
+            ++summary.profilesBuilt;
+            summary.samplesUsed += profile.sampleCount;
+            if (profile.status == "weak") {
+                ++summary.weakProfiles;
+            }
+            std::ostringstream message;
+            message << personName << ": " << profile.sampleCount << " sample(s), "
+                    << profile.prototypeCount << " exemplar(s), " << profile.status
+                    << ", health " << profile.health
+                    << ", strict accept " << std::fixed << std::setprecision(3) << profile.acceptThreshold << ".";
+            summary.messages.push_back(message.str());
+        }
+        execSql(db_, "COMMIT");
+    } catch (...) {
+        execSql(db_, "ROLLBACK");
+        throw;
+    }
+
+    return summary;
 }
 
 } // namespace fsc::core
