@@ -195,6 +195,97 @@ float clamp(float value, float low, float high) {
     return std::max(low, std::min(high, value));
 }
 
+double clamp01(double value) {
+    return std::max(0.0, std::min(1.0, value));
+}
+
+int reflect101(int value, int size) {
+    if (size <= 1) {
+        return 0;
+    }
+    while (value < 0 || value >= size) {
+        if (value < 0) {
+            value = -value;
+        } else {
+            value = 2 * size - 2 - value;
+        }
+    }
+    return value;
+}
+
+AnalyzedFace scoreFaceQuality(AnalyzedFace face, const RgbImage& image) {
+    const int x1 = static_cast<int>(std::clamp(std::round(face.detection.box.x1), 0.0f, static_cast<float>(image.width - 1)));
+    const int y1 = static_cast<int>(std::clamp(std::round(face.detection.box.y1), 0.0f, static_cast<float>(image.height - 1)));
+    const int x2 = static_cast<int>(std::clamp(std::round(face.detection.box.x2), 0.0f, static_cast<float>(image.width)));
+    const int y2 = static_cast<int>(std::clamp(std::round(face.detection.box.y2), 0.0f, static_cast<float>(image.height)));
+    const int faceWidth = std::max(0, x2 - x1);
+    const int faceHeight = std::max(0, y2 - y1);
+    const double imageArea = std::max(1, image.width * image.height);
+    face.qualityAreaRatio = (faceWidth * faceHeight) / imageArea;
+    if (faceWidth <= 0 || faceHeight <= 0) {
+        return face;
+    }
+
+    std::vector<double> gray(static_cast<size_t>(faceWidth * faceHeight));
+    double sum = 0.0;
+    for (int y = 0; y < faceHeight; ++y) {
+        for (int x = 0; x < faceWidth; ++x) {
+            const size_t pixel = static_cast<size_t>(((y1 + y) * image.width + (x1 + x)) * 3);
+            const double red = image.pixels[pixel];
+            const double green = image.pixels[pixel + 1];
+            const double blue = image.pixels[pixel + 2];
+            const double value = std::round(0.299 * red + 0.587 * green + 0.114 * blue);
+            gray[static_cast<size_t>(y * faceWidth + x)] = value;
+            sum += value;
+        }
+    }
+
+    const double count = static_cast<double>(gray.size());
+    face.qualityBrightness = sum / count;
+    double contrastAccumulator = 0.0;
+    for (const double value : gray) {
+        const double delta = value - face.qualityBrightness;
+        contrastAccumulator += delta * delta;
+    }
+    face.qualityContrast = std::sqrt(contrastAccumulator / count);
+
+    double laplacianSum = 0.0;
+    double laplacianSquaredSum = 0.0;
+    const auto grayAt = [&](int x, int y) -> double {
+        x = reflect101(x, faceWidth);
+        y = reflect101(y, faceHeight);
+        return gray[static_cast<size_t>(y * faceWidth + x)];
+    };
+    for (int y = 0; y < faceHeight; ++y) {
+        for (int x = 0; x < faceWidth; ++x) {
+            const double value =
+                grayAt(x - 1, y) +
+                grayAt(x + 1, y) +
+                grayAt(x, y - 1) +
+                grayAt(x, y + 1) -
+                4.0 * grayAt(x, y);
+            laplacianSum += value;
+            laplacianSquaredSum += value * value;
+        }
+    }
+    const double laplacianMean = laplacianSum / count;
+    face.qualitySharpness = std::max(0.0, laplacianSquaredSum / count - laplacianMean * laplacianMean);
+
+    const double detComponent = clamp01((static_cast<double>(face.detection.score) - 0.45) / 0.5);
+    const double areaComponent = clamp01(face.qualityAreaRatio / 0.08);
+    const double sharpnessComponent = clamp01(face.qualitySharpness / 160.0);
+    const double brightnessComponent = clamp01(1.0 - std::abs(face.qualityBrightness - 128.0) / 128.0);
+    const double contrastComponent = clamp01(face.qualityContrast / 64.0);
+    const double score =
+        0.35 * detComponent +
+        0.20 * areaComponent +
+        0.25 * sharpnessComponent +
+        0.10 * brightnessComponent +
+        0.10 * contrastComponent;
+    face.qualityScore = std::round(clamp01(score) * 1000000.0) / 1000000.0;
+    return face;
+}
+
 } // namespace
 
 class InsightFaceEngine::Impl {
@@ -450,12 +541,12 @@ std::vector<Point3f> InsightFaceEngine::extractLandmarks3d(const RgbImage& image
 std::vector<AnalyzedFace> InsightFaceEngine::analyze(const RgbImage& image, float detectionThreshold, int maxFaces) const {
     std::vector<AnalyzedFace> faces;
     for (auto& detection : detect(image, detectionThreshold, maxFaces)) {
-        faces.push_back({
+        faces.push_back(scoreFaceQuality({
             detection,
             extractEmbedding(image, detection.keypoints),
             extractLandmarks2d(image, detection.box),
             extractLandmarks3d(image, detection.box),
-        });
+        }, image));
     }
     return faces;
 }

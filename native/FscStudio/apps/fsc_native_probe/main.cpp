@@ -149,7 +149,8 @@ int main(int argc, char** argv) {
                     << "\tembedding_dim=" << face.embedding.size()
                     << "\tembedding_norm=" << std::sqrt(embeddingNorm)
                     << "\tlandmarks2d=" << face.landmarks2d.size()
-                    << "\tlandmarks3d=" << face.landmarks3d.size() << "\n";
+                    << "\tlandmarks3d=" << face.landmarks3d.size()
+                    << "\tquality=" << face.qualityScore << "\n";
 
                 std::cout << "identity:\n";
                 printIdentityResult(identifyPerson(profiles, face.embedding, mode, 5));

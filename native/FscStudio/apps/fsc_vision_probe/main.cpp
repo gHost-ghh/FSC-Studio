@@ -103,7 +103,8 @@ int main(int argc, char** argv) {
             }
             std::cout
                 << "\tlandmarks2d=" << face.landmarks2d.size()
-                << "\tlandmarks3d=" << face.landmarks3d.size();
+                << "\tlandmarks3d=" << face.landmarks3d.size()
+                << "\tquality=" << face.qualityScore;
             if (!face.landmarks2d.empty()) {
                 const auto& point = face.landmarks2d.front();
                 std::cout << "\tfirst2d=[" << point.x << "," << point.y << "]";

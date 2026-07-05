@@ -14,6 +14,11 @@ struct AnalyzedFace {
     std::vector<float> embedding;
     std::vector<Point2f> landmarks2d;
     std::vector<Point3f> landmarks3d;
+    double qualityScore = 0.0;
+    double qualityAreaRatio = 0.0;
+    double qualitySharpness = 0.0;
+    double qualityBrightness = 0.0;
+    double qualityContrast = 0.0;
 };
 
 class InsightFaceEngine {
