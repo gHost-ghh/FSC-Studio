@@ -19,6 +19,7 @@ Acceptance:
 - `fsc_native_probe <copy.fscdb> train-profiles` rebuilds local Identity Gallery profiles without Python.
 - `fsc_native_probe <new.fscdb> create-db` creates a Python-compatible v8 `.fscdb` without Python.
 - `fsc_native_probe <copy.fscdb> import-image <model_root> <image_path>` analyzes a JPEG/PNG/BMP/PPM image through native ONNX and inserts detected faces into `.fscdb`.
+- `fsc_native_probe <database.fscdb> add-person`, `assign-person`, `people`, and `train-profiles` cover the minimal native People -> assigned faces -> Identity Gallery loop.
 - `fsc_vision_probe models D:\FSC\model\insightface\models` validates all local buffalo_l model paths before ONNX inference is wired.
 - `fsc_vision_probe onnx <model>` inspects model I/O after `FSC_ENABLE_ONNX=ON` is configured.
 - ONNX-enabled probe must copy the matching `onnxruntime.dll` beside the executable; relying on PATH is not enough because Windows can load an older `System32\onnxruntime.dll`.
@@ -34,6 +35,7 @@ Observed local database probe:
 - `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_import.fscdb search 131 5`: found original face id `1` as the best non-self hit with cosine `0.9801`.
 - `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_created.fscdb create-db`: created an empty v8 database with model `buffalo_l`.
 - Importing `baiyh.jpg` into that new database inserted face id `1`; importing it a second time inserted face id `2` with `duplicate=true`, and searching face id `2` returned face id `1` with cosine `1.0000`.
+- On `native_people.fscdb`, the native probe created a database, imported `baiyh.jpg`, added person `NativeTest`, assigned face id `1`, rebuilt identity profiles, and identified face id `1` as `NativeTest` with score `1.0000` in `review` because the profile is weak.
 
 ## Checkpoint 2: Native InsightFace Inference
 

@@ -986,6 +986,50 @@ bool Database::imageHashExists(const std::string& imageHash) const {
     return sqlite3_step(statement.get()) == SQLITE_ROW;
 }
 
+int64_t Database::upsertPerson(const std::string& name, const std::string& notes) {
+    if (name.empty()) {
+        throw std::runtime_error("Person name cannot be empty.");
+    }
+    {
+        Statement statement(db_, "INSERT OR IGNORE INTO persons(name, notes) VALUES (?, ?)");
+        sqlite3_bind_text(statement.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement.get(), 2, notes.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+            throw std::runtime_error(sqlite3_errmsg(db_));
+        }
+    }
+    if (!notes.empty()) {
+        Statement update(db_, "UPDATE persons SET notes = ? WHERE name = ?");
+        sqlite3_bind_text(update.get(), 1, notes.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(update.get(), 2, name.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(update.get()) != SQLITE_DONE) {
+            throw std::runtime_error(sqlite3_errmsg(db_));
+        }
+    }
+    Statement select(db_, "SELECT id FROM persons WHERE name = ?");
+    sqlite3_bind_text(select.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(select.get()) != SQLITE_ROW) {
+        throw std::runtime_error("Failed to read inserted person id.");
+    }
+    return sqlite3_column_int64(select.get(), 0);
+}
+
+void Database::assignFaceToPerson(int64_t faceId, int64_t personId) {
+    Statement statement(db_, "UPDATE faces SET person_id = ? WHERE id = ?");
+    if (personId > 0) {
+        sqlite3_bind_int64(statement.get(), 1, personId);
+    } else {
+        sqlite3_bind_null(statement.get(), 1);
+    }
+    sqlite3_bind_int64(statement.get(), 2, faceId);
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(db_));
+    }
+    if (sqlite3_changes(db_) == 0) {
+        throw std::runtime_error("Face id not found: " + std::to_string(faceId));
+    }
+}
+
 int64_t Database::insertFace(const FaceInsertRecord& record) {
     const char* sql =
         "INSERT INTO faces ("

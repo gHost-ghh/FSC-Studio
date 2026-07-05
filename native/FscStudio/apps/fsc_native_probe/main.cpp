@@ -24,6 +24,9 @@ void printUsage() {
         << "Usage:\n"
         << "  fsc_native_probe <database.fscdb> create-db [replace|no-replace]\n"
         << "  fsc_native_probe <database.fscdb> stats\n"
+        << "  fsc_native_probe <database.fscdb> people\n"
+        << "  fsc_native_probe <database.fscdb> add-person <name> [notes]\n"
+        << "  fsc_native_probe <database.fscdb> assign-person <face_id> <person_id>\n"
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
@@ -172,6 +175,46 @@ int main(int argc, char** argv) {
             std::cout << "people=" << stats.peopleCount << "\n";
             std::cout << "review=" << stats.reviewCount << "\n";
             std::cout << "average_quality=" << std::fixed << std::setprecision(4) << stats.averageQuality << "\n";
+            return 0;
+        }
+
+        if (command == "people") {
+            const auto people = database.loadPeople();
+            std::cout << "people=" << people.size() << "\n";
+            for (const auto& person : people) {
+                std::cout
+                    << person.id << "\t"
+                    << person.name << "\t"
+                    << "faces=" << person.faceCount << "\t"
+                    << "avg_quality=" << std::fixed << std::setprecision(4) << person.averageQuality << "\t"
+                    << "identity=" << person.identityStatus << "\t"
+                    << "samples=" << person.identitySampleCount << "\t"
+                    << "exemplars=" << person.identityExemplarCount << "\n";
+            }
+            return 0;
+        }
+
+        if (command == "add-person") {
+            if (argc < 4) {
+                printUsage();
+                return 2;
+            }
+            const std::string notes = argc >= 5 ? argv[4] : "";
+            const auto id = database.upsertPerson(argv[3], notes);
+            std::cout << "person_id=" << id << "\n";
+            return 0;
+        }
+
+        if (command == "assign-person") {
+            if (argc < 5) {
+                printUsage();
+                return 2;
+            }
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto personId = std::strtoll(argv[4], nullptr, 10);
+            database.assignFaceToPerson(faceId, personId);
+            std::cout << "assigned_face=" << faceId << "\n";
+            std::cout << "person_id=" << personId << "\n";
             return 0;
         }
 

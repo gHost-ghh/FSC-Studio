@@ -33,6 +33,8 @@ public:
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;
     [[nodiscard]] bool imageHashExists(const std::string& imageHash) const;
+    int64_t upsertPerson(const std::string& name, const std::string& notes = {});
+    void assignFaceToPerson(int64_t faceId, int64_t personId);
     int64_t insertFace(const FaceInsertRecord& record);
     IdentityTrainingSummary rebuildIdentityProfiles(const IdentityTrainingOptions& options = {});
 

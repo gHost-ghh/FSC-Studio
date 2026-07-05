@@ -23,6 +23,7 @@ continuing that prototype.
 - Vector search over normalized InsightFace embeddings.
 - Identity Gallery identification using existing profile tables.
 - Identity Gallery profile rebuilding on existing databases.
+- Minimal native People CRUD for adding people and assigning faces before profile rebuilding.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
@@ -74,6 +75,9 @@ ctest --test-dir out\build\msvc-vs-db-debug -C Debug --output-on-failure
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg 5 0.50 strict
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb create-db
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb import-image D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg 0.50
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb add-person NativeTest
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb assign-person 1 1
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb train-profiles 0.35 12
 ```
 
 The full Qt application is intentionally not the first milestone. The first
