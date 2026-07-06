@@ -36,6 +36,7 @@ public:
     int64_t upsertPerson(const std::string& name, const std::string& notes = {});
     void assignFaceToPerson(int64_t faceId, int64_t personId);
     void updateFaceReview(int64_t faceId, const std::string& reviewState, bool ignored, const std::string& notes = {});
+    void updateFaceMesh3d(int64_t faceId, const std::vector<std::vector<double>>& faceMesh3d);
     int64_t insertFace(const FaceInsertRecord& record);
     IdentityTrainingSummary rebuildIdentityProfiles(const IdentityTrainingOptions& options = {});
 

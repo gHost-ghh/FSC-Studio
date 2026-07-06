@@ -29,6 +29,10 @@ continuing that prototype.
 - CLI probes for database/search/identity/import and model-path parity checks.
 - Minimal Qt Widgets desktop shell with Overview, Library, People, Search, Review, Compare, Clusters, Dense Mesh, Runtime, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
+- Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
+
+The final migration requires full UI and workflow parity with `fsc_studio.py`.
+Track that explicitly in `docs/python-ui-parity.md`.
 
 ## Build
 

@@ -80,7 +80,7 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: cached 3D data display and native Camera capture started; native Dense Mesh generation pending.
+Status: cached 3D data display, native fallback mesh generation, and native Camera capture started; MediaPipe-equivalent textured Dense Mesh generation pending.
 
 Acceptance:
 
@@ -92,6 +92,8 @@ Current Dense Mesh shell:
 
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
 - Qt Dense Mesh tab renders cached dense mesh or falls back to 3D landmarks in a native draggable point-cloud preview.
+- Qt Dense Mesh tab can generate and cache a deterministic native fallback mesh from existing 3D landmarks.
+- `fsc_native_probe <database.fscdb> build-mesh <face_id>` writes fallback `face_mesh3d_json` without Python.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 
 Current Camera shell:
@@ -125,7 +127,7 @@ Current Qt shell:
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
-- Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; DirectML provider wiring is still pending.
+- Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.

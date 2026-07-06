@@ -3,6 +3,7 @@
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
+#include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
@@ -865,10 +866,12 @@ private:
         meshOverlayCheck_ = new QCheckBox("3D Landmarks", controls);
         meshOverlayCheck_->setChecked(true);
         auto* loadButton = new QPushButton("Load 3D Data", controls);
+        auto* generateButton = new QPushButton("Generate Native Mesh", controls);
         meshStatusLabel_ = new QLabel("Select a face", controls);
         controlsLayout->addWidget(meshFaceIdSpin_);
         controlsLayout->addWidget(meshOverlayCheck_);
         controlsLayout->addWidget(loadButton);
+        controlsLayout->addWidget(generateButton);
         controlsLayout->addWidget(meshStatusLabel_, 1);
         layout->addWidget(controls);
 
@@ -877,6 +880,7 @@ private:
         tabs_->addTab(page, "Dense Mesh");
 
         connect(loadButton, &QPushButton::clicked, this, [this] { loadDenseMeshFace(); });
+        connect(generateButton, &QPushButton::clicked, this, [this] { generateNativeMeshForSelectedFace(); });
         connect(meshOverlayCheck_, &QCheckBox::toggled, this, [this] { loadDenseMeshFace(); });
     }
 
@@ -1145,6 +1149,28 @@ private:
                 std::move(points),
                 std::move(overlay),
                 QString("Face %1").arg(face->id));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void generateNativeMeshForSelectedFace() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int faceId = meshFaceIdSpin_->value();
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                throw std::runtime_error("Face id not found.");
+            }
+            if (face->landmarks3d.empty()) {
+                throw std::runtime_error("This face has no cached 3D landmarks to build a native mesh from.");
+            }
+            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            database_->updateFaceMesh3d(faceId, mesh);
+            loadDenseMeshFace();
+            statusBar()->showMessage(QString("Generated native mesh for face %1 (%2 points)").arg(faceId).arg(mesh.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -1659,6 +1685,22 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return !face->landmarks3d.empty() || !face->faceMesh3d.empty() ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--mesh-generate-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value() || face->landmarks3d.empty()) {
+                return 1;
+            }
+            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            database.updateFaceMesh3d(faceId, mesh);
+            const auto updated = database.loadFace(faceId);
+            return updated.has_value() && !updated->faceMesh3d.empty() ? 0 : 1;
         } catch (...) {
             return 1;
         }

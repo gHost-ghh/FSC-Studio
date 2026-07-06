@@ -2,6 +2,7 @@
 #include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
+#include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
@@ -31,6 +32,7 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
+        << "  fsc_native_probe <database.fscdb> build-mesh <face_id>\n"
         << "  fsc_native_probe <database.fscdb> import-image <model_root> <image_path> [threshold] [person_id]\n"
         << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n";
 }
@@ -281,6 +283,24 @@ int main(int argc, char** argv) {
             for (const auto& message : summary.messages) {
                 std::cout << "message=" << message << "\n";
             }
+            return 0;
+        }
+
+        if (command == "build-mesh") {
+            if (argc < 4) {
+                printUsage();
+                return 2;
+            }
+            const int64_t faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value()) {
+                std::cerr << "Face id not found: " << faceId << "\n";
+                return 1;
+            }
+            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            database.updateFaceMesh3d(faceId, mesh);
+            std::cout << "updated_face=" << faceId << "\n";
+            std::cout << "mesh_points=" << mesh.size() << "\n";
             return 0;
         }
 

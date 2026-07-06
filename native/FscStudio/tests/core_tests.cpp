@@ -1,6 +1,7 @@
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
+#include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/FaceGeometry.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 
@@ -94,6 +95,17 @@ void modelPathResolutionUsesBuffaloRoot() {
     assert(fsc::vision::parseRuntimeMode("dml") == fsc::vision::RuntimeMode::DirectMl);
 }
 
+void syntheticMeshBuildsFromLandmarks() {
+    std::vector<std::vector<double>> landmarks;
+    for (int i = 0; i < 16; ++i) {
+        const double angle = static_cast<double>(i) * 0.3926990817;
+        landmarks.push_back({100.0 + std::cos(angle) * 40.0, 120.0 + std::sin(angle) * 55.0, 10.0 + std::cos(angle) * 5.0});
+    }
+    const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(landmarks, {16, 18});
+    assert(mesh.size() > landmarks.size());
+    assert(mesh.front().size() == 3);
+}
+
 } // namespace
 
 int main() {
@@ -103,6 +115,7 @@ int main() {
     visionSimilarityTransformMapsReferencePoints();
     visionNmsKeepsBestBoxes();
     modelPathResolutionUsesBuffaloRoot();
+    syntheticMeshBuildsFromLandmarks();
     std::cout << "fsc_core_tests passed\n";
     return 0;
 }

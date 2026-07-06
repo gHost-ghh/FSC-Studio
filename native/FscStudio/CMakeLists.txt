@@ -64,6 +64,12 @@ if(FSC_ENABLE_ONNX)
     endfunction()
 endif()
 
+add_library(FscMesh STATIC
+    src/mesh/FaceMesh.cpp
+)
+target_include_directories(FscMesh PUBLIC include)
+target_compile_definitions(FscMesh PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
 if(NOT FSC_CORE_ONLY OR FSC_BUILD_QT_APP)
     target_sources(FscCore PRIVATE src/core/Database.cpp)
     target_link_libraries(FscCore
@@ -73,7 +79,7 @@ if(NOT FSC_CORE_ONLY OR FSC_BUILD_QT_APP)
     )
     if(NOT FSC_CORE_ONLY)
         add_executable(fsc_native_probe apps/fsc_native_probe/main.cpp)
-        target_link_libraries(fsc_native_probe PRIVATE FscCore FscVision)
+        target_link_libraries(fsc_native_probe PRIVATE FscCore FscVision FscMesh)
         if(FSC_ENABLE_ONNX)
             fsc_copy_onnx_runtime(fsc_native_probe)
         endif()
@@ -88,13 +94,13 @@ endif()
 
 enable_testing()
 add_executable(fsc_core_tests tests/core_tests.cpp)
-target_link_libraries(fsc_core_tests PRIVATE FscCore FscVision)
+target_link_libraries(fsc_core_tests PRIVATE FscCore FscVision FscMesh)
 add_test(NAME fsc_core_tests COMMAND fsc_core_tests)
 
 if(FSC_BUILD_QT_APP)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
     add_executable(FscStudioQt WIN32 apps/FscAppQt/main.cpp)
-    target_link_libraries(FscStudioQt PRIVATE FscCore FscVision Qt6::Widgets)
+    target_link_libraries(FscStudioQt PRIVATE FscCore FscVision FscMesh Qt6::Widgets)
     if(FSC_ENABLE_ONNX)
         fsc_copy_onnx_runtime(FscStudioQt)
     endif()
