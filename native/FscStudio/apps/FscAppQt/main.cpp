@@ -55,6 +55,14 @@ std::filesystem::path pathFrom(const QString& value) {
     return std::filesystem::path(value.toStdWString());
 }
 
+QString defaultModelRoot() {
+    const auto packaged = QApplication::applicationDirPath() + "/models/insightface/models";
+    if (std::filesystem::exists(pathFrom(packaged))) {
+        return packaged;
+    }
+    return "D:\\FSC\\model\\insightface\\models";
+}
+
 QTableWidgetItem* item(const QString& value) {
     auto* output = new QTableWidgetItem(value);
     output->setFlags(output->flags() & ~Qt::ItemIsEditable);
@@ -816,7 +824,7 @@ private:
         auto* controls = new QWidget(page);
         auto* form = new QFormLayout(controls);
         modelRootEdit_ = new QLineEdit(controls);
-        modelRootEdit_->setText("D:\\FSC\\model\\insightface\\models");
+        modelRootEdit_->setText(defaultModelRoot());
         importImageEdit_ = new QLineEdit(controls);
         auto* modelButton = new QPushButton("Browse", controls);
         auto* imageButton = new QPushButton("Browse", controls);

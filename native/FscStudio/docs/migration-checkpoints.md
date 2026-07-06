@@ -96,7 +96,7 @@ Current Dense Mesh shell:
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
-Status: expanded Qt desktop shell verified; full page parity and installer pending.
+Status: expanded Qt desktop shell and Python-free portable package verified; full page parity and installer pending.
 
 Acceptance:
 
@@ -112,12 +112,22 @@ Current Qt shell:
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; DirectML provider wiring is still pending.
+- Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
+
+Current portable package:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Debug`.
+- Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
+- It does not include Python runtime, user databases, or personal image data.
+- `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
+- Launch check from the portable directory stayed running for 3 seconds.
 
 Dependency notes:
 

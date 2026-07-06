@@ -106,5 +106,17 @@ failed archive into `D:\FSC\.deps\vcpkg\downloads` and rerun the preset. On this
 machine `mity-md4c-release-0.5.3.tar.gz` and
 `strawberry-perl-5.42.2.1-64bit-portable.zip` needed that manual cache step.
 
+To create a Python-free portable package from the current Qt build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1
+.\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb
+.\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke .\out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
+```
+
+The package contains the app, Qt runtime DLLs, Qt platform plugin, ONNX Runtime,
+and the local InsightFace model directory. It intentionally does not include
+Python, user databases, or personal photos.
+
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.
