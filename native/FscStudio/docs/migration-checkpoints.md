@@ -135,13 +135,14 @@ Current Qt shell:
 - Review now shows a selected-face detail preview, can run the native identity suggestion scorer, and can confirm the suggested person while retraining identity profiles.
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
-- Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
+- Clusters can group stored face embeddings with configurable cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options; the page shows known people, member tags, selected-member preview, and batch assignment actions.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Runtime tab now shows current database stats and provides native SQLite maintenance actions: integrity check, database backup, WAL checkpoint, VACUUM, and operation log.
 - Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `FscStudioQt.exe --cluster-action-smoke D:\FSC\native\FscStudio\out\probe\native_cluster_action_smoke.fscdb NativeClusterSmoke`: exit code `0`.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --library-visual-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --metadata-smoke D:\FSC\native\FscStudio\out\probe\native_metadata_smoke.fscdb 1`: exit code `0`.

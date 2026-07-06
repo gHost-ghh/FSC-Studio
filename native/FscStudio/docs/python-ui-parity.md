@@ -83,6 +83,7 @@ workflows, and user experience before the migration can be considered complete.
 - Native Search can analyze a standalone query image, choose among detected faces, filter by threshold/min-quality/ignored state, show identity candidates plus a separate result preview, and assign/confirm people from results. It still lacks Python's progressive animated comparison preview and person/tag filter combos.
 - Native Compare now supports two previews, detected-face lists, click-to-select boxes, focus toggles, and selected-pair comparison.
 - Native Review now has selected-face preview and AI suggested-person confirmation, but still lacks the complete Python metadata layout.
+- Native Clusters now includes known people, member tags, max-face/min-quality/unassigned/ignored filters, selected-member preview, and batch cluster assignment.
 - Native Runtime now includes current database stats and maintenance actions for integrity check, backup, WAL checkpoint, VACUUM, and operation logging.
 - Native Camera now includes threshold/top-k/interval/process-size controls, current database status, live boxes, best-match preview, per-face identity smoothing, and an identity-plus-similar-hit table. It still needs result action buttons.
 - Dense Mesh native generation currently has a deterministic synthetic fallback from 3D landmarks. It is not a MediaPipe-equivalent textured mesh and cannot be treated as final parity.

@@ -257,17 +257,34 @@ const fsc::vision::AnalyzedFace& bestFace(const std::vector<fsc::vision::Analyze
 
 struct ClusterSummary {
     std::vector<fsc::core::FaceRecord> members;
+    std::vector<std::string> knownPeople;
+    std::string suggestedName;
+    int64_t representativeId = 0;
     double meanSimilarity = 0.0;
     double maxSimilarity = 0.0;
     double averageQuality = 0.0;
 };
 
-std::vector<ClusterSummary> buildClusters(std::vector<fsc::core::FaceRecord> records, double threshold, int minSize) {
+std::vector<ClusterSummary> buildClusters(
+    std::vector<fsc::core::FaceRecord> records,
+    double threshold,
+    int minSize,
+    double minQuality = 0.0,
+    bool unassignedOnly = false,
+    int maxFaces = 0) {
     records.erase(
-        std::remove_if(records.begin(), records.end(), [](const auto& record) {
-            return record.embedding.empty();
+        std::remove_if(records.begin(), records.end(), [minQuality, unassignedOnly](const auto& record) {
+            return record.embedding.empty() ||
+                record.qualityScore < minQuality ||
+                (unassignedOnly && record.personId > 0);
         }),
         records.end());
+    if (maxFaces > 0 && records.size() > static_cast<size_t>(maxFaces)) {
+        std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+            return left.qualityScore > right.qualityScore;
+        });
+        records.resize(static_cast<size_t>(maxFaces));
+    }
     const int n = static_cast<int>(records.size());
     std::vector<int> parent(static_cast<size_t>(n));
     std::iota(parent.begin(), parent.end(), 0);
@@ -312,12 +329,31 @@ std::vector<ClusterSummary> buildClusters(std::vector<fsc::core::FaceRecord> rec
         ClusterSummary cluster;
         cluster.members.reserve(indexes.size());
         double qualityTotal = 0.0;
+        std::map<std::string, int> peopleCounts;
         for (const int index : indexes) {
             const auto& record = records[static_cast<size_t>(index)];
             qualityTotal += record.qualityScore;
+            if (!record.personName.empty()) {
+                ++peopleCounts[record.personName];
+            }
             cluster.members.push_back(record);
         }
         cluster.averageQuality = qualityTotal / static_cast<double>(cluster.members.size());
+        for (const auto& [name, _] : peopleCounts) {
+            cluster.knownPeople.push_back(name);
+        }
+        if (!peopleCounts.empty()) {
+            const auto bestPerson = std::max_element(peopleCounts.begin(), peopleCounts.end(), [](const auto& left, const auto& right) {
+                return left.second < right.second;
+            });
+            cluster.suggestedName = bestPerson->first;
+        }
+        const auto representative = std::max_element(cluster.members.begin(), cluster.members.end(), [](const auto& left, const auto& right) {
+            return left.qualityScore < right.qualityScore;
+        });
+        if (representative != cluster.members.end()) {
+            cluster.representativeId = representative->id;
+        }
         double similarityTotal = 0.0;
         int pairCount = 0;
         for (size_t i = 0; i < cluster.members.size(); ++i) {
@@ -1585,33 +1621,80 @@ private:
         clusterMinSizeSpin_ = new QSpinBox(controls);
         clusterMinSizeSpin_->setRange(2, 50);
         clusterMinSizeSpin_->setValue(2);
+        clusterMaxFacesSpin_ = new QSpinBox(controls);
+        clusterMaxFacesSpin_->setRange(100, 100000);
+        clusterMaxFacesSpin_->setValue(5000);
+        clusterMaxFacesSpin_->setPrefix("Max ");
+        clusterMinQualitySpin_ = new QDoubleSpinBox(controls);
+        clusterMinQualitySpin_->setRange(0.0, 1.0);
+        clusterMinQualitySpin_->setDecimals(3);
+        clusterMinQualitySpin_->setSingleStep(0.050);
+        clusterMinQualitySpin_->setValue(0.0);
+        clusterMinQualitySpin_->setPrefix("Min quality ");
+        clusterUnassignedOnlyCheck_ = new QCheckBox("Unassigned only", controls);
+        clusterIncludeIgnoredCheck_ = new QCheckBox("Include ignored", controls);
         auto* clusterButton = new QPushButton("Build Clusters", controls);
         controlsLayout->addWidget(new QLabel("Threshold", controls));
         controlsLayout->addWidget(clusterThresholdSpin_);
         controlsLayout->addWidget(new QLabel("Min Size", controls));
         controlsLayout->addWidget(clusterMinSizeSpin_);
+        controlsLayout->addWidget(clusterMaxFacesSpin_);
+        controlsLayout->addWidget(clusterMinQualitySpin_);
+        controlsLayout->addWidget(clusterUnassignedOnlyCheck_);
+        controlsLayout->addWidget(clusterIncludeIgnoredCheck_);
         controlsLayout->addWidget(clusterButton);
         controlsLayout->addStretch(1);
         layout->addWidget(controls);
 
         auto* splitter = new QSplitter(page);
         clusterTable_ = new QTableWidget(splitter);
-        clusterTable_->setColumnCount(5);
-        clusterTable_->setHorizontalHeaderLabels({"Cluster", "Faces", "Mean", "Max", "Avg Quality"});
+        clusterTable_->setColumnCount(6);
+        clusterTable_->setHorizontalHeaderLabels({"Cluster", "Faces", "Mean", "Max", "Avg Quality", "Known People"});
         fitTable(clusterTable_);
         clusterMemberTable_ = new QTableWidget(splitter);
-        clusterMemberTable_->setColumnCount(5);
-        clusterMemberTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Review"});
+        clusterMemberTable_->setColumnCount(6);
+        clusterMemberTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Tags", "Quality", "Review"});
         fitTable(clusterMemberTable_);
+
+        auto* actionPanel = new QWidget(splitter);
+        auto* actionLayout = new QVBoxLayout(actionPanel);
+        actionLayout->setContentsMargins(8, 0, 0, 0);
+        clusterPreviewLabel_ = new QLabel("Select a cluster", actionPanel);
+        clusterPreviewLabel_->setAlignment(Qt::AlignCenter);
+        clusterPreviewLabel_->setMinimumWidth(320);
+        clusterPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        auto* assignBox = new QGroupBox("Batch Assign", actionPanel);
+        auto* assignForm = new QFormLayout(assignBox);
+        clusterPersonEdit_ = new QLineEdit(assignBox);
+        clusterTagsEdit_ = new QLineEdit(assignBox);
+        clusterTagsEdit_->setText("cluster-suggested");
+        clusterMarkReviewedCheck_ = new QCheckBox("Mark reviewed", assignBox);
+        clusterMarkReviewedCheck_->setChecked(true);
+        auto* assignClusterButton = new QPushButton("Assign Cluster", assignBox);
+        assignForm->addRow("Person", clusterPersonEdit_);
+        assignForm->addRow("Tags", clusterTagsEdit_);
+        assignForm->addRow("", clusterMarkReviewedCheck_);
+        assignForm->addRow("", assignClusterButton);
+        clusterSummaryLabel_ = new QLabel("No clusters built", actionPanel);
+        clusterSummaryLabel_->setWordWrap(true);
+        actionLayout->addWidget(clusterPreviewLabel_, 1);
+        actionLayout->addWidget(assignBox);
+        actionLayout->addWidget(clusterSummaryLabel_);
+        actionLayout->addStretch(1);
+
         splitter->addWidget(clusterTable_);
         splitter->addWidget(clusterMemberTable_);
+        splitter->addWidget(actionPanel);
         splitter->setStretchFactor(0, 1);
         splitter->setStretchFactor(1, 2);
+        splitter->setStretchFactor(2, 1);
         layout->addWidget(splitter, 1);
         addMainTab(page, "Clusters");
 
         connect(clusterButton, &QPushButton::clicked, this, [this] { refreshClusters(); });
         connect(clusterTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMembers(); });
+        connect(clusterMemberTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMemberPreview(); });
+        connect(assignClusterButton, &QPushButton::clicked, this, [this] { assignSelectedCluster(); });
     }
 
     void buildDenseMeshTab() {
@@ -3453,7 +3536,13 @@ private:
             return;
         }
         try {
-            clusters_ = buildClusters(database_->loadFaces(false), clusterThresholdSpin_->value(), clusterMinSizeSpin_->value());
+            clusters_ = buildClusters(
+                database_->loadFaces(clusterIncludeIgnoredCheck_ != nullptr && clusterIncludeIgnoredCheck_->isChecked()),
+                clusterThresholdSpin_->value(),
+                clusterMinSizeSpin_->value(),
+                clusterMinQualitySpin_ != nullptr ? clusterMinQualitySpin_->value() : 0.0,
+                clusterUnassignedOnlyCheck_ != nullptr && clusterUnassignedOnlyCheck_->isChecked(),
+                clusterMaxFacesSpin_ != nullptr ? clusterMaxFacesSpin_->value() : 0);
             clusterTable_->setRowCount(static_cast<int>(clusters_.size()));
             for (int row = 0; row < static_cast<int>(clusters_.size()); ++row) {
                 const auto& cluster = clusters_[static_cast<size_t>(row)];
@@ -3462,13 +3551,37 @@ private:
                 clusterTable_->setItem(row, 2, numberItem(cluster.meanSimilarity, 4));
                 clusterTable_->setItem(row, 3, numberItem(cluster.maxSimilarity, 4));
                 clusterTable_->setItem(row, 4, numberItem(cluster.averageQuality, 3));
+                clusterTable_->setItem(row, 5, item(joinClusterPeople(cluster.knownPeople)));
             }
             clusterTable_->resizeColumnsToContents();
             clusterMemberTable_->setRowCount(0);
+            if (clusterPreviewLabel_ != nullptr) {
+                clusterPreviewLabel_->setText("Select a cluster");
+                clusterPreviewLabel_->setPixmap(QPixmap());
+            }
+            if (clusterSummaryLabel_ != nullptr) {
+                clusterSummaryLabel_->setText(QString("%1 cluster(s) above threshold %2")
+                                                  .arg(clusters_.size())
+                                                  .arg(clusterThresholdSpin_->value(), 0, 'f', 3));
+            }
+            if (!clusters_.empty()) {
+                clusterTable_->selectRow(0);
+            }
             statusBar()->showMessage(QString("Built %1 cluster(s)").arg(clusters_.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
+    }
+
+    QString joinClusterPeople(const std::vector<std::string>& people) const {
+        QString output;
+        for (const auto& name : people) {
+            if (!output.isEmpty()) {
+                output += ", ";
+            }
+            output += qs(name);
+        }
+        return output;
     }
 
     void showSelectedClusterMembers() {
@@ -3480,17 +3593,112 @@ private:
         if (index < 0 || index >= static_cast<int>(clusters_.size())) {
             return;
         }
-        const auto& members = clusters_[static_cast<size_t>(index)].members;
+        const auto& cluster = clusters_[static_cast<size_t>(index)];
+        const auto& members = cluster.members;
         clusterMemberTable_->setRowCount(static_cast<int>(members.size()));
         for (int row = 0; row < static_cast<int>(members.size()); ++row) {
             const auto& member = members[static_cast<size_t>(row)];
             clusterMemberTable_->setItem(row, 0, item(QString::number(member.id)));
             clusterMemberTable_->setItem(row, 1, item(qs(member.fileName)));
             clusterMemberTable_->setItem(row, 2, item(qs(member.personName)));
-            clusterMemberTable_->setItem(row, 3, numberItem(member.qualityScore, 3));
-            clusterMemberTable_->setItem(row, 4, item(qs(member.reviewState)));
+            clusterMemberTable_->setItem(row, 3, item(qs(member.tagText)));
+            clusterMemberTable_->setItem(row, 4, numberItem(member.qualityScore, 3));
+            clusterMemberTable_->setItem(row, 5, item(qs(member.reviewState)));
         }
         clusterMemberTable_->resizeColumnsToContents();
+        if (clusterPersonEdit_ != nullptr) {
+            clusterPersonEdit_->setText(qs(cluster.suggestedName));
+        }
+        if (clusterTagsEdit_ != nullptr) {
+            clusterTagsEdit_->setText("cluster-suggested");
+        }
+        if (cluster.representativeId > 0) {
+            updateClusterPreviewForFace(cluster.representativeId);
+        }
+        if (!members.empty()) {
+            clusterMemberTable_->selectRow(0);
+        }
+    }
+
+    int selectedClusterIndex() const {
+        if (clusterTable_ == nullptr || clusterTable_->selectionModel() == nullptr) {
+            return -1;
+        }
+        const auto selected = clusterTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return -1;
+        }
+        const int index = selected.front().row();
+        return index >= 0 && index < static_cast<int>(clusters_.size()) ? index : -1;
+    }
+
+    void showSelectedClusterMemberPreview() {
+        const int clusterIndex = selectedClusterIndex();
+        if (clusterIndex < 0 || clusterMemberTable_ == nullptr || clusterMemberTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = clusterMemberTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        const auto& members = clusters_[static_cast<size_t>(clusterIndex)].members;
+        if (row >= 0 && row < static_cast<int>(members.size())) {
+            updateClusterPreviewForFace(members[static_cast<size_t>(row)].id);
+        }
+    }
+
+    void updateClusterPreviewForFace(int64_t faceId) {
+        if (clusterPreviewLabel_ == nullptr || !database_) {
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                clusterPreviewLabel_->setText("Face not found");
+                clusterPreviewLabel_->setPixmap(QPixmap());
+                return;
+            }
+            setDatabaseFacePreview(clusterPreviewLabel_, *face, "No preview");
+        } catch (const std::exception& ex) {
+            clusterPreviewLabel_->setText(ex.what());
+            clusterPreviewLabel_->setPixmap(QPixmap());
+        }
+    }
+
+    void assignSelectedCluster() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int clusterIndex = selectedClusterIndex();
+            if (clusterIndex < 0) {
+                throw std::runtime_error("Build and select a cluster first.");
+            }
+            const auto personName = clusterPersonEdit_ == nullptr ? QString() : clusterPersonEdit_->text().trimmed();
+            if (personName.isEmpty()) {
+                throw std::runtime_error("Enter a person name first.");
+            }
+            const QString tags = clusterTagsEdit_ == nullptr ? QString() : clusterTagsEdit_->text();
+            const bool markReviewed = clusterMarkReviewedCheck_ == nullptr || clusterMarkReviewedCheck_->isChecked();
+            int count = 0;
+            for (const auto& member : clusters_[static_cast<size_t>(clusterIndex)].members) {
+                assignFaceToPersonName(member.id, personName);
+                if (!tags.trimmed().isEmpty()) {
+                    database_->setFaceTags(member.id, tags.toUtf8().constData(), true);
+                }
+                if (markReviewed) {
+                    database_->updateFaceReview(member.id, "reviewed", false, "Confirmed native cluster assignment.");
+                }
+                ++count;
+            }
+            database_->rebuildIdentityProfiles();
+            reloadAll();
+            refreshClusters();
+            statusBar()->showMessage(QString("Assigned %1 face(s) to %2").arg(count).arg(personName));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
     }
 
     void importImage() {
@@ -3632,8 +3840,17 @@ private:
     bool updatingCompareLists_ = false;
     QDoubleSpinBox* clusterThresholdSpin_ = nullptr;
     QSpinBox* clusterMinSizeSpin_ = nullptr;
+    QSpinBox* clusterMaxFacesSpin_ = nullptr;
+    QDoubleSpinBox* clusterMinQualitySpin_ = nullptr;
+    QCheckBox* clusterUnassignedOnlyCheck_ = nullptr;
+    QCheckBox* clusterIncludeIgnoredCheck_ = nullptr;
     QTableWidget* clusterTable_ = nullptr;
     QTableWidget* clusterMemberTable_ = nullptr;
+    QLabel* clusterPreviewLabel_ = nullptr;
+    QLineEdit* clusterPersonEdit_ = nullptr;
+    QLineEdit* clusterTagsEdit_ = nullptr;
+    QCheckBox* clusterMarkReviewedCheck_ = nullptr;
+    QLabel* clusterSummaryLabel_ = nullptr;
     QSpinBox* meshFaceIdSpin_ = nullptr;
     QCheckBox* meshOverlayCheck_ = nullptr;
     QLabel* meshStatusLabel_ = nullptr;
@@ -3694,6 +3911,33 @@ int main(int argc, char** argv) {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
             (void)buildClusters(database.loadFaces(false), 0.62, 2);
             return 0;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--cluster-action-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto personName = std::string(argv[3]);
+            auto clusters = buildClusters(database.loadFaces(false), 0.55, 2, 0.0, false, 5000);
+            if (clusters.empty()) {
+                return 2;
+            }
+            const auto personId = database.upsertPerson(personName);
+            int count = 0;
+            for (const auto& member : clusters.front().members) {
+                database.assignFaceToPerson(member.id, personId);
+                database.setFaceTags(member.id, "cluster-action-smoke", true);
+                database.updateFaceReview(member.id, "reviewed", false, "native cluster action smoke");
+                ++count;
+            }
+            database.rebuildIdentityProfiles();
+            const auto face = database.loadFace(clusters.front().members.front().id);
+            return count > 0 && face.has_value() && face->personName == personName &&
+                    face->tagText.find("cluster-action-smoke") != std::string::npos &&
+                    face->reviewState == "reviewed"
+                ? 0
+                : 1;
         } catch (...) {
             return 1;
         }

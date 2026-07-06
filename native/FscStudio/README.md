@@ -36,6 +36,7 @@ continuing that prototype.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
 - Camera captures native frames, downsizes recognition frames by a configurable process-size limit, overlays recent detected face boxes, and shows per-face smoothed identity/gallery candidates plus similar database hits beside a best-match preview.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
+- Clusters supports max-face/min-quality/unassigned/ignored filters, shows known people and member tags, previews selected members, and can batch-assign a selected cluster.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
