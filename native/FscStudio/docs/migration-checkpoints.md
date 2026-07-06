@@ -135,6 +135,7 @@ Current portable package:
 - `cmake --preset msvc-vs-qt-camera-release`, `cmake --build --preset msvc-vs-qt-camera-release`, and `ctest --preset msvc-vs-qt-camera-release`: passed.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release.zip`.
 - Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
+- Package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the installer supports `%LOCALAPPDATA%\Programs\FSC Studio Native` by default plus custom `-InstallDir`.
 - It does not include Python runtime, user databases, or personal image data.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
@@ -146,6 +147,8 @@ Current portable package:
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.
 - Launch check from the Camera Release portable directory stayed running for 3 seconds.
+- Test install: `Install-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative -NoShortcut` copied the Camera Release package, and smoke/camera/compare checks passed from the installed directory.
+- Test uninstall: `Uninstall-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative` removed the test install directory.
 
 Dependency notes:
 

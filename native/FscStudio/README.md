@@ -139,5 +139,10 @@ and the local InsightFace model directory. The Camera flavor also includes the
 OpenCV runtime DLLs copied beside the executable. It intentionally does not
 include Python, user databases, or personal photos.
 
+The package also includes `Install-FSCStudioNative.ps1` /
+`Install-FSCStudioNative.bat` and `Uninstall-FSCStudioNative.ps1`. By default the
+installer copies the app to `%LOCALAPPDATA%\Programs\FSC Studio Native` and
+creates a Start Menu shortcut. Use `-InstallDir` for a custom install directory.
+
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.
