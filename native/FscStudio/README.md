@@ -114,6 +114,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1
 .\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke .\out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 
+For the release baseline:
+
+```powershell
+cmake --preset msvc-vs-qt-release
+cmake --build --preset msvc-vs-qt-release
+ctest --preset msvc-vs-qt-release
+powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release
+powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip
+```
+
 The package contains the app, Qt runtime DLLs, Qt platform plugin, ONNX Runtime,
 and the local InsightFace model directory. It intentionally does not include
 Python, user databases, or personal photos.

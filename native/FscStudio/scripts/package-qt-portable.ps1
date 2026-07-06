@@ -14,7 +14,8 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..")
 if (-not $BuildDir) {
-    $BuildDir = Join-Path $projectRoot "out\build\msvc-vs-qt-debug"
+    $presetName = if ($Configuration -eq "Release") { "msvc-vs-qt-release" } else { "msvc-vs-qt-debug" }
+    $BuildDir = Join-Path $projectRoot "out\build\$presetName"
 }
 if (-not $OutputDir) {
     $OutputDir = Join-Path $projectRoot "out\package\FSC-Studio-Native-$Configuration"
@@ -84,7 +85,7 @@ if ($Zip) {
     if (Test-Path $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }
-    Compress-Archive -LiteralPath (Join-Path $outputFull "*") -DestinationPath $zipPath
+    Compress-Archive -Path (Join-Path $outputFull "*") -DestinationPath $zipPath
     Write-Host "Created $zipPath"
 }
 

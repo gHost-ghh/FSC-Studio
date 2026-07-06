@@ -123,10 +123,15 @@ Current Qt shell:
 Current portable package:
 
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Debug`.
+- `cmake --preset msvc-vs-qt-release`, `cmake --build --preset msvc-vs-qt-release`, and `ctest --preset msvc-vs-qt-release`: passed.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release.zip`.
 - Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
 - It does not include Python runtime, user databases, or personal image data.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
+- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
+- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.
 
 Dependency notes:
