@@ -128,6 +128,7 @@ Current Qt shell:
 - Library has a right-side image preview for the selected face, overlays cached bbox / 2D landmarks, and toggles full-image versus face-focused viewing.
 - Search can now analyze a standalone query image natively, choose among detected query faces, preview boxes, and run search/identity against the selected query face.
 - Compare now mirrors the Python multi-face workflow more closely: each side analyzes after image selection, lists detected faces, supports preview-box click selection, focus/full-image toggles, and compares the selected pair.
+- Review now shows a selected-face detail preview, can run the native identity suggestion scorer, and can confirm the suggested person while retraining identity profiles.
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
