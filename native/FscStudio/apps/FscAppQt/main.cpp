@@ -18,6 +18,7 @@
 #include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -25,6 +26,7 @@
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPen>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
@@ -724,8 +726,13 @@ private:
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
+        auto* mainSplitter = new QSplitter(Qt::Horizontal, page);
+        auto* leftPanel = new QWidget(mainSplitter);
+        auto* leftLayout = new QVBoxLayout(leftPanel);
+        leftLayout->setContentsMargins(0, 0, 0, 0);
+        leftLayout->setSpacing(6);
 
-        auto* controls = new QWidget(page);
+        auto* controls = new QWidget(leftPanel);
         auto* form = new QFormLayout(controls);
         modelRootEdit_ = new QLineEdit(controls);
         modelRootEdit_->setText(defaultModelRoot());
@@ -746,9 +753,9 @@ private:
         imageRowLayout->addWidget(importButton);
         form->addRow("Models", modelRow);
         form->addRow("Image", imageRow);
-        layout->addWidget(controls);
+        leftLayout->addWidget(controls);
 
-        auto* splitter = new QSplitter(Qt::Vertical, page);
+        auto* splitter = new QSplitter(Qt::Vertical, leftPanel);
         libraryTable_ = new QTableWidget(splitter);
         libraryTable_->setColumnCount(8);
         libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Source"});
@@ -762,7 +769,25 @@ private:
         splitter->addWidget(importLog_);
         splitter->setStretchFactor(0, 1);
         splitter->setStretchFactor(1, 0);
-        layout->addWidget(splitter, 1);
+        leftLayout->addWidget(splitter, 1);
+
+        auto* visualPanel = new QWidget(mainSplitter);
+        auto* visualLayout = new QVBoxLayout(visualPanel);
+        visualLayout->setContentsMargins(8, 0, 0, 0);
+        libraryFocusButton_ = new QPushButton("Focus on Face", visualPanel);
+        libraryFocusButton_->setMaximumWidth(132);
+        libraryPreviewLabel_ = new QLabel("Select a face", visualPanel);
+        libraryPreviewLabel_->setAlignment(Qt::AlignCenter);
+        libraryPreviewLabel_->setMinimumWidth(300);
+        libraryPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        visualLayout->addWidget(libraryFocusButton_, 0, Qt::AlignLeft);
+        visualLayout->addWidget(libraryPreviewLabel_, 1);
+
+        mainSplitter->addWidget(leftPanel);
+        mainSplitter->addWidget(visualPanel);
+        mainSplitter->setStretchFactor(0, 3);
+        mainSplitter->setStretchFactor(1, 2);
+        layout->addWidget(mainSplitter, 1);
         addMainTab(page, "Library");
         connect(libraryTable_, &QTableWidget::itemSelectionChanged, this, [this] {
             const auto selected = libraryTable_->selectedItems();
@@ -785,6 +810,8 @@ private:
                 if (meshFaceIdSpin_ != nullptr) {
                     meshFaceIdSpin_->setValue(faceId);
                 }
+                libraryFocusOnFace_ = false;
+                updateLibraryPreview(faceId);
             }
         });
         connect(modelButton, &QPushButton::clicked, this, [this] {
@@ -795,6 +822,12 @@ private:
         });
         connect(imageButton, &QPushButton::clicked, this, [this] { chooseImage(importImageEdit_); });
         connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
+        connect(libraryFocusButton_, &QPushButton::clicked, this, [this] {
+            libraryFocusOnFace_ = !libraryFocusOnFace_;
+            if (libraryPreviewFaceId_ > 0) {
+                updateLibraryPreview(libraryPreviewFaceId_);
+            }
+        });
     }
 
     void buildPeopleTab() {
@@ -1218,6 +1251,87 @@ private:
             libraryTable_->setItem(row, 7, item(qs(record.sourcePath)));
         }
         libraryTable_->resizeColumnsToContents();
+    }
+
+    void updateLibraryPreview(int faceId) {
+        if (libraryPreviewLabel_ == nullptr || !database_) {
+            return;
+        }
+        libraryPreviewFaceId_ = faceId;
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                libraryPreviewLabel_->setText("Face not found");
+                libraryPreviewLabel_->setPixmap(QPixmap());
+                return;
+            }
+            QImage image(qs(face->sourcePath));
+            if (image.isNull()) {
+                libraryPreviewLabel_->setText("Image unavailable");
+                libraryPreviewLabel_->setPixmap(QPixmap());
+                return;
+            }
+
+            QRectF bbox;
+            if (face->bbox.size() >= 4) {
+                bbox = QRectF(
+                    QPointF(face->bbox[0], face->bbox[1]),
+                    QPointF(face->bbox[2], face->bbox[3])).normalized();
+            }
+
+            QPointF offset(0.0, 0.0);
+            QImage view = image;
+            if (libraryFocusOnFace_ && bbox.isValid() && bbox.width() > 1.0 && bbox.height() > 1.0) {
+                const double pad = std::max(bbox.width(), bbox.height()) * 0.75;
+                QRect crop(
+                    static_cast<int>(std::floor(bbox.left() - pad)),
+                    static_cast<int>(std::floor(bbox.top() - pad)),
+                    static_cast<int>(std::ceil(bbox.width() + pad * 2.0)),
+                    static_cast<int>(std::ceil(bbox.height() + pad * 2.0)));
+                crop = crop.intersected(QRect(0, 0, image.width(), image.height()));
+                if (crop.isValid() && crop.width() > 0 && crop.height() > 0) {
+                    view = image.copy(crop);
+                    offset = crop.topLeft();
+                }
+            }
+
+            QPixmap pixmap = QPixmap::fromImage(view).scaled(
+                libraryPreviewLabel_->size(),
+                Qt::KeepAspectRatio,
+                Qt::SmoothTransformation);
+            if (!pixmap.isNull()) {
+                QPainter painter(&pixmap);
+                painter.setRenderHint(QPainter::Antialiasing, true);
+                const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, view.width()));
+                const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, view.height()));
+                if (bbox.isValid() && bbox.width() > 1.0 && bbox.height() > 1.0) {
+                    const QRectF drawBox(
+                        (bbox.left() - offset.x()) * sx,
+                        (bbox.top() - offset.y()) * sy,
+                        bbox.width() * sx,
+                        bbox.height() * sy);
+                    painter.setPen(QPen(QColor(0, 230, 70), 2.0));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRect(drawBox);
+                }
+                painter.setPen(QPen(QColor(20, 170, 220), 1.2));
+                painter.setBrush(QColor(20, 210, 235));
+                for (const auto& point : face->landmarks2d) {
+                    if (point.size() < 2) {
+                        continue;
+                    }
+                    const QPointF drawPoint((point[0] - offset.x()) * sx, (point[1] - offset.y()) * sy);
+                    if (drawPoint.x() >= 0.0 && drawPoint.y() >= 0.0 && drawPoint.x() <= pixmap.width() && drawPoint.y() <= pixmap.height()) {
+                        painter.drawEllipse(drawPoint, 2.0, 2.0);
+                    }
+                }
+            }
+            libraryPreviewLabel_->setPixmap(pixmap);
+            libraryFocusButton_->setText(libraryFocusOnFace_ ? "Full Image" : "Focus on Face");
+        } catch (const std::exception& ex) {
+            libraryPreviewLabel_->setText(ex.what());
+            libraryPreviewLabel_->setPixmap(QPixmap());
+        }
     }
 
     void loadPeople() {
@@ -1783,6 +1897,10 @@ private:
     QLabel* reviewLabel_ = nullptr;
     QLabel* qualityLabel_ = nullptr;
     QTableWidget* libraryTable_ = nullptr;
+    QLabel* libraryPreviewLabel_ = nullptr;
+    QPushButton* libraryFocusButton_ = nullptr;
+    int libraryPreviewFaceId_ = 0;
+    bool libraryFocusOnFace_ = false;
     QTableWidget* peopleTable_ = nullptr;
     QLineEdit* personNameEdit_ = nullptr;
     QSpinBox* assignFaceSpin_ = nullptr;

@@ -125,6 +125,7 @@ Current Qt shell:
 - Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime pages backed by native `FscCore` / `FscVision`.
 - Uses the Python app's left navigation order with lower-left language and identity-mode controls.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images from the Library page through native ONNX.
+- Library has a right-side image preview for the selected face, overlays cached bbox / 2D landmarks, and toggles full-image versus face-focused viewing.
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.

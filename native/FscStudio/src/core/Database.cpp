@@ -79,6 +79,28 @@ std::vector<int64_t> intListFromJson(const std::string& value) {
     return output;
 }
 
+std::vector<double> doubleListFromJson(const std::string& value) {
+    std::vector<double> output;
+    if (value.empty()) {
+        return output;
+    }
+    try {
+        const auto root = nlohmann::json::parse(value);
+        if (!root.is_array()) {
+            return output;
+        }
+        output.reserve(root.size());
+        for (const auto& item : root) {
+            if (item.is_number()) {
+                output.push_back(item.get<double>());
+            }
+        }
+    } catch (...) {
+        output.clear();
+    }
+    return output;
+}
+
 std::vector<std::vector<double>> pointRowsFromJson(const std::string& value) {
     std::vector<std::vector<double>> rows;
     if (value.empty()) {
@@ -853,7 +875,8 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
-        "COALESCE(f.created_at, ''), COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, '') "
+        "COALESCE(f.created_at, ''), COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, ''), "
+        "COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, '') "
         "FROM faces f LEFT JOIN persons p ON p.id = f.person_id WHERE f.id = ?1";
     Statement statement(db_, sql);
     sqlite3_bind_int64(statement.get(), 1, faceId);
@@ -874,8 +897,10 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     record.reviewState = textColumn(statement.get(), 10);
     record.notes = textColumn(statement.get(), 11);
     record.createdAt = textColumn(statement.get(), 12);
-    record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 13));
-    record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 14));
+    record.bbox = doubleListFromJson(textColumn(statement.get(), 13));
+    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 14));
+    record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 15));
+    record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 16));
     return record;
 }
 
