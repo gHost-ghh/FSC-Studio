@@ -3,6 +3,9 @@
 #include "fsc/core/VectorMath.hpp"
 
 #include <onnxruntime_cxx_api.h>
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+#include <dml_provider_factory.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +29,41 @@ struct LandmarkCropTransform {
 
 std::wstring widePath(const std::filesystem::path& path) {
     return path.wstring();
+}
+
+Ort::SessionOptions cpuSessionOptions() {
+    Ort::SessionOptions options;
+    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    return options;
+}
+
+Ort::SessionOptions dmlSessionOptions() {
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+    Ort::SessionOptions options;
+    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    options.DisableMemPattern();
+    options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    const OrtDmlApi* dmlApi = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dmlApi)));
+    Ort::ThrowOnError(dmlApi->SessionOptionsAppendExecutionProvider_DML(options, 0));
+    return options;
+#else
+    throw std::runtime_error("This ONNX Runtime build does not include DirectML provider headers.");
+#endif
+}
+
+Ort::SessionOptions sessionOptionsFor(RuntimeMode mode) {
+    if (mode == RuntimeMode::DirectMl) {
+        return dmlSessionOptions();
+    }
+    if (mode == RuntimeMode::Auto) {
+        try {
+            return dmlSessionOptions();
+        } catch (...) {
+            return cpuSessionOptions();
+        }
+    }
+    return cpuSessionOptions();
 }
 
 std::vector<std::string> outputNames(Ort::Session& session, Ort::AllocatorWithDefaultOptions& allocator) {
@@ -299,8 +337,7 @@ public:
             throw std::runtime_error("Missing InsightFace model: " + missing.front().string());
         }
 
-        Ort::SessionOptions options;
-        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        auto options = sessionOptionsFor(mode_);
         detector_ = std::make_unique<Ort::Session>(env_, widePath(models_.detectionModelPath).c_str(), options);
         recognizer_ = std::make_unique<Ort::Session>(env_, widePath(models_.recognitionModelPath).c_str(), options);
         landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark2dModelPath).c_str(), options);

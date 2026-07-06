@@ -1,6 +1,9 @@
 #include "fsc/vision/OnnxRuntimeSession.hpp"
 
 #include <onnxruntime_cxx_api.h>
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+#include <dml_provider_factory.h>
+#endif
 
 #include <stdexcept>
 
@@ -22,6 +25,45 @@ std::string providerName(RuntimeMode mode) {
     default:
         return "Auto";
     }
+}
+
+Ort::SessionOptions cpuSessionOptions() {
+    Ort::SessionOptions options;
+    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    return options;
+}
+
+Ort::SessionOptions dmlSessionOptions() {
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+    Ort::SessionOptions options;
+    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    options.DisableMemPattern();
+    options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    const OrtDmlApi* dmlApi = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dmlApi)));
+    Ort::ThrowOnError(dmlApi->SessionOptionsAppendExecutionProvider_DML(options, 0));
+    return options;
+#else
+    throw std::runtime_error("This ONNX Runtime build does not include DirectML provider headers.");
+#endif
+}
+
+Ort::SessionOptions sessionOptionsFor(RuntimeMode mode, std::string& actualProvider) {
+    if (mode == RuntimeMode::DirectMl) {
+        actualProvider = "DmlExecutionProvider";
+        return dmlSessionOptions();
+    }
+    if (mode == RuntimeMode::Auto) {
+        try {
+            actualProvider = "DmlExecutionProvider";
+            return dmlSessionOptions();
+        } catch (const std::exception& ex) {
+            actualProvider = "CPUExecutionProvider (Auto fallback: " + std::string(ex.what()) + ")";
+            return cpuSessionOptions();
+        }
+    }
+    actualProvider = "CPUExecutionProvider";
+    return cpuSessionOptions();
 }
 
 std::string elementTypeName(ONNXTensorElementDataType type) {
@@ -74,18 +116,15 @@ OnnxSessionInfo inspectOnnxModel(const std::filesystem::path& modelPath, Runtime
     }
 
     Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "FSC Studio Native");
-    Ort::SessionOptions options;
-    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-    // DirectML provider wiring is added in the next checkpoint after the exact
-    // ONNX Runtime distribution is installed and verified. CPU load parity comes first.
+    std::string actualProvider;
+    auto options = sessionOptionsFor(mode, actualProvider);
     Ort::Session session(env, widePath(modelPath).c_str(), options);
     Ort::AllocatorWithDefaultOptions allocator;
 
     OnnxSessionInfo info;
     info.modelPath = modelPath;
     info.requestedMode = mode;
-    info.provider = providerName(mode);
+    info.provider = actualProvider.empty() ? providerName(mode) : actualProvider;
 
     const size_t inputCount = session.GetInputCount();
     for (size_t index = 0; index < inputCount; ++index) {

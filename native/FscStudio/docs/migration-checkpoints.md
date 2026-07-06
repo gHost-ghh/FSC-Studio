@@ -101,6 +101,13 @@ Current Camera shell:
 - `FscStudioQt.exe --camera-smoke`: exit code `0`.
 - `FscStudioQt.exe --camera-open-smoke 0`: exit code `0` on this machine; OpenCV selected the MSMF backend and captured a frame from camera index `0`.
 
+Current DirectML shell:
+
+- `fetch-onnxruntime-directml.ps1`: downloads and extracts `Microsoft.ML.OnnxRuntime.DirectML` to `.deps\onnxruntime-directml-1.24.4-nuget`.
+- DirectML builds use `dml_provider_factory.h`, disable memory pattern optimization, force sequential execution mode, and append `SessionOptionsAppendExecutionProvider_DML`.
+- `fsc_vision_probe.exe onnx D:\FSC\model\insightface\models\buffalo_l\det_10g.onnx directml`: provider `DmlExecutionProvider`, exit code `0`.
+- `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
+
 ## Checkpoint 4: Qt Desktop App And Installer
 
 Status: expanded Qt desktop shell and Python-free portable package verified; full page parity and installer pending.
@@ -134,6 +141,8 @@ Current portable package:
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release.zip`.
 - `cmake --preset msvc-vs-qt-camera-release`, `cmake --build --preset msvc-vs-qt-camera-release`, and `ctest --preset msvc-vs-qt-camera-release`: passed.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release.zip`.
+- `cmake --preset msvc-vs-qt-camera-dml-release`, `cmake --build --preset msvc-vs-qt-camera-dml-release`, and `ctest --preset msvc-vs-qt-camera-dml-release`: passed.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release.zip`.
 - Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
 - Package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the installer supports `%LOCALAPPDATA%\Programs\FSC Studio Native` by default plus custom `-InstallDir`.
 - It does not include Python runtime, user databases, or personal image data.
@@ -145,8 +154,11 @@ Current portable package:
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-smoke`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.
 - Launch check from the Camera Release portable directory stayed running for 3 seconds.
+- Launch check from the Camera DirectML Release portable directory stayed running for 3 seconds.
 - Test install: `Install-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative -NoShortcut` copied the Camera Release package, and smoke/camera/compare checks passed from the installed directory.
 - Test uninstall: `Uninstall-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative` removed the test install directory.
 

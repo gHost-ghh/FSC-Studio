@@ -6,6 +6,7 @@ param(
     [string]$OutputDir = "",
     [string]$ModelRoot = "D:\FSC\model\insightface\models",
     [switch]$Camera,
+    [switch]$DirectML,
     [switch]$AllowOutsideOutput,
     [switch]$Zip
 )
@@ -15,12 +16,26 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..")
 if (-not $BuildDir) {
-    $flavor = if ($Camera) { "camera-" } else { "" }
+    $flavor = ""
+    if ($Camera) {
+        $flavor += "camera-"
+    }
+    if ($DirectML) {
+        $flavor += "dml-"
+    }
     $presetName = if ($Configuration -eq "Release") { "msvc-vs-qt-$flavor" + "release" } else { "msvc-vs-qt-$flavor" + "debug" }
     $BuildDir = Join-Path $projectRoot "out\build\$presetName"
 }
 if (-not $OutputDir) {
-    $packageName = if ($Camera) { "FSC-Studio-Native-Camera-$Configuration" } else { "FSC-Studio-Native-$Configuration" }
+    $parts = @("FSC-Studio-Native")
+    if ($Camera) {
+        $parts += "Camera"
+    }
+    if ($DirectML) {
+        $parts += "DirectML"
+    }
+    $parts += $Configuration
+    $packageName = $parts -join "-"
     $OutputDir = Join-Path $projectRoot "out\package\$packageName"
 }
 
@@ -154,6 +169,7 @@ $manifest = [ordered]@{
     app = "FSC Studio Native"
     configuration = $Configuration
     camera = [bool]$Camera
+    directml = [bool]$DirectML
     packaged_at = (Get-Date).ToString("o")
     includes_python_runtime = $false
     includes_user_database = $false

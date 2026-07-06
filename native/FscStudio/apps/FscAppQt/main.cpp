@@ -1099,9 +1099,15 @@ private:
 #endif
         const auto mode = selectedRuntimeMode();
         runtimeProviderLabel_->setText(qs(fsc::vision::toString(mode)));
+#ifdef FSC_ONNXRUNTIME_HAS_DML
         runtimeNoteLabel_->setText(
-            "Import and Compare use this setting when creating native InsightFace sessions. "
-            "DirectML provider wiring is still a migration checkpoint; current verified inference path is CPU-compatible.");
+            "Import, Compare, and Camera use this setting when creating native InsightFace sessions. "
+            "Auto tries DirectML first and falls back to CPU if unavailable.");
+#else
+        runtimeNoteLabel_->setText(
+            "Import, Compare, and Camera use this setting when creating native InsightFace sessions. "
+            "This build does not include the DirectML-enabled ONNX Runtime package, so use CPU or rebuild the DirectML flavor.");
+#endif
     }
 
     void loadDenseMeshFace() {
@@ -1681,9 +1687,10 @@ int main(int argc, char** argv) {
 #ifdef FSC_ENABLE_ONNX
     if (argc >= 5 && std::string(argv[1]) == "--compare-smoke") {
         try {
+            const auto mode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Cpu;
             fsc::vision::InsightFaceEngine engine(
                 fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(QString::fromLocal8Bit(argv[2]))),
-                fsc::vision::RuntimeMode::Cpu);
+                mode);
             const auto imageA = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[3])));
             const auto imageB = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[4])));
             const auto faceA = bestFace(engine.analyze(imageA, 0.50f, 10));

@@ -134,10 +134,22 @@ ctest --preset msvc-vs-qt-camera-release
 powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip
 ```
 
+To build the DirectML + Camera flavor:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch-onnxruntime-directml.ps1
+cmake --preset msvc-vs-qt-camera-dml-release
+cmake --build --preset msvc-vs-qt-camera-dml-release
+ctest --preset msvc-vs-qt-camera-dml-release
+.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml
+powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip
+```
+
 The package contains the app, Qt runtime DLLs, Qt platform plugin, ONNX Runtime,
 and the local InsightFace model directory. The Camera flavor also includes the
-OpenCV runtime DLLs copied beside the executable. It intentionally does not
-include Python, user databases, or personal photos.
+OpenCV runtime DLLs copied beside the executable. The DirectML flavor uses the
+DirectML-enabled ONNX Runtime NuGet package. It intentionally does not include
+Python, user databases, or personal photos.
 
 The package also includes `Install-FSCStudioNative.ps1` /
 `Install-FSCStudioNative.bat` and `Uninstall-FSCStudioNative.ps1`. By default the
