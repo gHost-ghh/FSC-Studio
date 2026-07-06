@@ -16,6 +16,8 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QImage>
@@ -1464,30 +1466,71 @@ private:
 
     void buildRuntimeTab() {
         auto* page = new QWidget(tabs_);
-        auto* layout = new QFormLayout(page);
-        runtimeModeCombo_ = new QComboBox(page);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* engineBox = new QGroupBox("Engine", page);
+        auto* engineForm = new QFormLayout(engineBox);
+        runtimeModeCombo_ = new QComboBox(engineBox);
         runtimeModeCombo_->addItem("Auto", "auto");
         runtimeModeCombo_->addItem("CPU", "cpu");
         runtimeModeCombo_->addItem("DirectML", "directml");
         runtimeModeCombo_->setCurrentIndex(0);
-        runtimeBuildLabel_ = new QLabel(page);
-        runtimeProviderLabel_ = new QLabel(page);
-        runtimeNoteLabel_ = new QLabel(page);
+        runtimeBuildLabel_ = new QLabel(engineBox);
+        runtimeProviderLabel_ = new QLabel(engineBox);
+        runtimeNoteLabel_ = new QLabel(engineBox);
         runtimeNoteLabel_->setWordWrap(true);
-        auto* refreshButton = new QPushButton("Refresh Runtime", page);
-        layout->addRow("Mode", runtimeModeCombo_);
-        layout->addRow("Build", runtimeBuildLabel_);
-        layout->addRow("Provider", runtimeProviderLabel_);
-        layout->addRow("Status", runtimeNoteLabel_);
-        layout->addRow("", refreshButton);
+        auto* refreshButton = new QPushButton("Refresh Runtime", engineBox);
+        engineForm->addRow("Mode", runtimeModeCombo_);
+        engineForm->addRow("Build", runtimeBuildLabel_);
+        engineForm->addRow("Provider", runtimeProviderLabel_);
+        engineForm->addRow("Status", runtimeNoteLabel_);
+        engineForm->addRow("", refreshButton);
+        layout->addWidget(engineBox);
+
+        auto* databaseBox = new QGroupBox("Current Database", page);
+        auto* databaseForm = new QFormLayout(databaseBox);
+        runtimeDatabasePathLabel_ = new QLabel("--", databaseBox);
+        runtimeDatabasePathLabel_->setWordWrap(true);
+        runtimeDatabaseStatsLabel_ = new QLabel("--", databaseBox);
+        runtimeDatabaseStatsLabel_->setWordWrap(true);
+        auto* refreshDatabaseButton = new QPushButton("Refresh Database Stats", databaseBox);
+        databaseForm->addRow("Path", runtimeDatabasePathLabel_);
+        databaseForm->addRow("Stats", runtimeDatabaseStatsLabel_);
+        databaseForm->addRow("", refreshDatabaseButton);
+        layout->addWidget(databaseBox);
+
+        auto* maintenanceBox = new QGroupBox("Maintenance", page);
+        auto* maintenanceLayout = new QGridLayout(maintenanceBox);
+        auto* integrityButton = new QPushButton("Check Integrity", maintenanceBox);
+        auto* backupButton = new QPushButton("Backup DB", maintenanceBox);
+        auto* checkpointButton = new QPushButton("Checkpoint WAL", maintenanceBox);
+        auto* vacuumButton = new QPushButton("VACUUM", maintenanceBox);
+        runtimeMaintenanceLog_ = new QTextEdit(maintenanceBox);
+        runtimeMaintenanceLog_->setReadOnly(true);
+        runtimeMaintenanceLog_->setMinimumHeight(120);
+        runtimeMaintenanceLog_->setPlaceholderText("Runtime operation results");
+        maintenanceLayout->addWidget(integrityButton, 0, 0);
+        maintenanceLayout->addWidget(backupButton, 0, 1);
+        maintenanceLayout->addWidget(checkpointButton, 0, 2);
+        maintenanceLayout->addWidget(vacuumButton, 0, 3);
+        maintenanceLayout->addWidget(runtimeMaintenanceLog_, 1, 0, 1, 4);
+        layout->addWidget(maintenanceBox);
+        layout->addStretch(1);
         addMainTab(page, "Runtime");
 
         connect(refreshButton, &QPushButton::clicked, this, [this] { refreshRuntimeInfo(); });
+        connect(refreshDatabaseButton, &QPushButton::clicked, this, [this] { refreshRuntimeDatabaseInfo(); });
+        connect(integrityButton, &QPushButton::clicked, this, [this] { runRuntimeIntegrityCheck(); });
+        connect(backupButton, &QPushButton::clicked, this, [this] { runRuntimeBackup(); });
+        connect(checkpointButton, &QPushButton::clicked, this, [this] { runRuntimeCheckpoint(); });
+        connect(vacuumButton, &QPushButton::clicked, this, [this] { runRuntimeVacuum(); });
         connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] {
             resetCameraEngine();
             refreshRuntimeInfo();
         });
         refreshRuntimeInfo();
+        refreshRuntimeDatabaseInfo();
     }
 
     void chooseDatabase() {
@@ -1532,6 +1575,7 @@ private:
         loadPeople();
         loadReview();
         cameraIdentityProfiles_ = database_->loadIdentityProfiles();
+        refreshRuntimeDatabaseInfo();
     }
 
     void loadOverview() {
@@ -1901,6 +1945,113 @@ private:
             "Import, Compare, and Camera use this setting when creating native InsightFace sessions. "
             "This build does not include the DirectML-enabled ONNX Runtime package, so use CPU or rebuild the DirectML flavor.");
 #endif
+    }
+
+    void refreshRuntimeDatabaseInfo() {
+        if (runtimeDatabasePathLabel_ == nullptr || runtimeDatabaseStatsLabel_ == nullptr) {
+            return;
+        }
+        if (!database_) {
+            runtimeDatabasePathLabel_->setText("--");
+            runtimeDatabaseStatsLabel_->setText("No database loaded");
+            return;
+        }
+        const auto stats = database_->statistics();
+        runtimeDatabasePathLabel_->setText(qs(database_->path().string()));
+        runtimeDatabaseStatsLabel_->setText(
+            QString("v%1 | faces %2 | people %3 | tags %4 | review %5 | ignored %6 | avg quality %7")
+                .arg(qs(stats.formatVersion))
+                .arg(stats.faceCount)
+                .arg(stats.peopleCount)
+                .arg(stats.tagCount)
+                .arg(stats.reviewCount)
+                .arg(stats.ignoredCount)
+                .arg(stats.averageQuality, 0, 'f', 3));
+    }
+
+    void appendMaintenanceResult(const fsc::core::MaintenanceResult& result) {
+        const QString state = result.ok ? "OK" : "FAILED";
+        QString line = QString("%1 %2: %3")
+                           .arg(state)
+                           .arg(qs(result.action))
+                           .arg(qs(result.message));
+        if (!result.outputPath.empty()) {
+            line += "\n" + qs(result.outputPath);
+        }
+        if (runtimeMaintenanceLog_ != nullptr) {
+            runtimeMaintenanceLog_->append(line);
+        }
+        refreshRuntimeDatabaseInfo();
+        statusBar()->showMessage(line.replace("\n", " "));
+    }
+
+    bool requireRuntimeDatabase() {
+        if (database_) {
+            return true;
+        }
+        showError(std::runtime_error("Open or create a database first."));
+        return false;
+    }
+
+    void runRuntimeIntegrityCheck() {
+        if (!requireRuntimeDatabase()) {
+            return;
+        }
+        try {
+            appendMaintenanceResult(database_->checkIntegrity());
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void runRuntimeBackup() {
+        if (!requireRuntimeDatabase()) {
+            return;
+        }
+        try {
+            const auto source = database_->path();
+            const auto suffix = source.extension().empty() ? ".fscdb" : source.extension().string();
+            const auto defaultOutput = source.parent_path() / (source.stem().string() + "_backup" + suffix);
+            const auto path = QFileDialog::getSaveFileName(
+                this,
+                "Save database backup",
+                qs(defaultOutput.string()),
+                "FSC Database (*.fscdb);;SQLite Database (*.sqlite *.db);;All Files (*)");
+            if (path.isEmpty()) {
+                return;
+            }
+            appendMaintenanceResult(database_->backupTo(pathFrom(path)));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void runRuntimeCheckpoint() {
+        if (!requireRuntimeDatabase()) {
+            return;
+        }
+        try {
+            appendMaintenanceResult(database_->checkpointWal(true));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void runRuntimeVacuum() {
+        if (!requireRuntimeDatabase()) {
+            return;
+        }
+        if (QMessageBox::question(
+                this,
+                "FSC Studio Native",
+                "VACUUM rewrites the database file and may take time on large libraries. Continue?") != QMessageBox::Yes) {
+            return;
+        }
+        try {
+            appendMaintenanceResult(database_->vacuum());
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
     }
 
     void loadDenseMeshFace() {
@@ -2706,6 +2857,9 @@ private:
     QLabel* runtimeBuildLabel_ = nullptr;
     QLabel* runtimeProviderLabel_ = nullptr;
     QLabel* runtimeNoteLabel_ = nullptr;
+    QLabel* runtimeDatabasePathLabel_ = nullptr;
+    QLabel* runtimeDatabaseStatsLabel_ = nullptr;
+    QTextEdit* runtimeMaintenanceLog_ = nullptr;
     QLineEdit* modelRootEdit_ = nullptr;
     QLineEdit* importImageEdit_ = nullptr;
     QTableWidget* importLog_ = nullptr;
@@ -2800,6 +2954,19 @@ int main(int argc, char** argv) {
                            !face->ignored
                        ? 0
                        : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--maintenance-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto backupPath = pathFrom(QString::fromLocal8Bit(argv[3]));
+            const auto integrity = database.checkIntegrity();
+            const auto checkpoint = database.checkpointWal(true);
+            const auto backup = database.backupTo(backupPath);
+            const auto vacuum = database.vacuum();
+            return integrity.ok && checkpoint.ok && backup.ok && vacuum.ok && std::filesystem::exists(backupPath) ? 0 : 1;
         } catch (...) {
             return 1;
         }

@@ -33,6 +33,10 @@ public:
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;
     [[nodiscard]] bool imageHashExists(const std::string& imageHash) const;
+    [[nodiscard]] MaintenanceResult checkIntegrity() const;
+    [[nodiscard]] MaintenanceResult backupTo(const std::filesystem::path& outputPath) const;
+    [[nodiscard]] MaintenanceResult checkpointWal(bool truncate = true);
+    [[nodiscard]] MaintenanceResult vacuum();
     int64_t upsertPerson(const std::string& name, const std::string& notes = {});
     void assignFaceToPerson(int64_t faceId, int64_t personId);
     void setFaceTags(int64_t faceId, const std::string& tagText, bool append = false);

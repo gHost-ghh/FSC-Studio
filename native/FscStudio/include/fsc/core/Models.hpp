@@ -9,11 +9,20 @@ namespace fsc::core {
 struct DatabaseStatistics {
     int64_t faceCount = 0;
     int64_t peopleCount = 0;
+    int64_t tagCount = 0;
     int64_t reviewCount = 0;
+    int64_t ignoredCount = 0;
     double averageQuality = 0.0;
     std::string formatVersion;
     std::string metric;
     std::string modelName;
+};
+
+struct MaintenanceResult {
+    std::string action;
+    bool ok = false;
+    std::string message;
+    std::string outputPath;
 };
 
 struct FaceRecord {

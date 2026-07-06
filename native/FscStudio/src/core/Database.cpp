@@ -859,9 +859,21 @@ DatabaseStatistics Database::statistics() const {
         }
     }
     {
+        Statement statement(db_, "SELECT COUNT(*) FROM tags");
+        if (sqlite3_step(statement.get()) == SQLITE_ROW) {
+            stats.tagCount = sqlite3_column_int64(statement.get(), 0);
+        }
+    }
+    {
         Statement statement(db_, "SELECT COUNT(*) FROM faces WHERE ignored = 0 AND review_state != 'reviewed'");
         if (sqlite3_step(statement.get()) == SQLITE_ROW) {
             stats.reviewCount = sqlite3_column_int64(statement.get(), 0);
+        }
+    }
+    {
+        Statement statement(db_, "SELECT COUNT(*) FROM faces WHERE ignored != 0");
+        if (sqlite3_step(statement.get()) == SQLITE_ROW) {
+            stats.ignoredCount = sqlite3_column_int64(statement.get(), 0);
         }
     }
     {
@@ -1093,6 +1105,99 @@ bool Database::imageHashExists(const std::string& imageHash) const {
     Statement statement(db_, "SELECT 1 FROM faces WHERE image_hash = ? LIMIT 1");
     sqlite3_bind_text(statement.get(), 1, imageHash.c_str(), -1, SQLITE_TRANSIENT);
     return sqlite3_step(statement.get()) == SQLITE_ROW;
+}
+
+MaintenanceResult Database::checkIntegrity() const {
+    Statement statement(db_, "PRAGMA integrity_check");
+    std::vector<std::string> messages;
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        messages.push_back(textColumn(statement.get(), 0));
+    }
+    MaintenanceResult result;
+    result.action = "integrity_check";
+    result.ok = messages.size() == 1 && messages.front() == "ok";
+    if (messages.empty()) {
+        result.message = "No integrity result returned.";
+    } else {
+        std::ostringstream stream;
+        const size_t limit = std::min<size_t>(messages.size(), 20);
+        for (size_t index = 0; index < limit; ++index) {
+            if (index > 0) {
+                stream << "; ";
+            }
+            stream << messages[index];
+        }
+        if (messages.size() > limit) {
+            stream << "; ... " << (messages.size() - limit) << " more";
+        }
+        result.message = stream.str();
+    }
+    return result;
+}
+
+MaintenanceResult Database::backupTo(const std::filesystem::path& outputPath) const {
+    auto output = std::filesystem::absolute(outputPath);
+    const auto source = std::filesystem::absolute(path_);
+    if (output == source) {
+        throw std::runtime_error("Backup path must differ from the source database.");
+    }
+    if (output.has_parent_path()) {
+        std::filesystem::create_directories(output.parent_path());
+    }
+
+    sqlite3* destination = nullptr;
+    const int openCode = sqlite3_open_v2(output.string().c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+    if (openCode != SQLITE_OK) {
+        std::string message = destination == nullptr ? "Failed to open backup database." : sqlite3_errmsg(destination);
+        if (destination != nullptr) {
+            sqlite3_close(destination);
+        }
+        throw std::runtime_error(message);
+    }
+
+    sqlite3_backup* backup = sqlite3_backup_init(destination, "main", db_, "main");
+    if (backup == nullptr) {
+        std::string message = sqlite3_errmsg(destination);
+        sqlite3_close(destination);
+        throw std::runtime_error(message);
+    }
+    const int stepCode = sqlite3_backup_step(backup, -1);
+    const int finishCode = sqlite3_backup_finish(backup);
+    if (finishCode != SQLITE_OK || (stepCode != SQLITE_DONE && stepCode != SQLITE_OK)) {
+        std::string message = sqlite3_errmsg(destination);
+        sqlite3_close(destination);
+        throw std::runtime_error(message);
+    }
+    sqlite3_close(destination);
+
+    MaintenanceResult result;
+    result.action = "backup";
+    result.ok = true;
+    result.outputPath = output.string();
+    result.message = "Backup created: " + result.outputPath;
+    return result;
+}
+
+MaintenanceResult Database::checkpointWal(bool truncate) {
+    Statement statement(db_, truncate ? "PRAGMA wal_checkpoint(TRUNCATE)" : "PRAGMA wal_checkpoint(PASSIVE)");
+    MaintenanceResult result;
+    result.action = "wal_checkpoint";
+    if (sqlite3_step(statement.get()) != SQLITE_ROW) {
+        result.ok = false;
+        result.message = "No checkpoint result returned.";
+        return result;
+    }
+    const int busy = sqlite3_column_int(statement.get(), 0);
+    const int log = sqlite3_column_int(statement.get(), 1);
+    const int checkpointed = sqlite3_column_int(statement.get(), 2);
+    result.ok = true;
+    result.message = "busy=" + std::to_string(busy) + " log=" + std::to_string(log) + " checkpointed=" + std::to_string(checkpointed);
+    return result;
+}
+
+MaintenanceResult Database::vacuum() {
+    execSql(db_, "VACUUM");
+    return {"vacuum", true, "VACUUM completed.", {}};
 }
 
 int64_t Database::upsertPerson(const std::string& name, const std::string& notes) {

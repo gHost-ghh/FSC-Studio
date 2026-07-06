@@ -34,6 +34,7 @@ continuing that prototype.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
+- Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
 Track that explicitly in `docs/python-ui-parity.md`.
