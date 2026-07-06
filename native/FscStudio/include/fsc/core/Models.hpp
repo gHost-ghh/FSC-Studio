@@ -30,6 +30,8 @@ struct FaceRecord {
     std::string reviewState;
     std::string notes;
     std::string createdAt;
+    std::vector<std::vector<double>> landmarks3d;
+    std::vector<std::vector<double>> faceMesh3d;
 };
 
 struct FaceInsertRecord {

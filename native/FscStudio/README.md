@@ -27,7 +27,8 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
-- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, Review, Compare, Clusters, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
+- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, Review, Compare, Clusters, Dense Mesh, Runtime, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
+- Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
 
 ## Build
 
@@ -93,6 +94,7 @@ $p = Start-Process -FilePath .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe 
 $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 

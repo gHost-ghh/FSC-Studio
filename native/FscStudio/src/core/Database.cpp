@@ -79,6 +79,38 @@ std::vector<int64_t> intListFromJson(const std::string& value) {
     return output;
 }
 
+std::vector<std::vector<double>> pointRowsFromJson(const std::string& value) {
+    std::vector<std::vector<double>> rows;
+    if (value.empty()) {
+        return rows;
+    }
+    try {
+        const auto root = nlohmann::json::parse(value);
+        if (!root.is_array()) {
+            return rows;
+        }
+        rows.reserve(root.size());
+        for (const auto& item : root) {
+            if (!item.is_array() || item.size() < 2) {
+                continue;
+            }
+            std::vector<double> row;
+            row.reserve(std::min<size_t>(item.size(), 4));
+            for (const auto& valueItem : item) {
+                if (valueItem.is_number()) {
+                    row.push_back(valueItem.get<double>());
+                }
+            }
+            if (row.size() >= 2) {
+                rows.push_back(std::move(row));
+            }
+        }
+    } catch (...) {
+        rows.clear();
+    }
+    return rows;
+}
+
 IdentityThresholds thresholdsFor(const nlohmann::json& root, const std::string& mode, IdentityThresholds defaults) {
     if (!root.is_object() || !root.contains(mode) || !root.at(mode).is_object()) {
         return defaults;
@@ -821,7 +853,7 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
-        "COALESCE(f.created_at, '') "
+        "COALESCE(f.created_at, ''), COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, '') "
         "FROM faces f LEFT JOIN persons p ON p.id = f.person_id WHERE f.id = ?1";
     Statement statement(db_, sql);
     sqlite3_bind_int64(statement.get(), 1, faceId);
@@ -842,6 +874,8 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     record.reviewState = textColumn(statement.get(), 10);
     record.notes = textColumn(statement.get(), 11);
     record.createdAt = textColumn(statement.get(), 12);
+    record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 13));
+    record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 14));
     return record;
 }
 

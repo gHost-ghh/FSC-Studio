@@ -80,13 +80,19 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: pending.
+Status: cached 3D data display started; native camera and native Dense Mesh generation pending.
 
 Acceptance:
 
 - Read and display existing `landmarks3d_json` and `face_mesh3d_json` without Python.
 - Generate Dense Mesh natively or through a clearly documented native dependency.
 - Camera uses native capture, native inference, cached identity profiles, and short-term smoothing.
+
+Current Dense Mesh shell:
+
+- `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
+- Qt Dense Mesh tab renders cached dense mesh or falls back to 3D landmarks in a native draggable point-cloud preview.
+- `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
@@ -100,14 +106,16 @@ Acceptance:
 Current Qt shell:
 
 - Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
-- Includes Overview, Library, People, Search, Review, Compare, Clusters, and Import tabs backed by native `FscCore` / `FscVision`.
+- Includes Overview, Library, People, Search, Review, Compare, Clusters, Dense Mesh, Runtime, and Import tabs backed by native `FscCore` / `FscVision`.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images through native ONNX.
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
+- Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; DirectML provider wiring is still pending.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
 

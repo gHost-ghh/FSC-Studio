@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -18,7 +19,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QMouseEvent>
 #include <QMessageBox>
+#include <QPainter>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSplitter>
@@ -233,6 +236,173 @@ std::vector<ClusterSummary> buildClusters(std::vector<fsc::core::FaceRecord> rec
     return clusters;
 }
 
+class PointCloudWidget final : public QWidget {
+public:
+    explicit PointCloudWidget(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setMinimumSize(420, 320);
+        setMouseTracking(true);
+        setMessage("Select a face");
+    }
+
+    void setData(
+        std::vector<std::vector<double>> points,
+        std::vector<std::vector<double>> overlayPoints,
+        QString message) {
+        points_ = std::move(points);
+        overlayPoints_ = std::move(overlayPoints);
+        message_ = std::move(message);
+        update();
+    }
+
+    void setMessage(QString message) {
+        points_.clear();
+        overlayPoints_.clear();
+        message_ = std::move(message);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(12, 20, 32));
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QColor(220, 232, 245));
+        painter.drawText(QPoint(14, 24), message_.isEmpty() ? QString("3D preview") : message_);
+        painter.setPen(QColor(140, 170, 205));
+        painter.drawText(QPoint(14, 46), "drag to rotate");
+
+        if (points_.empty() && overlayPoints_.empty()) {
+            return;
+        }
+
+        Bounds bounds = computeBounds();
+        std::vector<ProjectedPoint> projected;
+        projected.reserve(points_.size() + overlayPoints_.size());
+        for (const auto& point : points_) {
+            if (point.size() >= 2) {
+                projected.push_back(project(point, bounds, false));
+            }
+        }
+        for (const auto& point : overlayPoints_) {
+            if (point.size() >= 2) {
+                projected.push_back(project(point, bounds, true));
+            }
+        }
+        std::sort(projected.begin(), projected.end(), [](const auto& left, const auto& right) {
+            return left.depth < right.depth;
+        });
+
+        painter.setPen(Qt::NoPen);
+        for (const auto& point : projected) {
+            const QColor color = point.overlay ? QColor(43, 219, 235) : QColor(239, 181, 78);
+            painter.setBrush(color);
+            const double radius = point.overlay ? 2.2 : 1.45;
+            painter.drawEllipse(point.screen, radius, radius);
+        }
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        lastMouse_ = event->position();
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (event->buttons() & Qt::LeftButton) {
+            const QPointF delta = event->position() - lastMouse_;
+            yaw_ += delta.x() * 0.01;
+            pitch_ += delta.y() * 0.01;
+            pitch_ = std::clamp(pitch_, -1.45, 1.45);
+            lastMouse_ = event->position();
+            update();
+        }
+    }
+
+private:
+    struct Bounds {
+        double cx = 0.0;
+        double cy = 0.0;
+        double cz = 0.0;
+        double span = 1.0;
+    };
+
+    struct ProjectedPoint {
+        QPointF screen;
+        double depth = 0.0;
+        bool overlay = false;
+    };
+
+    Bounds computeBounds() const {
+        bool any = false;
+        double minX = 0.0;
+        double maxX = 0.0;
+        double minY = 0.0;
+        double maxY = 0.0;
+        double minZ = 0.0;
+        double maxZ = 0.0;
+        const auto visit = [&](const std::vector<std::vector<double>>& rows) {
+            for (const auto& row : rows) {
+                if (row.size() < 2) {
+                    continue;
+                }
+                const double x = row[0];
+                const double y = row[1];
+                const double z = row.size() > 2 ? row[2] : 0.0;
+                if (!any) {
+                    minX = maxX = x;
+                    minY = maxY = y;
+                    minZ = maxZ = z;
+                    any = true;
+                } else {
+                    minX = std::min(minX, x);
+                    maxX = std::max(maxX, x);
+                    minY = std::min(minY, y);
+                    maxY = std::max(maxY, y);
+                    minZ = std::min(minZ, z);
+                    maxZ = std::max(maxZ, z);
+                }
+            }
+        };
+        visit(points_);
+        visit(overlayPoints_);
+        Bounds bounds;
+        bounds.cx = (minX + maxX) * 0.5;
+        bounds.cy = (minY + maxY) * 0.5;
+        bounds.cz = (minZ + maxZ) * 0.5;
+        bounds.span = std::max({maxX - minX, maxY - minY, maxZ - minZ, 1.0});
+        return bounds;
+    }
+
+    ProjectedPoint project(const std::vector<double>& point, const Bounds& bounds, bool overlay) const {
+        double x = point[0] - bounds.cx;
+        double y = -(point[1] - bounds.cy);
+        double z = (point.size() > 2 ? point[2] : 0.0) - bounds.cz;
+
+        const double cy = std::cos(yaw_);
+        const double sy = std::sin(yaw_);
+        const double cp = std::cos(pitch_);
+        const double sp = std::sin(pitch_);
+
+        const double xYaw = x * cy + z * sy;
+        const double zYaw = -x * sy + z * cy;
+        const double yPitch = y * cp - zYaw * sp;
+        const double zPitch = y * sp + zYaw * cp;
+
+        const double scale = 0.78 * std::min(width(), height()) / bounds.span;
+        return {
+            QPointF(width() * 0.5 + xYaw * scale, height() * 0.54 - yPitch * scale),
+            zPitch,
+            overlay,
+        };
+    }
+
+    std::vector<std::vector<double>> points_;
+    std::vector<std::vector<double>> overlayPoints_;
+    QString message_;
+    double yaw_ = 0.15;
+    double pitch_ = -0.08;
+    QPointF lastMouse_;
+};
+
 class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr)
@@ -286,6 +456,8 @@ private:
         buildSearchTab();
         buildCompareTab();
         buildClustersTab();
+        buildDenseMeshTab();
+        buildRuntimeTab();
         buildImportTab();
 
         setCentralWidget(root);
@@ -340,6 +512,9 @@ private:
                 }
                 if (assignFaceSpin_ != nullptr) {
                     assignFaceSpin_->setValue(faceId);
+                }
+                if (meshFaceIdSpin_ != nullptr) {
+                    meshFaceIdSpin_->setValue(faceId);
                 }
             }
         });
@@ -436,7 +611,11 @@ private:
             }
             const int row = selected.front()->row();
             if (const auto* idItem = reviewTable_->item(row, 0); idItem != nullptr && faceIdSpin_ != nullptr) {
-                faceIdSpin_->setValue(idItem->text().toInt());
+                const int faceId = idItem->text().toInt();
+                faceIdSpin_->setValue(faceId);
+                if (meshFaceIdSpin_ != nullptr) {
+                    meshFaceIdSpin_->setValue(faceId);
+                }
             }
             if (const auto* stateItem = reviewTable_->item(row, 5); stateItem != nullptr) {
                 reviewStateCombo_->setCurrentText(stateItem->text());
@@ -573,6 +752,60 @@ private:
 
         connect(clusterButton, &QPushButton::clicked, this, [this] { refreshClusters(); });
         connect(clusterTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMembers(); });
+    }
+
+    void buildDenseMeshTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* controlsLayout = new QHBoxLayout(controls);
+        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        meshFaceIdSpin_ = new QSpinBox(controls);
+        meshFaceIdSpin_->setRange(1, 999999999);
+        meshFaceIdSpin_->setPrefix("Face ");
+        meshOverlayCheck_ = new QCheckBox("3D Landmarks", controls);
+        meshOverlayCheck_->setChecked(true);
+        auto* loadButton = new QPushButton("Load 3D Data", controls);
+        meshStatusLabel_ = new QLabel("Select a face", controls);
+        controlsLayout->addWidget(meshFaceIdSpin_);
+        controlsLayout->addWidget(meshOverlayCheck_);
+        controlsLayout->addWidget(loadButton);
+        controlsLayout->addWidget(meshStatusLabel_, 1);
+        layout->addWidget(controls);
+
+        meshView_ = new PointCloudWidget(page);
+        layout->addWidget(meshView_, 1);
+        tabs_->addTab(page, "Dense Mesh");
+
+        connect(loadButton, &QPushButton::clicked, this, [this] { loadDenseMeshFace(); });
+        connect(meshOverlayCheck_, &QCheckBox::toggled, this, [this] { loadDenseMeshFace(); });
+    }
+
+    void buildRuntimeTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QFormLayout(page);
+        runtimeModeCombo_ = new QComboBox(page);
+        runtimeModeCombo_->addItem("Auto", "auto");
+        runtimeModeCombo_->addItem("CPU", "cpu");
+        runtimeModeCombo_->addItem("DirectML", "directml");
+        runtimeModeCombo_->setCurrentIndex(0);
+        runtimeBuildLabel_ = new QLabel(page);
+        runtimeProviderLabel_ = new QLabel(page);
+        runtimeNoteLabel_ = new QLabel(page);
+        runtimeNoteLabel_->setWordWrap(true);
+        auto* refreshButton = new QPushButton("Refresh Runtime", page);
+        layout->addRow("Mode", runtimeModeCombo_);
+        layout->addRow("Build", runtimeBuildLabel_);
+        layout->addRow("Provider", runtimeProviderLabel_);
+        layout->addRow("Status", runtimeNoteLabel_);
+        layout->addRow("", refreshButton);
+        tabs_->addTab(page, "Runtime");
+
+        connect(refreshButton, &QPushButton::clicked, this, [this] { refreshRuntimeInfo(); });
+        connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] { refreshRuntimeInfo(); });
+        refreshRuntimeInfo();
     }
 
     void buildImportTab() {
@@ -746,6 +979,69 @@ private:
         return idItem == nullptr ? 0 : idItem->text().toInt();
     }
 
+    fsc::vision::RuntimeMode selectedRuntimeMode() const {
+        if (runtimeModeCombo_ == nullptr) {
+            return fsc::vision::RuntimeMode::Auto;
+        }
+        return fsc::vision::parseRuntimeMode(runtimeModeCombo_->currentData().toString().toStdString());
+    }
+
+    void refreshRuntimeInfo() {
+        if (runtimeBuildLabel_ == nullptr || runtimeProviderLabel_ == nullptr || runtimeNoteLabel_ == nullptr) {
+            return;
+        }
+#ifdef FSC_ENABLE_ONNX
+        runtimeBuildLabel_->setText("ONNX Runtime enabled");
+#else
+        runtimeBuildLabel_->setText("ONNX Runtime disabled");
+#endif
+        const auto mode = selectedRuntimeMode();
+        runtimeProviderLabel_->setText(qs(fsc::vision::toString(mode)));
+        runtimeNoteLabel_->setText(
+            "Import and Compare use this setting when creating native InsightFace sessions. "
+            "DirectML provider wiring is still a migration checkpoint; current verified inference path is CPU-compatible.");
+    }
+
+    void loadDenseMeshFace() {
+        if (meshView_ == nullptr) {
+            return;
+        }
+        if (!database_) {
+            meshStatusLabel_->setText("Open a database first");
+            meshView_->setMessage("No database");
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(meshFaceIdSpin_->value());
+            if (!face.has_value()) {
+                throw std::runtime_error("Face id not found.");
+            }
+            const bool hasDenseMesh = !face->faceMesh3d.empty();
+            const bool hasLandmarks = !face->landmarks3d.empty();
+            if (!hasDenseMesh && !hasLandmarks) {
+                meshStatusLabel_->setText("No cached 3D data");
+                meshView_->setMessage("No cached dense mesh or 3D landmarks");
+                return;
+            }
+            std::vector<std::vector<double>> points = hasDenseMesh ? face->faceMesh3d : face->landmarks3d;
+            std::vector<std::vector<double>> overlay;
+            if (hasDenseMesh && hasLandmarks && meshOverlayCheck_->isChecked()) {
+                overlay = face->landmarks3d;
+            }
+            const QString source = hasDenseMesh ? "cached dense mesh" : "3D landmarks";
+            meshStatusLabel_->setText(QString("Face %1: %2 point(s) from %3")
+                                          .arg(face->id)
+                                          .arg(points.size())
+                                          .arg(source));
+            meshView_->setData(
+                std::move(points),
+                std::move(overlay),
+                QString("Face %1").arg(face->id));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
     void applyReviewFromControls() {
         applyReviewState(
             reviewStateCombo_->currentText().toStdString(),
@@ -878,7 +1174,7 @@ private:
 #ifdef FSC_ENABLE_ONNX
         try {
             const auto modelRoot = pathFrom(modelRootEdit_->text());
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), fsc::vision::RuntimeMode::Cpu);
+            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
             const auto imageA = fsc::vision::loadImageRgb(pathFrom(compareImageAEdit_->text()));
             const auto imageB = fsc::vision::loadImageRgb(pathFrom(compareImageBEdit_->text()));
             const auto facesA = engine.analyze(imageA, 0.50f, 10);
@@ -967,7 +1263,7 @@ private:
             const auto imageHash = fsc::core::sha256File(imagePath);
             const bool duplicate = database_->imageHashExists(imageHash);
             const auto image = fsc::vision::loadImageRgb(imagePath);
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), fsc::vision::RuntimeMode::Cpu);
+            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
             const auto faces = engine.analyze(image, 0.50f, 10);
             importLog_->setRowCount(0);
             for (int index = 0; index < static_cast<int>(faces.size()); ++index) {
@@ -1027,6 +1323,14 @@ private:
     QSpinBox* clusterMinSizeSpin_ = nullptr;
     QTableWidget* clusterTable_ = nullptr;
     QTableWidget* clusterMemberTable_ = nullptr;
+    QSpinBox* meshFaceIdSpin_ = nullptr;
+    QCheckBox* meshOverlayCheck_ = nullptr;
+    QLabel* meshStatusLabel_ = nullptr;
+    PointCloudWidget* meshView_ = nullptr;
+    QComboBox* runtimeModeCombo_ = nullptr;
+    QLabel* runtimeBuildLabel_ = nullptr;
+    QLabel* runtimeProviderLabel_ = nullptr;
+    QLabel* runtimeNoteLabel_ = nullptr;
     QLineEdit* modelRootEdit_ = nullptr;
     QLineEdit* importImageEdit_ = nullptr;
     QTableWidget* importLog_ = nullptr;
@@ -1062,6 +1366,19 @@ int main(int argc, char** argv) {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
             (void)buildClusters(database.loadFaces(false), 0.62, 2);
             return 0;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--mesh-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value()) {
+                return 1;
+            }
+            return !face->landmarks3d.empty() || !face->faceMesh3d.empty() ? 0 : 1;
         } catch (...) {
             return 1;
         }
