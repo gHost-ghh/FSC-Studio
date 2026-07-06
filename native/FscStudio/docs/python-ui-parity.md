@@ -78,6 +78,7 @@ workflows, and user experience before the migration can be considered complete.
 
 ## Current Native Gaps
 
-- Native UI is still structurally simplified and does not yet match the Python Library right panel, Search, Review, Camera, and Runtime workflows.
+- Native shell now uses left navigation and lower-left language / identity-mode controls, but the page internals remain structurally simplified.
+- Native UI does not yet match the Python Library right visual/metadata panel, Search, Review, Camera, and Runtime workflows.
 - Dense Mesh native generation currently has a deterministic synthetic fallback from 3D landmarks. It is not a MediaPipe-equivalent textured mesh and cannot be treated as final parity.
 - Final installer should be MSI/WiX or QtIFW style; the current package includes portable files plus install/uninstall scripts.

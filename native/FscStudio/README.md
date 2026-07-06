@@ -27,7 +27,7 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
-- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, Review, Compare, Clusters, Dense Mesh, Runtime, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
+- Minimal Qt Widgets desktop shell with Python-style left navigation for Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime; the People page can add people, assign faces, and train identity profiles, and Library owns image import.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
 - Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
 

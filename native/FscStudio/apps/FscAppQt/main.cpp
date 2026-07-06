@@ -15,10 +15,12 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QMessageBox>
@@ -29,6 +31,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStyle>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTimer>
@@ -81,6 +84,80 @@ QTableWidgetItem* item(const QString& value) {
 
 QTableWidgetItem* numberItem(double value, int decimals = 4) {
     return item(QString::number(value, 'f', decimals));
+}
+
+QString translatedText(const QString& key, const QString& language) {
+    if (language == "en") {
+        return key;
+    }
+    static const std::map<std::string, std::map<std::string, const char*>> translations = {
+        {"zh", {
+            {"FSC Studio Native", "FSC Studio 原生版"},
+            {"Database", "数据库"},
+            {"Language", "语言"},
+            {"Identity Mode", "身份模式"},
+            {"Strict", "严格"},
+            {"Balanced", "均衡"},
+            {"Broad", "宽松"},
+            {"Overview", "概览"},
+            {"Library", "人脸库"},
+            {"People", "人物"},
+            {"Search", "搜索"},
+            {"Camera", "摄像头"},
+            {"Review", "复核"},
+            {"Clusters", "聚类"},
+            {"Compare", "比对"},
+            {"Dense Mesh", "稠密网格"},
+            {"Runtime", "运行"},
+            {"Ready", "就绪"},
+        }},
+        {"ja", {
+            {"FSC Studio Native", "FSC Studio ネイティブ"},
+            {"Database", "データベース"},
+            {"Language", "言語"},
+            {"Identity Mode", "識別モード"},
+            {"Strict", "厳格"},
+            {"Balanced", "標準"},
+            {"Broad", "広め"},
+            {"Overview", "概要"},
+            {"Library", "ライブラリ"},
+            {"People", "人物"},
+            {"Search", "検索"},
+            {"Camera", "カメラ"},
+            {"Review", "レビュー"},
+            {"Clusters", "クラスタ"},
+            {"Compare", "比較"},
+            {"Dense Mesh", "高密度メッシュ"},
+            {"Runtime", "実行環境"},
+            {"Ready", "準備完了"},
+        }},
+        {"ko", {
+            {"FSC Studio Native", "FSC Studio 네이티브"},
+            {"Database", "데이터베이스"},
+            {"Language", "언어"},
+            {"Identity Mode", "식별 모드"},
+            {"Strict", "엄격"},
+            {"Balanced", "균형"},
+            {"Broad", "넓게"},
+            {"Overview", "개요"},
+            {"Library", "라이브러리"},
+            {"People", "인물"},
+            {"Search", "검색"},
+            {"Camera", "카메라"},
+            {"Review", "검토"},
+            {"Clusters", "클러스터"},
+            {"Compare", "비교"},
+            {"Dense Mesh", "고밀도 메시"},
+            {"Runtime", "런타임"},
+            {"Ready", "준비됨"},
+        }},
+    };
+    const auto languageIt = translations.find(language.toStdString());
+    if (languageIt == translations.end()) {
+        return key;
+    }
+    const auto valueIt = languageIt->second.find(key.toStdString());
+    return valueIt == languageIt->second.end() ? key : QString::fromUtf8(valueIt->second);
 }
 
 void fitTable(QTableWidget* table) {
@@ -457,13 +534,120 @@ public:
     }
 
 private:
+    QString trUi(const QString& key) const {
+        const QString language = languageCombo_ == nullptr ? QString("en") : languageCombo_->currentData().toString();
+        return translatedText(key, language);
+    }
+
+    void addMainTab(QWidget* page, const QString& key) {
+        const int index = tabs_->addTab(page, trUi(key));
+        if (tabKeys_.size() <= static_cast<size_t>(index)) {
+            tabKeys_.resize(static_cast<size_t>(index + 1));
+        }
+        tabKeys_[static_cast<size_t>(index)] = key;
+        if (sidebar_ != nullptr) {
+            auto* entry = new QListWidgetItem(trUi(key), sidebar_);
+            entry->setData(Qt::UserRole, key);
+        }
+    }
+
+    void applyLanguage() {
+        setWindowTitle(trUi("FSC Studio Native"));
+        if (databaseLabel_ != nullptr) {
+            databaseLabel_->setText(trUi("Database"));
+        }
+        if (languageLabel_ != nullptr) {
+            languageLabel_->setText(trUi("Language"));
+        }
+        if (identityModeLabel_ != nullptr) {
+            identityModeLabel_->setText(trUi("Identity Mode"));
+        }
+        if (identityModeCombo_ != nullptr) {
+            for (int index = 0; index < identityModeCombo_->count(); ++index) {
+                const auto key = identityModeCombo_->itemData(index, Qt::UserRole + 1).toString();
+                if (!key.isEmpty()) {
+                    identityModeCombo_->setItemText(index, trUi(key));
+                }
+            }
+        }
+        if (sidebar_ != nullptr) {
+            for (int index = 0; index < sidebar_->count(); ++index) {
+                auto* entry = sidebar_->item(index);
+                entry->setText(trUi(entry->data(Qt::UserRole).toString()));
+            }
+        }
+        if (tabs_ != nullptr) {
+            for (int index = 0; index < tabs_->count() && index < static_cast<int>(tabKeys_.size()); ++index) {
+                tabs_->setTabText(index, trUi(tabKeys_[static_cast<size_t>(index)]));
+            }
+        }
+        statusBar()->showMessage(trUi("Ready"));
+    }
+
+    fsc::core::IdentityMode selectedIdentityMode() const {
+        const QString value = identityModeCombo_ == nullptr ? QString("strict") : identityModeCombo_->currentData().toString();
+        if (value == "balanced") {
+            return fsc::core::IdentityMode::Balanced;
+        }
+        if (value == "broad") {
+            return fsc::core::IdentityMode::Broad;
+        }
+        return fsc::core::IdentityMode::Strict;
+    }
+
     void buildUi() {
         auto* root = new QWidget(this);
-        auto* rootLayout = new QVBoxLayout(root);
-        rootLayout->setContentsMargins(10, 10, 10, 10);
-        rootLayout->setSpacing(8);
+        auto* rootLayout = new QHBoxLayout(root);
+        rootLayout->setContentsMargins(0, 0, 0, 0);
+        rootLayout->setSpacing(0);
 
-        auto* toolbar = new QWidget(root);
+        auto* sidebarPanel = new QWidget(root);
+        sidebarPanel->setFixedWidth(190);
+        sidebarPanel->setStyleSheet("background:#101827;");
+        auto* sidebarLayout = new QVBoxLayout(sidebarPanel);
+        sidebarLayout->setContentsMargins(0, 0, 0, 0);
+        sidebarLayout->setSpacing(0);
+        sidebar_ = new QListWidget(sidebarPanel);
+        sidebar_->setFrameShape(QFrame::NoFrame);
+        sidebar_->setStyleSheet(
+            "QListWidget{background:#101827;color:#dce8f5;border:0;padding:8px;}"
+            "QListWidget::item{padding:10px 12px;border-radius:6px;margin:2px 0;}"
+            "QListWidget::item:selected{background:#2f80ed;color:white;}");
+        sidebarLayout->addWidget(sidebar_, 1);
+
+        auto* languageBox = new QWidget(sidebarPanel);
+        auto* languageLayout = new QVBoxLayout(languageBox);
+        languageLayout->setContentsMargins(10, 8, 10, 12);
+        languageLayout->setSpacing(6);
+        languageLabel_ = new QLabel(languageBox);
+        languageLabel_->setStyleSheet("color:#9fb4ce;");
+        languageCombo_ = new QComboBox(languageBox);
+        languageCombo_->addItem("English", "en");
+        languageCombo_->addItem(QString::fromUtf8("中文"), "zh");
+        languageCombo_->addItem(QString::fromUtf8("日本語"), "ja");
+        languageCombo_->addItem(QString::fromUtf8("한국어"), "ko");
+        identityModeLabel_ = new QLabel(languageBox);
+        identityModeLabel_->setStyleSheet("color:#9fb4ce;");
+        identityModeCombo_ = new QComboBox(languageBox);
+        identityModeCombo_->addItem("Strict", "strict");
+        identityModeCombo_->setItemData(0, "Strict", Qt::UserRole + 1);
+        identityModeCombo_->addItem("Balanced", "balanced");
+        identityModeCombo_->setItemData(1, "Balanced", Qt::UserRole + 1);
+        identityModeCombo_->addItem("Broad", "broad");
+        identityModeCombo_->setItemData(2, "Broad", Qt::UserRole + 1);
+        languageLayout->addWidget(languageLabel_);
+        languageLayout->addWidget(languageCombo_);
+        languageLayout->addWidget(identityModeLabel_);
+        languageLayout->addWidget(identityModeCombo_);
+        sidebarLayout->addWidget(languageBox);
+        rootLayout->addWidget(sidebarPanel);
+
+        auto* content = new QWidget(root);
+        auto* contentLayout = new QVBoxLayout(content);
+        contentLayout->setContentsMargins(10, 10, 10, 10);
+        contentLayout->setSpacing(8);
+
+        auto* toolbar = new QWidget(content);
         auto* toolbarLayout = new QHBoxLayout(toolbar);
         toolbarLayout->setContentsMargins(0, 0, 0, 0);
         toolbarLayout->setSpacing(6);
@@ -479,35 +663,41 @@ private:
         auto* refreshButton = new QToolButton(toolbar);
         refreshButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
         refreshButton->setToolTip("Refresh");
+        databaseLabel_ = new QLabel(toolbar);
 
-        toolbarLayout->addWidget(new QLabel("Database", toolbar));
+        toolbarLayout->addWidget(databaseLabel_);
         toolbarLayout->addWidget(databasePathEdit_, 1);
         toolbarLayout->addWidget(openButton);
         toolbarLayout->addWidget(createButton);
         toolbarLayout->addWidget(refreshButton);
-        rootLayout->addWidget(toolbar);
+        contentLayout->addWidget(toolbar);
 
-        tabs_ = new QTabWidget(root);
-        rootLayout->addWidget(tabs_, 1);
+        tabs_ = new QTabWidget(content);
+        tabs_->tabBar()->hide();
+        tabs_->setDocumentMode(true);
+        contentLayout->addWidget(tabs_, 1);
+        rootLayout->addWidget(content, 1);
         buildOverviewTab();
         buildLibraryTab();
         buildPeopleTab();
-        buildReviewTab();
         buildSearchTab();
         buildCameraTab();
-        buildCompareTab();
+        buildReviewTab();
         buildClustersTab();
+        buildCompareTab();
         buildDenseMeshTab();
         buildRuntimeTab();
-        buildImportTab();
 
         setCentralWidget(root);
-        statusBar()->showMessage("Ready");
+        applyLanguage();
 
         connect(openButton, &QToolButton::clicked, this, [this] { chooseDatabase(); });
         connect(createButton, &QToolButton::clicked, this, [this] { createDatabase(); });
         connect(refreshButton, &QToolButton::clicked, this, [this] { reloadAll(); });
         connect(databasePathEdit_, &QLineEdit::returnPressed, this, [this] { openDatabase(databasePathEdit_->text()); });
+        connect(languageCombo_, &QComboBox::currentIndexChanged, this, [this] { applyLanguage(); });
+        connect(sidebar_, &QListWidget::currentRowChanged, tabs_, &QTabWidget::setCurrentIndex);
+        sidebar_->setCurrentRow(0);
     }
 
     void buildOverviewTab() {
@@ -527,15 +717,53 @@ private:
         layout->addRow("People", peopleLabel_);
         layout->addRow("Review Queue", reviewLabel_);
         layout->addRow("Average Quality", qualityLabel_);
-        tabs_->addTab(page, "Overview");
+        addMainTab(page, "Overview");
     }
 
     void buildLibraryTab() {
-        libraryTable_ = new QTableWidget(tabs_);
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* form = new QFormLayout(controls);
+        modelRootEdit_ = new QLineEdit(controls);
+        modelRootEdit_->setText(defaultModelRoot());
+        importImageEdit_ = new QLineEdit(controls);
+        auto* modelButton = new QPushButton("Browse", controls);
+        auto* imageButton = new QPushButton("Browse", controls);
+        auto* importButton = new QPushButton("Import Image", controls);
+        auto* modelRow = new QWidget(controls);
+        auto* modelRowLayout = new QHBoxLayout(modelRow);
+        modelRowLayout->setContentsMargins(0, 0, 0, 0);
+        modelRowLayout->addWidget(modelRootEdit_, 1);
+        modelRowLayout->addWidget(modelButton);
+        auto* imageRow = new QWidget(controls);
+        auto* imageRowLayout = new QHBoxLayout(imageRow);
+        imageRowLayout->setContentsMargins(0, 0, 0, 0);
+        imageRowLayout->addWidget(importImageEdit_, 1);
+        imageRowLayout->addWidget(imageButton);
+        imageRowLayout->addWidget(importButton);
+        form->addRow("Models", modelRow);
+        form->addRow("Image", imageRow);
+        layout->addWidget(controls);
+
+        auto* splitter = new QSplitter(Qt::Vertical, page);
+        libraryTable_ = new QTableWidget(splitter);
         libraryTable_->setColumnCount(8);
         libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Source"});
         fitTable(libraryTable_);
-        tabs_->addTab(libraryTable_, "Library");
+        importLog_ = new QTableWidget(splitter);
+        importLog_->setColumnCount(6);
+        importLog_->setHorizontalHeaderLabels({"Inserted ID", "Face", "Detection", "Quality", "2D", "3D"});
+        fitTable(importLog_);
+        importLog_->setMaximumHeight(150);
+        splitter->addWidget(libraryTable_);
+        splitter->addWidget(importLog_);
+        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(1, 0);
+        layout->addWidget(splitter, 1);
+        addMainTab(page, "Library");
         connect(libraryTable_, &QTableWidget::itemSelectionChanged, this, [this] {
             const auto selected = libraryTable_->selectedItems();
             if (selected.empty()) {
@@ -559,6 +787,14 @@ private:
                 }
             }
         });
+        connect(modelButton, &QPushButton::clicked, this, [this] {
+            const auto path = QFileDialog::getExistingDirectory(this, "Select model root", modelRootEdit_->text());
+            if (!path.isEmpty()) {
+                modelRootEdit_->setText(path);
+            }
+        });
+        connect(imageButton, &QPushButton::clicked, this, [this] { chooseImage(importImageEdit_); });
+        connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
     }
 
     void buildPeopleTab() {
@@ -593,7 +829,7 @@ private:
         peopleTable_->setHorizontalHeaderLabels({"ID", "Name", "Faces", "Avg Quality", "Identity", "Samples", "Exemplars", "Health"});
         fitTable(peopleTable_);
         layout->addWidget(peopleTable_, 1);
-        tabs_->addTab(page, "People");
+        addMainTab(page, "People");
         connect(peopleTable_, &QTableWidget::itemSelectionChanged, this, [this] {
             const auto selected = peopleTable_->selectedItems();
             if (selected.empty()) {
@@ -643,7 +879,7 @@ private:
         reviewTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Notes"});
         fitTable(reviewTable_);
         layout->addWidget(reviewTable_, 1);
-        tabs_->addTab(page, "Review");
+        addMainTab(page, "Review");
 
         connect(reviewTable_, &QTableWidget::itemSelectionChanged, this, [this] {
             const auto selected = reviewTable_->selectedItems();
@@ -704,7 +940,7 @@ private:
         fitTable(searchTable_);
         layout->addWidget(searchTable_, 1);
 
-        tabs_->addTab(page, "Search");
+        addMainTab(page, "Search");
         connect(searchButton, &QPushButton::clicked, this, [this] { runSearch(); });
         connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
     }
@@ -753,7 +989,7 @@ private:
         cameraFrameTimer_->setInterval(33);
         cameraIdentifyTimer_ = new QTimer(this);
         cameraIdentifyTimer_->setInterval(1200);
-        tabs_->addTab(page, "Camera");
+        addMainTab(page, "Camera");
 
         connect(startButton, &QPushButton::clicked, this, [this] { startCamera(); });
         connect(stopButton, &QPushButton::clicked, this, [this] { stopCamera(); });
@@ -800,7 +1036,7 @@ private:
         compareFaceTable_->setHorizontalHeaderLabels({"Image", "Detection", "Quality", "2D", "3D"});
         fitTable(compareFaceTable_);
         layout->addWidget(compareFaceTable_, 1);
-        tabs_->addTab(page, "Compare");
+        addMainTab(page, "Compare");
 
         connect(browseA, &QPushButton::clicked, this, [this] { chooseImage(compareImageAEdit_); });
         connect(browseB, &QPushButton::clicked, this, [this] { chooseImage(compareImageBEdit_); });
@@ -846,7 +1082,7 @@ private:
         splitter->setStretchFactor(0, 1);
         splitter->setStretchFactor(1, 2);
         layout->addWidget(splitter, 1);
-        tabs_->addTab(page, "Clusters");
+        addMainTab(page, "Clusters");
 
         connect(clusterButton, &QPushButton::clicked, this, [this] { refreshClusters(); });
         connect(clusterTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMembers(); });
@@ -877,7 +1113,7 @@ private:
 
         meshView_ = new PointCloudWidget(page);
         layout->addWidget(meshView_, 1);
-        tabs_->addTab(page, "Dense Mesh");
+        addMainTab(page, "Dense Mesh");
 
         connect(loadButton, &QPushButton::clicked, this, [this] { loadDenseMeshFace(); });
         connect(generateButton, &QPushButton::clicked, this, [this] { generateNativeMeshForSelectedFace(); });
@@ -902,7 +1138,7 @@ private:
         layout->addRow("Provider", runtimeProviderLabel_);
         layout->addRow("Status", runtimeNoteLabel_);
         layout->addRow("", refreshButton);
-        tabs_->addTab(page, "Runtime");
+        addMainTab(page, "Runtime");
 
         connect(refreshButton, &QPushButton::clicked, this, [this] { refreshRuntimeInfo(); });
         connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] {
@@ -910,56 +1146,6 @@ private:
             refreshRuntimeInfo();
         });
         refreshRuntimeInfo();
-    }
-
-    void buildImportTab() {
-        auto* page = new QWidget(tabs_);
-        auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
-
-        auto* controls = new QWidget(page);
-        auto* form = new QFormLayout(controls);
-        modelRootEdit_ = new QLineEdit(controls);
-        modelRootEdit_->setText(defaultModelRoot());
-        importImageEdit_ = new QLineEdit(controls);
-        auto* modelButton = new QPushButton("Browse", controls);
-        auto* imageButton = new QPushButton("Browse", controls);
-        auto* importButton = new QPushButton("Import Image", controls);
-        auto* modelRow = new QWidget(controls);
-        auto* modelRowLayout = new QHBoxLayout(modelRow);
-        modelRowLayout->setContentsMargins(0, 0, 0, 0);
-        modelRowLayout->addWidget(modelRootEdit_, 1);
-        modelRowLayout->addWidget(modelButton);
-        auto* imageRow = new QWidget(controls);
-        auto* imageRowLayout = new QHBoxLayout(imageRow);
-        imageRowLayout->setContentsMargins(0, 0, 0, 0);
-        imageRowLayout->addWidget(importImageEdit_, 1);
-        imageRowLayout->addWidget(imageButton);
-        form->addRow("Models", modelRow);
-        form->addRow("Image", imageRow);
-        form->addRow("", importButton);
-        layout->addWidget(controls);
-
-        importLog_ = new QTableWidget(page);
-        importLog_->setColumnCount(6);
-        importLog_->setHorizontalHeaderLabels({"Inserted ID", "Face", "Detection", "Quality", "2D", "3D"});
-        fitTable(importLog_);
-        layout->addWidget(importLog_, 1);
-
-        tabs_->addTab(page, "Import");
-        connect(modelButton, &QPushButton::clicked, this, [this] {
-            const auto path = QFileDialog::getExistingDirectory(this, "Select model root", modelRootEdit_->text());
-            if (!path.isEmpty()) {
-                modelRootEdit_->setText(path);
-            }
-        });
-        connect(imageButton, &QPushButton::clicked, this, [this] {
-            const auto path = QFileDialog::getOpenFileName(this, "Select image", {}, "Images (*.jpg *.jpeg *.png *.bmp *.ppm)");
-            if (!path.isEmpty()) {
-                importImageEdit_->setText(path);
-            }
-        });
-        connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
     }
 
     void chooseDatabase() {
@@ -1283,7 +1469,7 @@ private:
             if (!query.has_value()) {
                 throw std::runtime_error("Face id not found.");
             }
-            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), query->embedding, fsc::core::IdentityMode::Strict, 5);
+            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), query->embedding, selectedIdentityMode(), 5);
             QString text = "Identity: " + qs(result.decision);
             if (!result.candidates.empty()) {
                 const auto& candidate = result.candidates.front();
@@ -1414,7 +1600,7 @@ private:
             QString headline = QString("Identity: %1 face(s)").arg(faces.size());
             fsc::core::IdentityResult identity;
             if (database_) {
-                identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, fsc::core::IdentityMode::Strict, 5);
+                identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, selectedIdentityMode(), 5);
                 QString rawName = "unknown";
                 if (!identity.candidates.empty() && identity.decision != "unknown") {
                     rawName = qs(identity.candidates.front().profile.personName);
@@ -1580,8 +1766,15 @@ private:
         statusBar()->showMessage("Error");
     }
 
+    QLabel* databaseLabel_ = nullptr;
+    QListWidget* sidebar_ = nullptr;
+    QLabel* languageLabel_ = nullptr;
+    QComboBox* languageCombo_ = nullptr;
+    QLabel* identityModeLabel_ = nullptr;
+    QComboBox* identityModeCombo_ = nullptr;
     QLineEdit* databasePathEdit_ = nullptr;
     QTabWidget* tabs_ = nullptr;
+    std::vector<QString> tabKeys_;
     QLabel* formatLabel_ = nullptr;
     QLabel* modelLabel_ = nullptr;
     QLabel* metricLabel_ = nullptr;
