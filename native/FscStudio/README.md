@@ -33,7 +33,7 @@ continuing that prototype.
 - Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
-- Camera captures native frames, overlays recent detected face boxes, and shows identity/gallery candidates plus similar database hits beside a best-match preview.
+- Camera captures native frames, downsizes recognition frames by a configurable process-size limit, overlays recent detected face boxes, and shows per-face smoothed identity/gallery candidates plus similar database hits beside a best-match preview.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
 

@@ -360,6 +360,31 @@ fsc::vision::RgbImage rgbImageFromBgrMat(const cv::Mat& frame) {
     }
     return image;
 }
+
+void scaleAnalyzedFaceCoordinates(std::vector<fsc::vision::AnalyzedFace>& faces, double scaleX, double scaleY) {
+    const float sx = static_cast<float>(scaleX);
+    const float sy = static_cast<float>(scaleY);
+    const float sz = static_cast<float>((scaleX + scaleY) * 0.5);
+    for (auto& face : faces) {
+        face.detection.box.x1 *= sx;
+        face.detection.box.x2 *= sx;
+        face.detection.box.y1 *= sy;
+        face.detection.box.y2 *= sy;
+        for (auto& point : face.detection.keypoints) {
+            point.x *= sx;
+            point.y *= sy;
+        }
+        for (auto& point : face.landmarks2d) {
+            point.x *= sx;
+            point.y *= sy;
+        }
+        for (auto& point : face.landmarks3d) {
+            point.x *= sx;
+            point.y *= sy;
+            point.z *= sz;
+        }
+    }
+}
 #endif
 
 class PointCloudWidget final : public QWidget {
@@ -1269,6 +1294,11 @@ private:
         cameraIntervalSpin_->setSingleStep(50);
         cameraIntervalSpin_->setValue(1200);
         cameraIntervalSpin_->setSuffix(" ms");
+        cameraProcessSizeSpin_ = new QSpinBox(controls);
+        cameraProcessSizeSpin_->setRange(320, 1920);
+        cameraProcessSizeSpin_->setSingleStep(80);
+        cameraProcessSizeSpin_->setValue(640);
+        cameraProcessSizeSpin_->setPrefix("Process ");
         cameraAutoCheck_ = new QCheckBox("Auto Identify", controls);
         cameraAutoCheck_->setChecked(true);
         auto* startButton = new QPushButton("Start", controls);
@@ -1281,6 +1311,7 @@ private:
         controlsLayout->addWidget(cameraThresholdSpin_);
         controlsLayout->addWidget(cameraTopKSpin_);
         controlsLayout->addWidget(cameraIntervalSpin_);
+        controlsLayout->addWidget(cameraProcessSizeSpin_);
         controlsLayout->addWidget(cameraAutoCheck_);
         controlsLayout->addWidget(startButton);
         controlsLayout->addWidget(stopButton);
@@ -2444,18 +2475,32 @@ private:
         }
     }
 
-    QString smoothedCameraName(const QString& name) {
-        cameraVotes_.push_back(name);
-        while (cameraVotes_.size() > 5) {
-            cameraVotes_.pop_front();
+    QString smoothedCameraName(int faceIndex, const QString& name) {
+        auto& history = cameraVotesByFace_[faceIndex];
+        history.push_back(name);
+        while (history.size() > 6) {
+            history.pop_front();
         }
-        std::map<QString, int> counts;
-        for (const auto& vote : cameraVotes_) {
-            ++counts[vote];
+        std::map<QString, std::pair<int, int>> counts;
+        for (int index = 0; index < static_cast<int>(history.size()); ++index) {
+            const auto& vote = history[static_cast<size_t>(index)];
+            if (vote.isEmpty()) {
+                continue;
+            }
+            auto& entry = counts[vote];
+            ++entry.first;
+            entry.second = index;
         }
-        return std::max_element(counts.begin(), counts.end(), [](const auto& left, const auto& right) {
-            return left.second < right.second;
-        })->first;
+        if (counts.empty()) {
+            return name;
+        }
+        const auto best = std::max_element(counts.begin(), counts.end(), [](const auto& left, const auto& right) {
+            if (left.second.first != right.second.first) {
+                return left.second.first < right.second.first;
+            }
+            return left.second.second < right.second.second;
+        });
+        return best->second.first >= 2 ? best->first : name;
     }
 
     void refreshCameraDatabaseLabel() {
@@ -2587,7 +2632,7 @@ private:
             }
             camera_.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
             camera_.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
-            cameraVotes_.clear();
+            cameraVotesByFace_.clear();
             latestCameraFaces_.clear();
             latestCameraMatchedFaceIndexes_.clear();
             latestCameraFacesAt_ = {};
@@ -2617,6 +2662,7 @@ private:
             camera_.release();
         }
         lastCameraFrame_.release();
+        cameraVotesByFace_.clear();
         latestCameraFaces_.clear();
         latestCameraMatchedFaceIndexes_.clear();
         latestCameraFacesAt_ = {};
@@ -2671,11 +2717,26 @@ private:
                 cameraEngineKey_ = engineKey;
             }
 
-            const auto image = rgbImageFromBgrMat(lastCameraFrame_);
-            const auto faces = cameraEngine_->analyze(image, 0.50f, 10);
+            cv::Mat frameForAnalysis = lastCameraFrame_;
+            double scaleX = 1.0;
+            double scaleY = 1.0;
+            const int processSize = cameraProcessSizeSpin_ != nullptr ? cameraProcessSizeSpin_->value() : 640;
+            const int longEdge = std::max(lastCameraFrame_.cols, lastCameraFrame_.rows);
+            if (processSize > 0 && longEdge > processSize) {
+                const double scale = static_cast<double>(processSize) / static_cast<double>(longEdge);
+                cv::resize(lastCameraFrame_, frameForAnalysis, cv::Size(), scale, scale, cv::INTER_AREA);
+                scaleX = static_cast<double>(lastCameraFrame_.cols) / static_cast<double>(std::max(1, frameForAnalysis.cols));
+                scaleY = static_cast<double>(lastCameraFrame_.rows) / static_cast<double>(std::max(1, frameForAnalysis.rows));
+            }
+            const auto image = rgbImageFromBgrMat(frameForAnalysis);
+            auto faces = cameraEngine_->analyze(image, 0.50f, 10);
+            if (scaleX != 1.0 || scaleY != 1.0) {
+                scaleAnalyzedFaceCoordinates(faces, scaleX, scaleY);
+            }
             if (faces.empty()) {
                 cameraIdentityLabel_->setText("Identity: no face");
                 cameraResultTable_->setRowCount(0);
+                cameraVotesByFace_.clear();
                 latestCameraFaces_.clear();
                 latestCameraMatchedFaceIndexes_.clear();
                 latestCameraFacesAt_ = {};
@@ -2690,6 +2751,7 @@ private:
             const double threshold = cameraThresholdSpin_ != nullptr ? cameraThresholdSpin_->value() : 0.35;
             std::set<int> matchedFaceIndexes;
             QString bestRawName = "unknown";
+            QString bestStableName = "unknown";
             QString bestStatus = "Match: no database hit";
             int64_t bestPreviewFaceId = 0;
             double bestIdentityConfidence = -1.0;
@@ -2734,17 +2796,27 @@ private:
                 if (database_) {
                     const auto identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, selectedIdentityMode(), 5);
                     decision = qs(identity.decision);
+                    QString rawIdentityName;
                     if (!identity.candidates.empty()) {
                         const auto& candidate = identity.candidates.front();
-                        identityName = qs(candidate.profile.personName);
+                        rawIdentityName = qs(candidate.profile.personName);
+                        identityName = rawIdentityName;
                         confidence = candidate.confidence;
                         evidenceFaceId = candidate.evidenceFaceId;
                         if (identity.decision != "unknown") {
+                            const auto stableIdentityName = smoothedCameraName(faceIndex, rawIdentityName);
+                            if (!stableIdentityName.isEmpty()) {
+                                identityName = stableIdentityName;
+                                if (stableIdentityName != rawIdentityName) {
+                                    decision = "smoothed";
+                                }
+                            }
                             matchedFaceIndexes.insert(faceIndex);
                             if (candidate.confidence > bestIdentityConfidence ||
                                 (!bestPreviewFromIdentity && candidate.evidenceFaceId > 0)) {
                                 bestIdentityConfidence = candidate.confidence;
-                                bestRawName = identityName;
+                                bestRawName = rawIdentityName;
+                                bestStableName = identityName;
                                 if (candidate.evidenceFaceId > 0) {
                                     bestPreviewFaceId = candidate.evidenceFaceId;
                                     bestPreviewFromIdentity = true;
@@ -2755,6 +2827,9 @@ private:
                                 }
                             }
                         }
+                    }
+                    if (identity.decision == "unknown") {
+                        (void)smoothedCameraName(faceIndex, QString());
                     }
                 }
 
@@ -2779,26 +2854,33 @@ private:
                     addRow(faceIndex, identityName, decision, confidence, evidenceFaceId, nullptr);
                 }
             }
+            for (auto it = cameraVotesByFace_.begin(); it != cameraVotesByFace_.end();) {
+                if (it->first >= static_cast<int>(faces.size())) {
+                    it = cameraVotesByFace_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
 
             latestCameraFaces_ = faces;
             latestCameraMatchedFaceIndexes_ = matchedFaceIndexes;
             latestCameraFacesAt_ = std::chrono::steady_clock::now();
             updateCameraPreviewPixmap(lastCameraFrame_, &latestCameraFaces_, &latestCameraMatchedFaceIndexes_);
 
-            const auto stableName = smoothedCameraName(bestRawName);
             cameraIdentityLabel_->setText(QString("Identity: %1 face(s) | best %2 | stable %3")
                                               .arg(faces.size())
                                               .arg(bestRawName)
-                                              .arg(stableName));
+                                              .arg(bestStableName));
             if (bestPreviewFaceId > 0) {
                 updateCameraMatchPreview(bestPreviewFaceId, bestStatus);
             } else {
                 setCameraMatchPlaceholder(bestStatus);
             }
-            cameraStatusLabel_->setText(QString("Detected %1 face(s), threshold %2, top %3")
+            cameraStatusLabel_->setText(QString("Detected %1 face(s), threshold %2, top %3, process %4")
                                             .arg(faces.size())
                                             .arg(threshold, 0, 'f', 3)
-                                            .arg(topK));
+                                            .arg(topK)
+                                            .arg(processSize));
             cameraResultTable_->resizeColumnsToContents();
         } catch (const std::exception& ex) {
             showError(ex);
@@ -3106,6 +3188,7 @@ private:
     QDoubleSpinBox* cameraThresholdSpin_ = nullptr;
     QSpinBox* cameraTopKSpin_ = nullptr;
     QSpinBox* cameraIntervalSpin_ = nullptr;
+    QSpinBox* cameraProcessSizeSpin_ = nullptr;
     QCheckBox* cameraAutoCheck_ = nullptr;
     QLabel* cameraStatusLabel_ = nullptr;
     QLabel* cameraDatabaseLabel_ = nullptr;
@@ -3151,7 +3234,7 @@ private:
     QTableWidget* importLog_ = nullptr;
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
-    std::deque<QString> cameraVotes_;
+    std::map<int, std::deque<QString>> cameraVotesByFace_;
     std::vector<fsc::vision::AnalyzedFace> latestCameraFaces_;
     std::set<int> latestCameraMatchedFaceIndexes_;
     std::chrono::steady_clock::time_point latestCameraFacesAt_;
