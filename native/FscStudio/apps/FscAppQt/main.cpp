@@ -962,14 +962,47 @@ private:
         auto* visualPanel = new QWidget(mainSplitter);
         auto* visualLayout = new QVBoxLayout(visualPanel);
         visualLayout->setContentsMargins(8, 0, 0, 0);
-        libraryFocusButton_ = new QPushButton("Focus on Face", visualPanel);
+
+        libraryVisualTabs_ = new QTabWidget(visualPanel);
+        auto* imageTab = new QWidget(libraryVisualTabs_);
+        auto* imageLayout = new QVBoxLayout(imageTab);
+        imageLayout->setContentsMargins(0, 0, 0, 0);
+        libraryFocusButton_ = new QPushButton("Focus on Face", imageTab);
         libraryFocusButton_->setMaximumWidth(132);
-        libraryPreviewLabel_ = new QLabel("Select a face", visualPanel);
+        libraryPreviewLabel_ = new QLabel("Select a face", imageTab);
         libraryPreviewLabel_->setAlignment(Qt::AlignCenter);
         libraryPreviewLabel_->setMinimumWidth(300);
         libraryPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        visualLayout->addWidget(libraryFocusButton_, 0, Qt::AlignLeft);
-        visualLayout->addWidget(libraryPreviewLabel_, 1);
+        imageLayout->addWidget(libraryFocusButton_, 0, Qt::AlignLeft);
+        imageLayout->addWidget(libraryPreviewLabel_, 1);
+
+        auto* landmarksTab = new QWidget(libraryVisualTabs_);
+        auto* landmarksLayout = new QVBoxLayout(landmarksTab);
+        landmarksLayout->setContentsMargins(0, 0, 0, 0);
+        libraryLandmarksView_ = new PointCloudWidget(landmarksTab);
+        landmarksLayout->addWidget(libraryLandmarksView_, 1);
+
+        auto* denseTab = new QWidget(libraryVisualTabs_);
+        auto* denseLayout = new QVBoxLayout(denseTab);
+        denseLayout->setContentsMargins(0, 0, 0, 0);
+        auto* denseControls = new QWidget(denseTab);
+        auto* denseControlsLayout = new QHBoxLayout(denseControls);
+        denseControlsLayout->setContentsMargins(0, 0, 0, 0);
+        libraryMeshOverlayCheck_ = new QCheckBox("3D Landmarks", denseControls);
+        libraryMeshOverlayCheck_->setChecked(true);
+        auto* generateLibraryMeshButton = new QPushButton("Generate Native Mesh", denseControls);
+        libraryMeshStatusLabel_ = new QLabel("Select a face", denseControls);
+        denseControlsLayout->addWidget(libraryMeshOverlayCheck_);
+        denseControlsLayout->addWidget(generateLibraryMeshButton);
+        denseControlsLayout->addWidget(libraryMeshStatusLabel_, 1);
+        libraryDenseMeshView_ = new PointCloudWidget(denseTab);
+        denseLayout->addWidget(denseControls);
+        denseLayout->addWidget(libraryDenseMeshView_, 1);
+
+        libraryVisualTabs_->addTab(imageTab, "Image");
+        libraryVisualTabs_->addTab(landmarksTab, "3D Landmarks");
+        libraryVisualTabs_->addTab(denseTab, "Dense Mesh");
+        visualLayout->addWidget(libraryVisualTabs_, 2);
         auto* metadataTabs = new QTabWidget(visualPanel);
         auto* selectedTab = new QWidget(metadataTabs);
         auto* selectedForm = new QFormLayout(selectedTab);
@@ -1040,7 +1073,7 @@ private:
                 }
                 libraryFocusOnFace_ = false;
                 loadLibraryMetadata(faceId);
-                updateLibraryPreview(faceId);
+                updateLibraryVisuals(faceId);
             }
         });
         connect(modelButton, &QPushButton::clicked, this, [this] {
@@ -1057,6 +1090,12 @@ private:
                 updateLibraryPreview(libraryPreviewFaceId_);
             }
         });
+        connect(libraryMeshOverlayCheck_, &QCheckBox::toggled, this, [this] {
+            if (libraryPreviewFaceId_ > 0) {
+                updateLibrary3dPreview(libraryPreviewFaceId_);
+            }
+        });
+        connect(generateLibraryMeshButton, &QPushButton::clicked, this, [this] { generateLibraryMeshForSelectedFace(); });
         connect(saveMetadataButton, &QPushButton::clicked, this, [this] { saveLibrarySelectedMetadata(); });
         connect(applyBatchButton, &QPushButton::clicked, this, [this] { applyLibraryBatchMetadata(); });
     }
@@ -1911,6 +1950,104 @@ private:
         } catch (const std::exception& ex) {
             libraryPreviewLabel_->setText(ex.what());
             libraryPreviewLabel_->setPixmap(QPixmap());
+        }
+    }
+
+    void updateLibraryVisuals(int faceId) {
+        updateLibraryPreview(faceId);
+        updateLibrary3dPreview(faceId);
+    }
+
+    void updateLibrary3dPreview(int faceId) {
+        if (libraryLandmarksView_ == nullptr || libraryDenseMeshView_ == nullptr) {
+            return;
+        }
+        if (!database_) {
+            libraryLandmarksView_->setMessage("No database");
+            libraryDenseMeshView_->setMessage("No database");
+            if (libraryMeshStatusLabel_ != nullptr) {
+                libraryMeshStatusLabel_->setText("Open a database first");
+            }
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                libraryLandmarksView_->setMessage("Face not found");
+                libraryDenseMeshView_->setMessage("Face not found");
+                if (libraryMeshStatusLabel_ != nullptr) {
+                    libraryMeshStatusLabel_->setText("Face not found");
+                }
+                return;
+            }
+
+            if (face->landmarks3d.empty()) {
+                libraryLandmarksView_->setMessage("No cached 3D landmarks");
+            } else {
+                libraryLandmarksView_->setData(
+                    face->landmarks3d,
+                    {},
+                    QString("Face %1 3D landmarks (%2)").arg(face->id).arg(face->landmarks3d.size()));
+            }
+
+            const bool hasDenseMesh = !face->faceMesh3d.empty();
+            const bool hasLandmarks = !face->landmarks3d.empty();
+            if (!hasDenseMesh && !hasLandmarks) {
+                libraryDenseMeshView_->setMessage("No cached dense mesh or 3D landmarks");
+                if (libraryMeshStatusLabel_ != nullptr) {
+                    libraryMeshStatusLabel_->setText("No cached 3D data");
+                }
+                return;
+            }
+
+            std::vector<std::vector<double>> meshPoints = hasDenseMesh
+                ? face->faceMesh3d
+                : fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            std::vector<std::vector<double>> overlay;
+            if (hasLandmarks && libraryMeshOverlayCheck_ != nullptr && libraryMeshOverlayCheck_->isChecked()) {
+                overlay = face->landmarks3d;
+            }
+            const QString source = hasDenseMesh ? "cached dense mesh" : "native fallback mesh";
+            if (libraryMeshStatusLabel_ != nullptr) {
+                libraryMeshStatusLabel_->setText(QString("Face %1: %2 point(s) from %3")
+                                                     .arg(face->id)
+                                                     .arg(meshPoints.size())
+                                                     .arg(source));
+            }
+            libraryDenseMeshView_->setData(
+                std::move(meshPoints),
+                std::move(overlay),
+                QString("Face %1 dense mesh").arg(face->id));
+        } catch (const std::exception& ex) {
+            libraryLandmarksView_->setMessage(ex.what());
+            libraryDenseMeshView_->setMessage(ex.what());
+            if (libraryMeshStatusLabel_ != nullptr) {
+                libraryMeshStatusLabel_->setText(ex.what());
+            }
+        }
+    }
+
+    void generateLibraryMeshForSelectedFace() {
+        if (!database_ || libraryPreviewFaceId_ <= 0) {
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(libraryPreviewFaceId_);
+            if (!face.has_value()) {
+                throw std::runtime_error("Face id not found.");
+            }
+            if (face->landmarks3d.empty()) {
+                throw std::runtime_error("This face has no cached 3D landmarks to build a native mesh from.");
+            }
+            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            database_->updateFaceMesh3d(libraryPreviewFaceId_, mesh);
+            updateLibrary3dPreview(libraryPreviewFaceId_);
+            if (meshFaceIdSpin_ != nullptr && meshFaceIdSpin_->value() == libraryPreviewFaceId_) {
+                loadDenseMeshFace();
+            }
+            statusBar()->showMessage(QString("Generated native mesh for face %1 (%2 points)").arg(libraryPreviewFaceId_).arg(mesh.size()));
+        } catch (const std::exception& ex) {
+            showError(ex);
         }
     }
 
@@ -3150,7 +3287,12 @@ private:
     QLabel* qualityLabel_ = nullptr;
     QTableWidget* libraryTable_ = nullptr;
     QLabel* libraryPreviewLabel_ = nullptr;
+    QTabWidget* libraryVisualTabs_ = nullptr;
     QPushButton* libraryFocusButton_ = nullptr;
+    PointCloudWidget* libraryLandmarksView_ = nullptr;
+    PointCloudWidget* libraryDenseMeshView_ = nullptr;
+    QCheckBox* libraryMeshOverlayCheck_ = nullptr;
+    QLabel* libraryMeshStatusLabel_ = nullptr;
     QLineEdit* libraryPersonEdit_ = nullptr;
     QLineEdit* libraryTagsEdit_ = nullptr;
     QComboBox* libraryReviewCombo_ = nullptr;
@@ -3291,6 +3433,22 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return !face->landmarks3d.empty() || !face->faceMesh3d.empty() ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--library-visual-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value() || face->landmarks3d.empty()) {
+                return 1;
+            }
+            const auto mesh = face->faceMesh3d.empty()
+                ? fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d)
+                : face->faceMesh3d;
+            return !mesh.empty() ? 0 : 1;
         } catch (...) {
             return 1;
         }

@@ -128,7 +128,7 @@ Current Qt shell:
 - Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime pages backed by native `FscCore` / `FscVision`.
 - Uses the Python app's left navigation order with lower-left language and identity-mode controls.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images from the Library page through native ONNX.
-- Library has a right-side image preview for the selected face, overlays cached bbox / 2D landmarks, and toggles full-image versus face-focused viewing.
+- Library has right-side Image / 3D Landmarks / Dense Mesh visual tabs for the selected face. Image overlays cached bbox / 2D landmarks and toggles full-image versus face-focused viewing; 3D tabs use cached landmarks / dense mesh or a native fallback mesh preview.
 - Library now includes Selected and Batch metadata tabs for person assignment, tags, review state, ignored state, and notes; native SQLite reads/writes `face_tags`.
 - Search can now analyze a standalone query image natively, choose among detected query faces, preview boxes, and run search/identity against the selected query face.
 - Compare now mirrors the Python multi-face workflow more closely: each side analyzes after image selection, lists detected faces, supports preview-box click selection, focus/full-image toggles, and compares the selected pair.
@@ -143,6 +143,7 @@ Current Qt shell:
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
+- `FscStudioQt.exe --library-visual-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --metadata-smoke D:\FSC\native\FscStudio\out\probe\native_metadata_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --maintenance-smoke D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke.fscdb D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke_backup.fscdb`: exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
