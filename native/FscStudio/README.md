@@ -30,6 +30,7 @@ continuing that prototype.
 - Minimal Qt Widgets desktop shell with Python-style left navigation for Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime; the People page can add people, assign faces, and train identity profiles, and Library owns image import plus selected-face preview/focus.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
 - Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
+- Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
 Track that explicitly in `docs/python-ui-parity.md`.

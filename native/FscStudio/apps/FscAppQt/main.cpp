@@ -947,6 +947,21 @@ private:
         auto* layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
 
+        auto* imageControls = new QWidget(page);
+        auto* imageLayout = new QHBoxLayout(imageControls);
+        imageLayout->setContentsMargins(0, 0, 0, 0);
+        searchImageEdit_ = new QLineEdit(imageControls);
+        searchImageEdit_->setPlaceholderText("Query image");
+        auto* browseImageButton = new QPushButton("Browse", imageControls);
+        auto* analyzeImageButton = new QPushButton("Analyze Query", imageControls);
+        searchFaceCombo_ = new QComboBox(imageControls);
+        searchFaceCombo_->setMinimumWidth(180);
+        imageLayout->addWidget(searchImageEdit_, 1);
+        imageLayout->addWidget(browseImageButton);
+        imageLayout->addWidget(analyzeImageButton);
+        imageLayout->addWidget(searchFaceCombo_);
+        layout->addWidget(imageControls);
+
         auto* controls = new QWidget(page);
         auto* controlsLayout = new QHBoxLayout(controls);
         controlsLayout->setContentsMargins(0, 0, 0, 0);
@@ -967,13 +982,32 @@ private:
         controlsLayout->addWidget(identityLabel_, 1);
         layout->addWidget(controls);
 
-        searchTable_ = new QTableWidget(page);
+        auto* splitter = new QSplitter(Qt::Horizontal, page);
+        auto* leftPanel = new QWidget(splitter);
+        auto* leftLayout = new QVBoxLayout(leftPanel);
+        leftLayout->setContentsMargins(0, 0, 0, 0);
+        searchTable_ = new QTableWidget(leftPanel);
         searchTable_->setColumnCount(5);
         searchTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Cosine", "Similarity"});
         fitTable(searchTable_);
-        layout->addWidget(searchTable_, 1);
+        leftLayout->addWidget(searchTable_, 1);
+        searchPreviewLabel_ = new QLabel("Select or analyze a query image", splitter);
+        searchPreviewLabel_->setAlignment(Qt::AlignCenter);
+        searchPreviewLabel_->setMinimumWidth(320);
+        searchPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        splitter->addWidget(leftPanel);
+        splitter->addWidget(searchPreviewLabel_);
+        splitter->setStretchFactor(0, 3);
+        splitter->setStretchFactor(1, 2);
+        layout->addWidget(splitter, 1);
 
         addMainTab(page, "Search");
+        connect(browseImageButton, &QPushButton::clicked, this, [this] { chooseImage(searchImageEdit_); });
+        connect(analyzeImageButton, &QPushButton::clicked, this, [this] { analyzeSearchImage(); });
+        connect(searchFaceCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+            searchQueryFaceIndex_ = index;
+            updateSearchQueryPreview();
+        });
         connect(searchButton, &QPushButton::clicked, this, [this] { runSearch(); });
         connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
     }
@@ -1545,19 +1579,105 @@ private:
         }
     }
 
+    void analyzeSearchImage() {
+#ifdef FSC_ENABLE_ONNX
+        try {
+            if (searchImageEdit_ == nullptr || searchImageEdit_->text().trimmed().isEmpty()) {
+                throw std::runtime_error("Select a query image first.");
+            }
+            const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
+            const auto imagePath = pathFrom(searchImageEdit_->text());
+            const auto image = fsc::vision::loadImageRgb(imagePath);
+            searchQueryFaces_ = engine.analyze(image, 0.50f, 10);
+            if (searchQueryFaces_.empty()) {
+                throw std::runtime_error("No face detected in the query image.");
+            }
+            searchFaceCombo_->blockSignals(true);
+            searchFaceCombo_->clear();
+            for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
+                const auto& face = searchQueryFaces_[static_cast<size_t>(index)];
+                searchFaceCombo_->addItem(
+                    QString("Face %1 | det %2 | q %3")
+                        .arg(index + 1)
+                        .arg(face.detection.score, 0, 'f', 3)
+                        .arg(face.qualityScore, 0, 'f', 3));
+            }
+            searchFaceCombo_->setCurrentIndex(0);
+            searchFaceCombo_->blockSignals(false);
+            searchQueryFaceIndex_ = 0;
+            updateSearchQueryPreview();
+            statusBar()->showMessage(QString("Analyzed query image: %1 face(s)").arg(searchQueryFaces_.size()));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+#else
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
+#endif
+    }
+
+    void updateSearchQueryPreview() {
+        if (searchPreviewLabel_ == nullptr) {
+            return;
+        }
+        QImage image(searchImageEdit_ == nullptr ? QString() : searchImageEdit_->text());
+        if (image.isNull()) {
+            searchPreviewLabel_->setText("Query image unavailable");
+            searchPreviewLabel_->setPixmap(QPixmap());
+            return;
+        }
+        QPixmap pixmap = QPixmap::fromImage(image).scaled(
+            searchPreviewLabel_->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
+        if (!pixmap.isNull()) {
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
+            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
+            for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
+                const auto& box = searchQueryFaces_[static_cast<size_t>(index)].detection.box;
+                const QRectF rect(
+                    box.x1 * sx,
+                    box.y1 * sy,
+                    (box.x2 - box.x1) * sx,
+                    (box.y2 - box.y1) * sy);
+                painter.setPen(QPen(index == searchQueryFaceIndex_ ? QColor(0, 230, 70) : QColor(20, 180, 235), 2.0));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRect(rect);
+            }
+        }
+        searchPreviewLabel_->setPixmap(pixmap);
+    }
+
+    std::vector<float> currentSearchEmbedding(int64_t* databaseFaceId = nullptr) const {
+        if (databaseFaceId != nullptr) {
+            *databaseFaceId = 0;
+        }
+        if (!searchQueryFaces_.empty() && searchQueryFaceIndex_ >= 0 && searchQueryFaceIndex_ < static_cast<int>(searchQueryFaces_.size())) {
+            return searchQueryFaces_[static_cast<size_t>(searchQueryFaceIndex_)].embedding;
+        }
+        const auto query = database_->loadFace(faceIdSpin_->value());
+        if (!query.has_value()) {
+            throw std::runtime_error("Face id not found.");
+        }
+        if (databaseFaceId != nullptr) {
+            *databaseFaceId = query->id;
+        }
+        return query->embedding;
+    }
+
     void runSearch() {
         if (!database_) {
             return;
         }
         try {
-            const auto query = database_->loadFace(faceIdSpin_->value());
-            if (!query.has_value()) {
-                throw std::runtime_error("Face id not found.");
-            }
-            const auto hits = fsc::core::searchFaces(database_->loadFaces(false), query->embedding, topKSpin_->value(), -1.0, false);
+            int64_t databaseFaceId = 0;
+            const auto embedding = currentSearchEmbedding(&databaseFaceId);
+            const auto hits = fsc::core::searchFaces(database_->loadFaces(false), embedding, topKSpin_->value(), -1.0, false);
             searchTable_->setRowCount(0);
             for (const auto& hit : hits) {
-                if (hit.record.id == query->id) {
+                if (databaseFaceId > 0 && hit.record.id == databaseFaceId) {
                     continue;
                 }
                 const int row = searchTable_->rowCount();
@@ -1579,11 +1699,8 @@ private:
             return;
         }
         try {
-            const auto query = database_->loadFace(faceIdSpin_->value());
-            if (!query.has_value()) {
-                throw std::runtime_error("Face id not found.");
-            }
-            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), query->embedding, selectedIdentityMode(), 5);
+            const auto embedding = currentSearchEmbedding();
+            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), embedding, selectedIdentityMode(), 5);
             QString text = "Identity: " + qs(result.decision);
             if (!result.candidates.empty()) {
                 const auto& candidate = result.candidates.front();
@@ -1913,6 +2030,11 @@ private:
     QSpinBox* topKSpin_ = nullptr;
     QLabel* identityLabel_ = nullptr;
     QTableWidget* searchTable_ = nullptr;
+    QLineEdit* searchImageEdit_ = nullptr;
+    QComboBox* searchFaceCombo_ = nullptr;
+    QLabel* searchPreviewLabel_ = nullptr;
+    std::vector<fsc::vision::AnalyzedFace> searchQueryFaces_;
+    int searchQueryFaceIndex_ = 0;
     QSpinBox* cameraIndexSpin_ = nullptr;
     QCheckBox* cameraAutoCheck_ = nullptr;
     QLabel* cameraStatusLabel_ = nullptr;
