@@ -2,12 +2,15 @@
 #include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
+#include "fsc/core/VectorMath.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 
 #include <QApplication>
 #include <QAbstractItemView>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHeaderView>
@@ -28,9 +31,13 @@
 #include <QWidget>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -132,6 +139,100 @@ fsc::core::FaceInsertRecord insertRecordFromFace(
     return record;
 }
 
+const fsc::vision::AnalyzedFace& bestFace(const std::vector<fsc::vision::AnalyzedFace>& faces) {
+    if (faces.empty()) {
+        throw std::runtime_error("No face detected.");
+    }
+    return *std::max_element(faces.begin(), faces.end(), [](const auto& left, const auto& right) {
+        return left.detection.score < right.detection.score;
+    });
+}
+
+struct ClusterSummary {
+    std::vector<fsc::core::FaceRecord> members;
+    double meanSimilarity = 0.0;
+    double maxSimilarity = 0.0;
+    double averageQuality = 0.0;
+};
+
+std::vector<ClusterSummary> buildClusters(std::vector<fsc::core::FaceRecord> records, double threshold, int minSize) {
+    records.erase(
+        std::remove_if(records.begin(), records.end(), [](const auto& record) {
+            return record.embedding.empty();
+        }),
+        records.end());
+    const int n = static_cast<int>(records.size());
+    std::vector<int> parent(static_cast<size_t>(n));
+    std::iota(parent.begin(), parent.end(), 0);
+    const auto findRoot = [&](int value) {
+        int root = value;
+        while (parent[static_cast<size_t>(root)] != root) {
+            root = parent[static_cast<size_t>(root)];
+        }
+        while (parent[static_cast<size_t>(value)] != value) {
+            const int next = parent[static_cast<size_t>(value)];
+            parent[static_cast<size_t>(value)] = root;
+            value = next;
+        }
+        return root;
+    };
+    const auto unite = [&](int left, int right) {
+        const int leftRoot = findRoot(left);
+        const int rightRoot = findRoot(right);
+        if (leftRoot != rightRoot) {
+            parent[static_cast<size_t>(rightRoot)] = leftRoot;
+        }
+    };
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            if (fsc::core::dot(records[static_cast<size_t>(i)].embedding, records[static_cast<size_t>(j)].embedding) >= threshold) {
+                unite(i, j);
+            }
+        }
+    }
+
+    std::map<int, std::vector<int>> groups;
+    for (int i = 0; i < n; ++i) {
+        groups[findRoot(i)].push_back(i);
+    }
+
+    std::vector<ClusterSummary> clusters;
+    for (const auto& [_, indexes] : groups) {
+        if (indexes.size() < static_cast<size_t>(std::max(2, minSize))) {
+            continue;
+        }
+        ClusterSummary cluster;
+        cluster.members.reserve(indexes.size());
+        double qualityTotal = 0.0;
+        for (const int index : indexes) {
+            const auto& record = records[static_cast<size_t>(index)];
+            qualityTotal += record.qualityScore;
+            cluster.members.push_back(record);
+        }
+        cluster.averageQuality = qualityTotal / static_cast<double>(cluster.members.size());
+        double similarityTotal = 0.0;
+        int pairCount = 0;
+        for (size_t i = 0; i < cluster.members.size(); ++i) {
+            for (size_t j = i + 1; j < cluster.members.size(); ++j) {
+                const double score = fsc::core::dot(cluster.members[i].embedding, cluster.members[j].embedding);
+                similarityTotal += score;
+                cluster.maxSimilarity = std::max(cluster.maxSimilarity, score);
+                ++pairCount;
+            }
+        }
+        cluster.meanSimilarity = pairCount > 0 ? similarityTotal / static_cast<double>(pairCount) : 0.0;
+        clusters.push_back(std::move(cluster));
+    }
+    std::sort(clusters.begin(), clusters.end(), [](const auto& left, const auto& right) {
+        if (left.members.size() != right.members.size()) {
+            return left.members.size() > right.members.size();
+        }
+        return left.meanSimilarity > right.meanSimilarity;
+    });
+    return clusters;
+}
+
 class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr)
@@ -181,7 +282,10 @@ private:
         buildOverviewTab();
         buildLibraryTab();
         buildPeopleTab();
+        buildReviewTab();
         buildSearchTab();
+        buildCompareTab();
+        buildClustersTab();
         buildImportTab();
 
         setCentralWidget(root);
@@ -293,6 +397,62 @@ private:
         connect(trainButton, &QPushButton::clicked, this, [this] { trainProfiles(); });
     }
 
+    void buildReviewTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* controlsLayout = new QHBoxLayout(controls);
+        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        reviewStateCombo_ = new QComboBox(controls);
+        reviewStateCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
+        reviewIgnoredCombo_ = new QComboBox(controls);
+        reviewIgnoredCombo_->addItems({"Not ignored", "Ignored"});
+        reviewNotesEdit_ = new QLineEdit(controls);
+        reviewNotesEdit_->setPlaceholderText("Notes");
+        auto* applyButton = new QPushButton("Apply", controls);
+        auto* reviewedButton = new QPushButton("Reviewed", controls);
+        auto* ignoredButton = new QPushButton("Ignore", controls);
+        controlsLayout->addWidget(reviewStateCombo_);
+        controlsLayout->addWidget(reviewIgnoredCombo_);
+        controlsLayout->addWidget(reviewNotesEdit_, 1);
+        controlsLayout->addWidget(applyButton);
+        controlsLayout->addWidget(reviewedButton);
+        controlsLayout->addWidget(ignoredButton);
+        layout->addWidget(controls);
+
+        reviewTable_ = new QTableWidget(page);
+        reviewTable_->setColumnCount(8);
+        reviewTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Notes"});
+        fitTable(reviewTable_);
+        layout->addWidget(reviewTable_, 1);
+        tabs_->addTab(page, "Review");
+
+        connect(reviewTable_, &QTableWidget::itemSelectionChanged, this, [this] {
+            const auto selected = reviewTable_->selectedItems();
+            if (selected.empty()) {
+                return;
+            }
+            const int row = selected.front()->row();
+            if (const auto* idItem = reviewTable_->item(row, 0); idItem != nullptr && faceIdSpin_ != nullptr) {
+                faceIdSpin_->setValue(idItem->text().toInt());
+            }
+            if (const auto* stateItem = reviewTable_->item(row, 5); stateItem != nullptr) {
+                reviewStateCombo_->setCurrentText(stateItem->text());
+            }
+            if (const auto* ignoredItem = reviewTable_->item(row, 6); ignoredItem != nullptr) {
+                reviewIgnoredCombo_->setCurrentIndex(ignoredItem->text() == "yes" ? 1 : 0);
+            }
+            if (const auto* notesItem = reviewTable_->item(row, 7); notesItem != nullptr) {
+                reviewNotesEdit_->setText(notesItem->text());
+            }
+        });
+        connect(applyButton, &QPushButton::clicked, this, [this] { applyReviewFromControls(); });
+        connect(reviewedButton, &QPushButton::clicked, this, [this] { applyReviewState("reviewed", false); });
+        connect(ignoredButton, &QPushButton::clicked, this, [this] { applyReviewState("ignored", true); });
+    }
+
     void buildSearchTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
@@ -327,6 +487,92 @@ private:
         tabs_->addTab(page, "Search");
         connect(searchButton, &QPushButton::clicked, this, [this] { runSearch(); });
         connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
+    }
+
+    void buildCompareTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* formWidget = new QWidget(page);
+        auto* form = new QFormLayout(formWidget);
+        compareImageAEdit_ = new QLineEdit(formWidget);
+        compareImageBEdit_ = new QLineEdit(formWidget);
+        auto* rowA = new QWidget(formWidget);
+        auto* rowALayout = new QHBoxLayout(rowA);
+        rowALayout->setContentsMargins(0, 0, 0, 0);
+        auto* browseA = new QPushButton("Browse", rowA);
+        rowALayout->addWidget(compareImageAEdit_, 1);
+        rowALayout->addWidget(browseA);
+        auto* rowB = new QWidget(formWidget);
+        auto* rowBLayout = new QHBoxLayout(rowB);
+        rowBLayout->setContentsMargins(0, 0, 0, 0);
+        auto* browseB = new QPushButton("Browse", rowB);
+        rowBLayout->addWidget(compareImageBEdit_, 1);
+        rowBLayout->addWidget(browseB);
+        auto* compareButton = new QPushButton("Compare Images", formWidget);
+        compareResultLabel_ = new QLabel("Cosine: -", formWidget);
+        form->addRow("Image A", rowA);
+        form->addRow("Image B", rowB);
+        form->addRow("", compareButton);
+        form->addRow("Result", compareResultLabel_);
+        layout->addWidget(formWidget);
+
+        compareFaceTable_ = new QTableWidget(page);
+        compareFaceTable_->setColumnCount(5);
+        compareFaceTable_->setHorizontalHeaderLabels({"Image", "Detection", "Quality", "2D", "3D"});
+        fitTable(compareFaceTable_);
+        layout->addWidget(compareFaceTable_, 1);
+        tabs_->addTab(page, "Compare");
+
+        connect(browseA, &QPushButton::clicked, this, [this] { chooseImage(compareImageAEdit_); });
+        connect(browseB, &QPushButton::clicked, this, [this] { chooseImage(compareImageBEdit_); });
+        connect(compareButton, &QPushButton::clicked, this, [this] { compareImages(); });
+    }
+
+    void buildClustersTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* controlsLayout = new QHBoxLayout(controls);
+        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        clusterThresholdSpin_ = new QDoubleSpinBox(controls);
+        clusterThresholdSpin_->setRange(-1.0, 1.0);
+        clusterThresholdSpin_->setSingleStep(0.01);
+        clusterThresholdSpin_->setDecimals(3);
+        clusterThresholdSpin_->setValue(0.62);
+        clusterMinSizeSpin_ = new QSpinBox(controls);
+        clusterMinSizeSpin_->setRange(2, 50);
+        clusterMinSizeSpin_->setValue(2);
+        auto* clusterButton = new QPushButton("Build Clusters", controls);
+        controlsLayout->addWidget(new QLabel("Threshold", controls));
+        controlsLayout->addWidget(clusterThresholdSpin_);
+        controlsLayout->addWidget(new QLabel("Min Size", controls));
+        controlsLayout->addWidget(clusterMinSizeSpin_);
+        controlsLayout->addWidget(clusterButton);
+        controlsLayout->addStretch(1);
+        layout->addWidget(controls);
+
+        auto* splitter = new QSplitter(page);
+        clusterTable_ = new QTableWidget(splitter);
+        clusterTable_->setColumnCount(5);
+        clusterTable_->setHorizontalHeaderLabels({"Cluster", "Faces", "Mean", "Max", "Avg Quality"});
+        fitTable(clusterTable_);
+        clusterMemberTable_ = new QTableWidget(splitter);
+        clusterMemberTable_->setColumnCount(5);
+        clusterMemberTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Review"});
+        fitTable(clusterMemberTable_);
+        splitter->addWidget(clusterTable_);
+        splitter->addWidget(clusterMemberTable_);
+        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(1, 2);
+        layout->addWidget(splitter, 1);
+        tabs_->addTab(page, "Clusters");
+
+        connect(clusterButton, &QPushButton::clicked, this, [this] { refreshClusters(); });
+        connect(clusterTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMembers(); });
     }
 
     void buildImportTab() {
@@ -418,6 +664,7 @@ private:
         loadOverview();
         loadLibrary();
         loadPeople();
+        loadReview();
     }
 
     void loadOverview() {
@@ -463,6 +710,64 @@ private:
             peopleTable_->setItem(row, 7, item(qs(person.identityHealth)));
         }
         peopleTable_->resizeColumnsToContents();
+    }
+
+    void loadReview() {
+        if (reviewTable_ == nullptr) {
+            return;
+        }
+        const auto records = database_->loadFaces(true, 1000);
+        reviewTable_->setRowCount(0);
+        for (const auto& record : records) {
+            if (!record.ignored && record.reviewState == "reviewed") {
+                continue;
+            }
+            const int row = reviewTable_->rowCount();
+            reviewTable_->insertRow(row);
+            reviewTable_->setItem(row, 0, item(QString::number(record.id)));
+            reviewTable_->setItem(row, 1, item(qs(record.fileName)));
+            reviewTable_->setItem(row, 2, item(qs(record.personName)));
+            reviewTable_->setItem(row, 3, numberItem(record.qualityScore, 3));
+            reviewTable_->setItem(row, 4, numberItem(record.detectionScore, 3));
+            reviewTable_->setItem(row, 5, item(qs(record.reviewState)));
+            reviewTable_->setItem(row, 6, item(record.ignored ? "yes" : "no"));
+            reviewTable_->setItem(row, 7, item(qs(record.notes)));
+        }
+        reviewTable_->resizeColumnsToContents();
+    }
+
+    int selectedReviewFaceId() const {
+        const auto selected = reviewTable_->selectedItems();
+        if (selected.empty()) {
+            return 0;
+        }
+        const int row = selected.front()->row();
+        const auto* idItem = reviewTable_->item(row, 0);
+        return idItem == nullptr ? 0 : idItem->text().toInt();
+    }
+
+    void applyReviewFromControls() {
+        applyReviewState(
+            reviewStateCombo_->currentText().toStdString(),
+            reviewIgnoredCombo_->currentIndex() == 1,
+            reviewNotesEdit_->text().toStdString());
+    }
+
+    void applyReviewState(const std::string& state, bool ignored, const std::string& notes = {}) {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int faceId = selectedReviewFaceId();
+            if (faceId <= 0) {
+                throw std::runtime_error("Select a review row first.");
+            }
+            database_->updateFaceReview(faceId, state, ignored, notes.empty() ? reviewNotesEdit_->text().toStdString() : notes);
+            reloadAll();
+            statusBar()->showMessage("Review updated");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
     }
 
     void addPerson() {
@@ -562,6 +867,95 @@ private:
         }
     }
 
+    void chooseImage(QLineEdit* target) {
+        const auto path = QFileDialog::getOpenFileName(this, "Select image", {}, "Images (*.jpg *.jpeg *.png *.bmp *.ppm)");
+        if (!path.isEmpty()) {
+            target->setText(path);
+        }
+    }
+
+    void compareImages() {
+#ifdef FSC_ENABLE_ONNX
+        try {
+            const auto modelRoot = pathFrom(modelRootEdit_->text());
+            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), fsc::vision::RuntimeMode::Cpu);
+            const auto imageA = fsc::vision::loadImageRgb(pathFrom(compareImageAEdit_->text()));
+            const auto imageB = fsc::vision::loadImageRgb(pathFrom(compareImageBEdit_->text()));
+            const auto facesA = engine.analyze(imageA, 0.50f, 10);
+            const auto facesB = engine.analyze(imageB, 0.50f, 10);
+            const auto& faceA = bestFace(facesA);
+            const auto& faceB = bestFace(facesB);
+            const double cosine = fsc::core::dot(faceA.embedding, faceB.embedding);
+            compareResultLabel_->setText(
+                QString("Cosine: %1 | Similarity: %2%")
+                    .arg(cosine, 0, 'f', 4)
+                    .arg((cosine + 1.0) * 50.0, 0, 'f', 1));
+
+            compareFaceTable_->setRowCount(2);
+            const auto fill = [this](int row, const QString& name, const fsc::vision::AnalyzedFace& face) {
+                compareFaceTable_->setItem(row, 0, item(name));
+                compareFaceTable_->setItem(row, 1, numberItem(face.detection.score, 4));
+                compareFaceTable_->setItem(row, 2, numberItem(face.qualityScore, 4));
+                compareFaceTable_->setItem(row, 3, item(QString::number(face.landmarks2d.size())));
+                compareFaceTable_->setItem(row, 4, item(QString::number(face.landmarks3d.size())));
+            };
+            fill(0, "A", faceA);
+            fill(1, "B", faceB);
+            compareFaceTable_->resizeColumnsToContents();
+            statusBar()->showMessage("Images compared");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+#else
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
+#endif
+    }
+
+    void refreshClusters() {
+        if (!database_) {
+            return;
+        }
+        try {
+            clusters_ = buildClusters(database_->loadFaces(false), clusterThresholdSpin_->value(), clusterMinSizeSpin_->value());
+            clusterTable_->setRowCount(static_cast<int>(clusters_.size()));
+            for (int row = 0; row < static_cast<int>(clusters_.size()); ++row) {
+                const auto& cluster = clusters_[static_cast<size_t>(row)];
+                clusterTable_->setItem(row, 0, item(QString::number(row + 1)));
+                clusterTable_->setItem(row, 1, item(QString::number(cluster.members.size())));
+                clusterTable_->setItem(row, 2, numberItem(cluster.meanSimilarity, 4));
+                clusterTable_->setItem(row, 3, numberItem(cluster.maxSimilarity, 4));
+                clusterTable_->setItem(row, 4, numberItem(cluster.averageQuality, 3));
+            }
+            clusterTable_->resizeColumnsToContents();
+            clusterMemberTable_->setRowCount(0);
+            statusBar()->showMessage(QString("Built %1 cluster(s)").arg(clusters_.size()));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void showSelectedClusterMembers() {
+        const auto selected = clusterTable_->selectedItems();
+        if (selected.empty()) {
+            return;
+        }
+        const int index = selected.front()->row();
+        if (index < 0 || index >= static_cast<int>(clusters_.size())) {
+            return;
+        }
+        const auto& members = clusters_[static_cast<size_t>(index)].members;
+        clusterMemberTable_->setRowCount(static_cast<int>(members.size()));
+        for (int row = 0; row < static_cast<int>(members.size()); ++row) {
+            const auto& member = members[static_cast<size_t>(row)];
+            clusterMemberTable_->setItem(row, 0, item(QString::number(member.id)));
+            clusterMemberTable_->setItem(row, 1, item(qs(member.fileName)));
+            clusterMemberTable_->setItem(row, 2, item(qs(member.personName)));
+            clusterMemberTable_->setItem(row, 3, numberItem(member.qualityScore, 3));
+            clusterMemberTable_->setItem(row, 4, item(qs(member.reviewState)));
+        }
+        clusterMemberTable_->resizeColumnsToContents();
+    }
+
     void importImage() {
 #ifdef FSC_ENABLE_ONNX
         if (!database_) {
@@ -617,13 +1011,26 @@ private:
     QLineEdit* personNameEdit_ = nullptr;
     QSpinBox* assignFaceSpin_ = nullptr;
     QSpinBox* assignPersonSpin_ = nullptr;
+    QTableWidget* reviewTable_ = nullptr;
+    QComboBox* reviewStateCombo_ = nullptr;
+    QComboBox* reviewIgnoredCombo_ = nullptr;
+    QLineEdit* reviewNotesEdit_ = nullptr;
     QSpinBox* faceIdSpin_ = nullptr;
     QSpinBox* topKSpin_ = nullptr;
     QLabel* identityLabel_ = nullptr;
     QTableWidget* searchTable_ = nullptr;
+    QLineEdit* compareImageAEdit_ = nullptr;
+    QLineEdit* compareImageBEdit_ = nullptr;
+    QLabel* compareResultLabel_ = nullptr;
+    QTableWidget* compareFaceTable_ = nullptr;
+    QDoubleSpinBox* clusterThresholdSpin_ = nullptr;
+    QSpinBox* clusterMinSizeSpin_ = nullptr;
+    QTableWidget* clusterTable_ = nullptr;
+    QTableWidget* clusterMemberTable_ = nullptr;
     QLineEdit* modelRootEdit_ = nullptr;
     QLineEdit* importImageEdit_ = nullptr;
     QTableWidget* importLog_ = nullptr;
+    std::vector<ClusterSummary> clusters_;
     std::unique_ptr<fsc::core::Database> database_;
 };
 
@@ -639,6 +1046,43 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (argc >= 4 && std::string(argv[1]) == "--review-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            database.updateFaceReview(faceId, "reviewed", false, "qt-review-smoke");
+            const auto face = database.loadFace(faceId);
+            return face.has_value() && face->reviewState == "reviewed" && !face->ignored ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 3 && std::string(argv[1]) == "--cluster-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            (void)buildClusters(database.loadFaces(false), 0.62, 2);
+            return 0;
+        } catch (...) {
+            return 1;
+        }
+    }
+#ifdef FSC_ENABLE_ONNX
+    if (argc >= 5 && std::string(argv[1]) == "--compare-smoke") {
+        try {
+            fsc::vision::InsightFaceEngine engine(
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(QString::fromLocal8Bit(argv[2]))),
+                fsc::vision::RuntimeMode::Cpu);
+            const auto imageA = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[3])));
+            const auto imageB = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[4])));
+            const auto faceA = bestFace(engine.analyze(imageA, 0.50f, 10));
+            const auto faceB = bestFace(engine.analyze(imageB, 0.50f, 10));
+            const double cosine = fsc::core::dot(faceA.embedding, faceB.embedding);
+            return std::isfinite(cosine) && faceA.embedding.size() == faceB.embedding.size() ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+#endif
 
     QApplication app(argc, argv);
     MainWindow window;

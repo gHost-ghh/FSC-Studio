@@ -19,7 +19,7 @@ Acceptance:
 - `fsc_native_probe <copy.fscdb> train-profiles` rebuilds local Identity Gallery profiles without Python.
 - `fsc_native_probe <new.fscdb> create-db` creates a Python-compatible v8 `.fscdb` without Python.
 - `fsc_native_probe <copy.fscdb> import-image <model_root> <image_path>` analyzes a JPEG/PNG/BMP/PPM image through native ONNX and inserts detected faces into `.fscdb`.
-- `fsc_native_probe <database.fscdb> add-person`, `assign-person`, `people`, and `train-profiles` cover the minimal native People -> assigned faces -> Identity Gallery loop.
+- `fsc_native_probe <database.fscdb> add-person`, `assign-person`, `people`, `train-profiles`, and `update-review` cover the minimal native People/Review -> assigned faces -> Identity Gallery loop.
 - `fsc_vision_probe models D:\FSC\model\insightface\models` validates all local buffalo_l model paths before ONNX inference is wired.
 - `fsc_vision_probe onnx <model>` inspects model I/O after `FSC_ENABLE_ONNX=ON` is configured.
 - ONNX-enabled probe must copy the matching `onnxruntime.dll` beside the executable; relying on PATH is not enough because Windows can load an older `System32\onnxruntime.dll`.
@@ -36,6 +36,7 @@ Observed local database probe:
 - `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_created.fscdb create-db`: created an empty v8 database with model `buffalo_l`.
 - Importing `baiyh.jpg` into that new database inserted face id `1`; importing it a second time inserted face id `2` with `duplicate=true`, and searching face id `2` returned face id `1` with cosine `1.0000`.
 - On `native_people.fscdb`, the native probe created a database, imported `baiyh.jpg`, added person `NativeTest`, assigned face id `1`, rebuilt identity profiles, and identified face id `1` as `NativeTest` with score `1.0000` in `review` because the profile is weak.
+- `fsc_native_probe D:\FSC\native\FscStudio\out\probe\native_review.fscdb update-review 1 reviewed 0 native-review-smoke`: updated face id `1` to `reviewed` with `ignored=false` on a copied database.
 
 ## Checkpoint 2: Native InsightFace Inference
 
@@ -89,7 +90,7 @@ Acceptance:
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
-Status: minimal Qt desktop shell verified; full page parity and installer pending.
+Status: expanded Qt desktop shell verified; full page parity and installer pending.
 
 Acceptance:
 
@@ -99,9 +100,15 @@ Acceptance:
 Current Qt shell:
 
 - Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
-- Includes Overview, Library, People, Search, and Import tabs backed by native `FscCore` / `FscVision`.
+- Includes Overview, Library, People, Search, Review, Compare, Clusters, and Import tabs backed by native `FscCore` / `FscVision`.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images through native ONNX.
+- Review can update `review_state`, `ignored`, and notes on selected faces.
+- Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
+- Clusters can group stored face embeddings with a configurable cosine threshold and minimum size.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
+- `FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
 
 Dependency notes:

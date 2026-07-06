@@ -27,6 +27,7 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> people\n"
         << "  fsc_native_probe <database.fscdb> add-person <name> [notes]\n"
         << "  fsc_native_probe <database.fscdb> assign-person <face_id> <person_id>\n"
+        << "  fsc_native_probe <database.fscdb> update-review <face_id> <state> <ignored:0|1> [notes]\n"
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
@@ -215,6 +216,22 @@ int main(int argc, char** argv) {
             database.assignFaceToPerson(faceId, personId);
             std::cout << "assigned_face=" << faceId << "\n";
             std::cout << "person_id=" << personId << "\n";
+            return 0;
+        }
+
+        if (command == "update-review") {
+            if (argc < 6) {
+                printUsage();
+                return 2;
+            }
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const std::string state = argv[4];
+            const bool ignored = std::atoi(argv[5]) != 0;
+            const std::string notes = argc >= 7 ? argv[6] : "";
+            database.updateFaceReview(faceId, state, ignored, notes);
+            std::cout << "updated_face=" << faceId << "\n";
+            std::cout << "review_state=" << state << "\n";
+            std::cout << "ignored=" << (ignored ? "true" : "false") << "\n";
             return 0;
         }
 

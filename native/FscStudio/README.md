@@ -27,7 +27,7 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
-- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
+- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, Review, Compare, Clusters, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
 
 ## Build
 
@@ -48,7 +48,7 @@ ctest --preset msvc-debug
 
 `msvc-debug` is dependency-light and builds the algorithm core first. For the
 SQLite probe, configure with vcpkg and `FSC_CORE_ONLY=OFF`. Enable the vcpkg
-`qt-app` feature later when the full Qt shell is ready.
+`qt-app` feature when building the Qt shell.
 
 To enable ONNX Runtime C++ model inspection without Qt/SQLite:
 
@@ -79,9 +79,10 @@ ctest --test-dir out\build\msvc-vs-db-debug -C Debug --output-on-failure
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb add-person NativeTest
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb assign-person 1 1
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb train-profiles 0.35 12
+.\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb update-review 1 reviewed 0 native-review-smoke
 ```
 
-To build the current minimal Qt desktop shell:
+To build the current Qt desktop shell:
 
 ```powershell
 cmake --preset msvc-vs-qt-debug
@@ -90,7 +91,13 @@ ctest --preset msvc-vs-qt-debug
 $p = Start-Process -FilePath .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe `
   -ArgumentList @("--smoke", "D:\FSC\new_full.fscdb") -Wait -PassThru
 $p.ExitCode
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
+
+Use a copied database for `--review-smoke`, because it writes a review state
+back to the selected face row.
 
 If vcpkg download through the local proxy fails while installing Qt, place the
 failed archive into `D:\FSC\.deps\vcpkg\downloads` and rerun the preset. On this

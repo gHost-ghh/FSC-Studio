@@ -1030,6 +1030,23 @@ void Database::assignFaceToPerson(int64_t faceId, int64_t personId) {
     }
 }
 
+void Database::updateFaceReview(int64_t faceId, const std::string& reviewState, bool ignored, const std::string& notes) {
+    if (reviewState.empty()) {
+        throw std::runtime_error("Review state cannot be empty.");
+    }
+    Statement statement(db_, "UPDATE faces SET review_state = ?, ignored = ?, notes = ? WHERE id = ?");
+    sqlite3_bind_text(statement.get(), 1, reviewState.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(statement.get(), 2, ignored ? 1 : 0);
+    sqlite3_bind_text(statement.get(), 3, notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(statement.get(), 4, faceId);
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(db_));
+    }
+    if (sqlite3_changes(db_) == 0) {
+        throw std::runtime_error("Face id not found: " + std::to_string(faceId));
+    }
+}
+
 int64_t Database::insertFace(const FaceInsertRecord& record) {
     const char* sql =
         "INSERT INTO faces ("
