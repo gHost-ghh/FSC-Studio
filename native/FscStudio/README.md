@@ -27,7 +27,7 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
-- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, and Import tabs.
+- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, and Import tabs; the People tab can add people, assign faces, and train identity profiles.
 
 ## Build
 

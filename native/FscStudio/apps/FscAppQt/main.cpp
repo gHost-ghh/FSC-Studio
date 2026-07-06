@@ -219,14 +219,78 @@ private:
         libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Source"});
         fitTable(libraryTable_);
         tabs_->addTab(libraryTable_, "Library");
+        connect(libraryTable_, &QTableWidget::itemSelectionChanged, this, [this] {
+            const auto selected = libraryTable_->selectedItems();
+            if (selected.empty()) {
+                return;
+            }
+            const int row = selected.front()->row();
+            const auto* idItem = libraryTable_->item(row, 0);
+            if (idItem == nullptr) {
+                return;
+            }
+            const int faceId = idItem->text().toInt();
+            if (faceId > 0) {
+                if (faceIdSpin_ != nullptr) {
+                    faceIdSpin_->setValue(faceId);
+                }
+                if (assignFaceSpin_ != nullptr) {
+                    assignFaceSpin_->setValue(faceId);
+                }
+            }
+        });
     }
 
     void buildPeopleTab() {
-        peopleTable_ = new QTableWidget(tabs_);
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* controlsLayout = new QHBoxLayout(controls);
+        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        personNameEdit_ = new QLineEdit(controls);
+        personNameEdit_->setPlaceholderText("Person name");
+        assignFaceSpin_ = new QSpinBox(controls);
+        assignFaceSpin_->setRange(1, 999999999);
+        assignFaceSpin_->setPrefix("Face ");
+        assignPersonSpin_ = new QSpinBox(controls);
+        assignPersonSpin_->setRange(1, 999999999);
+        assignPersonSpin_->setPrefix("Person ");
+        auto* addButton = new QPushButton("Add Person", controls);
+        auto* assignButton = new QPushButton("Assign Face", controls);
+        auto* trainButton = new QPushButton("Train Profiles", controls);
+        controlsLayout->addWidget(personNameEdit_, 1);
+        controlsLayout->addWidget(addButton);
+        controlsLayout->addWidget(assignFaceSpin_);
+        controlsLayout->addWidget(assignPersonSpin_);
+        controlsLayout->addWidget(assignButton);
+        controlsLayout->addWidget(trainButton);
+        layout->addWidget(controls);
+
+        peopleTable_ = new QTableWidget(page);
         peopleTable_->setColumnCount(8);
         peopleTable_->setHorizontalHeaderLabels({"ID", "Name", "Faces", "Avg Quality", "Identity", "Samples", "Exemplars", "Health"});
         fitTable(peopleTable_);
-        tabs_->addTab(peopleTable_, "People");
+        layout->addWidget(peopleTable_, 1);
+        tabs_->addTab(page, "People");
+        connect(peopleTable_, &QTableWidget::itemSelectionChanged, this, [this] {
+            const auto selected = peopleTable_->selectedItems();
+            if (selected.empty()) {
+                return;
+            }
+            const int row = selected.front()->row();
+            const auto* idItem = peopleTable_->item(row, 0);
+            if (idItem != nullptr) {
+                const int personId = idItem->text().toInt();
+                if (personId > 0) {
+                    assignPersonSpin_->setValue(personId);
+                }
+            }
+        });
+        connect(addButton, &QPushButton::clicked, this, [this] { addPerson(); });
+        connect(assignButton, &QPushButton::clicked, this, [this] { assignFace(); });
+        connect(trainButton, &QPushButton::clicked, this, [this] { trainProfiles(); });
     }
 
     void buildSearchTab() {
@@ -401,6 +465,51 @@ private:
         peopleTable_->resizeColumnsToContents();
     }
 
+    void addPerson() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto name = personNameEdit_->text().trimmed();
+            if (name.isEmpty()) {
+                throw std::runtime_error("Person name is empty.");
+            }
+            const auto personId = database_->upsertPerson(name.toUtf8().constData());
+            assignPersonSpin_->setValue(static_cast<int>(personId));
+            personNameEdit_->clear();
+            reloadAll();
+            statusBar()->showMessage("Person saved");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void assignFace() {
+        if (!database_) {
+            return;
+        }
+        try {
+            database_->assignFaceToPerson(assignFaceSpin_->value(), assignPersonSpin_->value());
+            reloadAll();
+            statusBar()->showMessage("Face assigned");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void trainProfiles() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto summary = database_->rebuildIdentityProfiles();
+            reloadAll();
+            statusBar()->showMessage(QString("Trained %1 profile(s), %2 weak").arg(summary.profilesBuilt).arg(summary.weakProfiles));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
     void runSearch() {
         if (!database_) {
             return;
@@ -505,6 +614,9 @@ private:
     QLabel* qualityLabel_ = nullptr;
     QTableWidget* libraryTable_ = nullptr;
     QTableWidget* peopleTable_ = nullptr;
+    QLineEdit* personNameEdit_ = nullptr;
+    QSpinBox* assignFaceSpin_ = nullptr;
+    QSpinBox* assignPersonSpin_ = nullptr;
     QSpinBox* faceIdSpin_ = nullptr;
     QSpinBox* topKSpin_ = nullptr;
     QLabel* identityLabel_ = nullptr;

@@ -100,7 +100,7 @@ Current Qt shell:
 
 - Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
 - Includes Overview, Library, People, Search, and Import tabs backed by native `FscCore` / `FscVision`.
-- Can create/open `.fscdb`, list faces and people, search by face id, identify by face id, and import images through native ONNX.
+- Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images through native ONNX.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
 
