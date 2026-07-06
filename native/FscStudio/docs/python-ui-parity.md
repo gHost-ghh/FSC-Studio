@@ -80,7 +80,7 @@ workflows, and user experience before the migration can be considered complete.
 
 - Native shell now uses left navigation and lower-left language / identity-mode controls, but the page internals remain structurally simplified.
 - Native Library now has selected-face Image / 3D Landmarks / Dense Mesh visual tabs with bbox/landmarks, focus toggle, and selected/batch metadata tabs; it still lacks the full Python Activity tab.
-- Native Search can analyze a standalone query image and choose among detected faces, but still lacks Python's full result action panel and animated comparison preview.
+- Native Search can analyze a standalone query image, choose among detected faces, filter by threshold/min-quality/ignored state, show identity candidates plus a separate result preview, and assign/confirm people from results. It still lacks Python's progressive animated comparison preview and person/tag filter combos.
 - Native Compare now supports two previews, detected-face lists, click-to-select boxes, focus toggles, and selected-pair comparison.
 - Native Review now has selected-face preview and AI suggested-person confirmation, but still lacks the complete Python metadata layout.
 - Native Runtime now includes current database stats and maintenance actions for integrity check, backup, WAL checkpoint, VACUUM, and operation logging.

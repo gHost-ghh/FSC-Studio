@@ -1264,14 +1264,30 @@ private:
         faceIdSpin_->setRange(1, 999999999);
         faceIdSpin_->setPrefix("Face ");
         topKSpin_ = new QSpinBox(controls);
-        topKSpin_->setRange(1, 100);
-        topKSpin_->setValue(10);
+        topKSpin_->setRange(1, 500);
+        topKSpin_->setValue(30);
         topKSpin_->setPrefix("Top ");
+        searchThresholdSpin_ = new QDoubleSpinBox(controls);
+        searchThresholdSpin_->setRange(-1.0, 1.0);
+        searchThresholdSpin_->setDecimals(3);
+        searchThresholdSpin_->setSingleStep(0.010);
+        searchThresholdSpin_->setValue(-1.0);
+        searchThresholdSpin_->setPrefix("Threshold ");
+        searchMinQualitySpin_ = new QDoubleSpinBox(controls);
+        searchMinQualitySpin_->setRange(0.0, 1.0);
+        searchMinQualitySpin_->setDecimals(3);
+        searchMinQualitySpin_->setSingleStep(0.050);
+        searchMinQualitySpin_->setValue(0.0);
+        searchMinQualitySpin_->setPrefix("Min quality ");
+        searchIncludeIgnoredCheck_ = new QCheckBox("Include ignored", controls);
         auto* searchButton = new QPushButton("Search", controls);
         auto* identifyButton = new QPushButton("Identify", controls);
         identityLabel_ = new QLabel("Identity: -", controls);
         controlsLayout->addWidget(faceIdSpin_);
         controlsLayout->addWidget(topKSpin_);
+        controlsLayout->addWidget(searchThresholdSpin_);
+        controlsLayout->addWidget(searchMinQualitySpin_);
+        controlsLayout->addWidget(searchIncludeIgnoredCheck_);
         controlsLayout->addWidget(searchButton);
         controlsLayout->addWidget(identifyButton);
         controlsLayout->addWidget(identityLabel_, 1);
@@ -1281,17 +1297,45 @@ private:
         auto* leftPanel = new QWidget(splitter);
         auto* leftLayout = new QVBoxLayout(leftPanel);
         leftLayout->setContentsMargins(0, 0, 0, 0);
+        searchIdentityTable_ = new QTableWidget(leftPanel);
+        searchIdentityTable_->setColumnCount(6);
+        searchIdentityTable_->setHorizontalHeaderLabels({"Rank", "Person", "Decision", "Score", "Confidence", "Evidence"});
+        fitTable(searchIdentityTable_);
+        searchIdentityTable_->setMaximumHeight(130);
+        leftLayout->addWidget(searchIdentityTable_);
         searchTable_ = new QTableWidget(leftPanel);
-        searchTable_->setColumnCount(5);
-        searchTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Cosine", "Similarity"});
+        searchTable_->setColumnCount(8);
+        searchTable_->setHorizontalHeaderLabels({"Rank", "ID", "File", "Person", "Tags", "Cosine", "Similarity", "Quality"});
         fitTable(searchTable_);
         leftLayout->addWidget(searchTable_, 1);
-        searchPreviewLabel_ = new QLabel("Select or analyze a query image", splitter);
+
+        auto* actionRow = new QWidget(leftPanel);
+        auto* actionLayout = new QHBoxLayout(actionRow);
+        actionLayout->setContentsMargins(0, 0, 0, 0);
+        searchAssignPersonEdit_ = new QLineEdit(actionRow);
+        searchAssignPersonEdit_->setPlaceholderText("Person for selected result");
+        auto* assignResultButton = new QPushButton("Assign Result", actionRow);
+        auto* confirmIdentityButton = new QPushButton("Confirm Identity", actionRow);
+        actionLayout->addWidget(searchAssignPersonEdit_, 1);
+        actionLayout->addWidget(assignResultButton);
+        actionLayout->addWidget(confirmIdentityButton);
+        leftLayout->addWidget(actionRow);
+
+        auto* previewPanel = new QWidget(splitter);
+        auto* previewLayout = new QVBoxLayout(previewPanel);
+        previewLayout->setContentsMargins(8, 0, 0, 0);
+        searchPreviewLabel_ = new QLabel("Select or analyze a query image", previewPanel);
         searchPreviewLabel_->setAlignment(Qt::AlignCenter);
         searchPreviewLabel_->setMinimumWidth(320);
         searchPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        searchResultPreviewLabel_ = new QLabel("Result preview", previewPanel);
+        searchResultPreviewLabel_->setAlignment(Qt::AlignCenter);
+        searchResultPreviewLabel_->setMinimumWidth(320);
+        searchResultPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        previewLayout->addWidget(searchPreviewLabel_, 1);
+        previewLayout->addWidget(searchResultPreviewLabel_, 1);
         splitter->addWidget(leftPanel);
-        splitter->addWidget(searchPreviewLabel_);
+        splitter->addWidget(previewPanel);
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
         layout->addWidget(splitter, 1);
@@ -1305,6 +1349,10 @@ private:
         });
         connect(searchButton, &QPushButton::clicked, this, [this] { runSearch(); });
         connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
+        connect(searchTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedSearchResultPreview(); });
+        connect(searchIdentityTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedSearchIdentityPreview(); });
+        connect(assignResultButton, &QPushButton::clicked, this, [this] { assignSelectedSearchResult(); });
+        connect(confirmIdentityButton, &QPushButton::clicked, this, [this] { confirmSearchIdentity(); });
     }
 
     void buildCameraTab() {
@@ -1870,6 +1918,45 @@ private:
         } catch (const std::exception& ex) {
             showError(ex);
         }
+    }
+
+    void setDatabaseFacePreview(QLabel* label, const fsc::core::FaceRecord& face, const QString& fallbackText) {
+        if (label == nullptr) {
+            return;
+        }
+        QImage image(qs(face.sourcePath));
+        if (image.isNull()) {
+            label->setText(fallbackText);
+            label->setPixmap(QPixmap());
+            return;
+        }
+        QPixmap pixmap = QPixmap::fromImage(image).scaled(
+            label->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
+        if (!pixmap.isNull()) {
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
+            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
+            if (face.bbox.size() >= 4) {
+                const QRectF box(
+                    QPointF(face.bbox[0] * sx, face.bbox[1] * sy),
+                    QPointF(face.bbox[2] * sx, face.bbox[3] * sy));
+                painter.setPen(QPen(QColor(0, 230, 70), 2.0));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRect(box.normalized());
+            }
+            painter.setPen(QPen(QColor(20, 170, 220), 1.1));
+            painter.setBrush(QColor(20, 210, 235));
+            for (const auto& point : face.landmarks2d) {
+                if (point.size() < 2) {
+                    continue;
+                }
+                painter.drawEllipse(QPointF(point[0] * sx, point[1] * sy), 1.7, 1.7);
+            }
+        }
+        label->setPixmap(pixmap);
     }
 
     void updateLibraryPreview(int faceId) {
@@ -2491,6 +2578,22 @@ private:
             if (searchQueryFaces_.empty()) {
                 throw std::runtime_error("No face detected in the query image.");
             }
+            searchHits_.clear();
+            lastSearchIdentityResult_ = {};
+            currentSearchDatabaseFaceId_ = 0;
+            if (searchTable_ != nullptr) {
+                searchTable_->setRowCount(0);
+            }
+            if (searchIdentityTable_ != nullptr) {
+                searchIdentityTable_->setRowCount(0);
+            }
+            if (searchResultPreviewLabel_ != nullptr) {
+                searchResultPreviewLabel_->setText("Result preview");
+                searchResultPreviewLabel_->setPixmap(QPixmap());
+            }
+            if (identityLabel_ != nullptr) {
+                identityLabel_->setText("Identity: not searched");
+            }
             searchFaceCombo_->blockSignals(true);
             searchFaceCombo_->clear();
             for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
@@ -2572,21 +2675,55 @@ private:
         try {
             int64_t databaseFaceId = 0;
             const auto embedding = currentSearchEmbedding(&databaseFaceId);
-            const auto hits = fsc::core::searchFaces(database_->loadFaces(false), embedding, topKSpin_->value(), -1.0, false);
+            currentSearchDatabaseFaceId_ = databaseFaceId;
+            const bool includeIgnored = searchIncludeIgnoredCheck_ != nullptr && searchIncludeIgnoredCheck_->isChecked();
+            const double minQuality = searchMinQualitySpin_ != nullptr ? searchMinQualitySpin_->value() : 0.0;
+            auto records = database_->loadFaces(includeIgnored);
+            records.erase(
+                std::remove_if(records.begin(), records.end(), [minQuality](const auto& record) {
+                    return record.qualityScore < minQuality;
+                }),
+                records.end());
+            searchHits_ = fsc::core::searchFaces(
+                records,
+                embedding,
+                topKSpin_->value(),
+                searchThresholdSpin_ != nullptr ? searchThresholdSpin_->value() : -1.0,
+                includeIgnored);
             searchTable_->setRowCount(0);
-            for (const auto& hit : hits) {
+            for (auto it = searchHits_.begin(); it != searchHits_.end();) {
+                if (databaseFaceId > 0 && it->record.id == databaseFaceId) {
+                    it = searchHits_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (int index = 0; index < static_cast<int>(searchHits_.size()); ++index) {
+                const auto& hit = searchHits_[static_cast<size_t>(index)];
                 if (databaseFaceId > 0 && hit.record.id == databaseFaceId) {
                     continue;
                 }
                 const int row = searchTable_->rowCount();
                 searchTable_->insertRow(row);
-                searchTable_->setItem(row, 0, item(QString::number(hit.record.id)));
-                searchTable_->setItem(row, 1, item(qs(hit.record.fileName)));
-                searchTable_->setItem(row, 2, item(qs(hit.record.personName)));
-                searchTable_->setItem(row, 3, numberItem(hit.cosine, 4));
-                searchTable_->setItem(row, 4, numberItem(hit.similarityPercent(), 1));
+                searchTable_->setItem(row, 0, item(QString::number(index + 1)));
+                searchTable_->setItem(row, 1, item(QString::number(hit.record.id)));
+                searchTable_->setItem(row, 2, item(qs(hit.record.fileName)));
+                searchTable_->setItem(row, 3, item(qs(hit.record.personName)));
+                searchTable_->setItem(row, 4, item(qs(hit.record.tagText)));
+                searchTable_->setItem(row, 5, numberItem(hit.cosine, 4));
+                searchTable_->setItem(row, 6, numberItem(hit.similarityPercent(), 2));
+                searchTable_->setItem(row, 7, numberItem(hit.record.qualityScore, 3));
             }
+            populateSearchIdentityResult(fsc::core::identifyPerson(database_->loadIdentityProfiles(), embedding, selectedIdentityMode(), 5));
             searchTable_->resizeColumnsToContents();
+            if (!searchHits_.empty()) {
+                searchTable_->selectRow(0);
+                updateSearchResultPreviewForFace(searchHits_.front().record.id);
+            } else if (searchResultPreviewLabel_ != nullptr) {
+                searchResultPreviewLabel_->setText("No results");
+                searchResultPreviewLabel_->setPixmap(QPixmap());
+            }
+            statusBar()->showMessage(QString("Search complete: %1 result(s)").arg(searchHits_.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -2597,16 +2734,144 @@ private:
             return;
         }
         try {
-            const auto embedding = currentSearchEmbedding();
+            int64_t databaseFaceId = 0;
+            const auto embedding = currentSearchEmbedding(&databaseFaceId);
+            currentSearchDatabaseFaceId_ = databaseFaceId;
             const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), embedding, selectedIdentityMode(), 5);
-            QString text = "Identity: " + qs(result.decision);
-            if (!result.candidates.empty()) {
-                const auto& candidate = result.candidates.front();
-                text += " | " + qs(candidate.profile.personName);
-                text += " | score " + QString::number(candidate.score, 'f', 4);
-                text += " | confidence " + QString::number(candidate.confidence * 100.0, 'f', 1) + "%";
-            }
+            populateSearchIdentityResult(result);
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void populateSearchIdentityResult(fsc::core::IdentityResult result) {
+        lastSearchIdentityResult_ = std::move(result);
+        QString text = "Identity: " + qs(lastSearchIdentityResult_.decision);
+        if (!lastSearchIdentityResult_.candidates.empty()) {
+            const auto& candidate = lastSearchIdentityResult_.candidates.front();
+            text += " | " + qs(candidate.profile.personName);
+            text += " | score " + QString::number(candidate.score, 'f', 4);
+            text += " | confidence " + QString::number(candidate.confidence * 100.0, 'f', 1) + "%";
+        }
+        if (identityLabel_ != nullptr) {
             identityLabel_->setText(text);
+        }
+        if (searchIdentityTable_ == nullptr) {
+            return;
+        }
+        searchIdentityTable_->setRowCount(static_cast<int>(lastSearchIdentityResult_.candidates.size()));
+        for (int row = 0; row < static_cast<int>(lastSearchIdentityResult_.candidates.size()); ++row) {
+            const auto& candidate = lastSearchIdentityResult_.candidates[static_cast<size_t>(row)];
+            searchIdentityTable_->setItem(row, 0, item(QString::number(row + 1)));
+            searchIdentityTable_->setItem(row, 1, item(qs(candidate.profile.personName)));
+            searchIdentityTable_->setItem(row, 2, item(row == 0 ? qs(lastSearchIdentityResult_.decision) : "candidate"));
+            searchIdentityTable_->setItem(row, 3, numberItem(candidate.score, 4));
+            searchIdentityTable_->setItem(row, 4, numberItem(candidate.confidence * 100.0, 1));
+            searchIdentityTable_->setItem(row, 5, candidate.evidenceFaceId > 0 ? item(QString::number(candidate.evidenceFaceId)) : item("--"));
+        }
+        searchIdentityTable_->resizeColumnsToContents();
+        if (!lastSearchIdentityResult_.candidates.empty()) {
+            searchIdentityTable_->selectRow(0);
+        }
+    }
+
+    void updateSearchResultPreviewForFace(int64_t faceId) {
+        if (searchResultPreviewLabel_ == nullptr || !database_ || faceId <= 0) {
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                searchResultPreviewLabel_->setText("Face not found");
+                searchResultPreviewLabel_->setPixmap(QPixmap());
+                return;
+            }
+            setDatabaseFacePreview(searchResultPreviewLabel_, *face, "Result preview");
+        } catch (const std::exception& ex) {
+            searchResultPreviewLabel_->setText(ex.what());
+            searchResultPreviewLabel_->setPixmap(QPixmap());
+        }
+    }
+
+    void updateSelectedSearchResultPreview() {
+        if (searchTable_ == nullptr || searchTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = searchTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        if (row >= 0 && row < static_cast<int>(searchHits_.size())) {
+            updateSearchResultPreviewForFace(searchHits_[static_cast<size_t>(row)].record.id);
+        }
+    }
+
+    void updateSelectedSearchIdentityPreview() {
+        if (searchIdentityTable_ == nullptr || searchIdentityTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = searchIdentityTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        if (row < 0 || row >= static_cast<int>(lastSearchIdentityResult_.candidates.size())) {
+            return;
+        }
+        const auto faceId = lastSearchIdentityResult_.candidates[static_cast<size_t>(row)].evidenceFaceId;
+        if (faceId > 0) {
+            updateSearchResultPreviewForFace(faceId);
+        }
+    }
+
+    void assignSelectedSearchResult() {
+        if (!database_ || searchTable_ == nullptr || searchAssignPersonEdit_ == nullptr) {
+            return;
+        }
+        try {
+            const auto selected = searchTable_->selectionModel() == nullptr ? QModelIndexList{} : searchTable_->selectionModel()->selectedRows();
+            if (selected.empty()) {
+                throw std::runtime_error("Select a search result first.");
+            }
+            const int row = selected.front().row();
+            if (row < 0 || row >= static_cast<int>(searchHits_.size())) {
+                throw std::runtime_error("Selected search row is out of range.");
+            }
+            const auto personName = searchAssignPersonEdit_->text().trimmed();
+            if (personName.isEmpty()) {
+                throw std::runtime_error("Enter a person name for the selected result.");
+            }
+            const auto faceId = searchHits_[static_cast<size_t>(row)].record.id;
+            assignFaceToPersonName(faceId, personName);
+            database_->rebuildIdentityProfiles();
+            reloadAll();
+            statusBar()->showMessage(QString("Assigned search result face %1 to %2").arg(faceId).arg(personName));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void confirmSearchIdentity() {
+        if (!database_) {
+            return;
+        }
+        try {
+            if (currentSearchDatabaseFaceId_ <= 0) {
+                throw std::runtime_error("Identity confirmation is available only when searching from a stored face id.");
+            }
+            if (lastSearchIdentityResult_.candidates.empty()) {
+                throw std::runtime_error("Run Identify or Search before confirming identity.");
+            }
+            const auto& candidate = lastSearchIdentityResult_.candidates.front();
+            if (candidate.profile.personId <= 0 || lastSearchIdentityResult_.decision == "unknown") {
+                throw std::runtime_error("No confirmable identity suggestion is available.");
+            }
+            database_->assignFaceToPerson(currentSearchDatabaseFaceId_, candidate.profile.personId);
+            database_->updateFaceReview(currentSearchDatabaseFaceId_, "reviewed", false, "Confirmed native Search identity suggestion.");
+            database_->rebuildIdentityProfiles();
+            reloadAll();
+            statusBar()->showMessage(QString("Confirmed face %1 as %2").arg(currentSearchDatabaseFaceId_).arg(qs(candidate.profile.personName)));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -3319,12 +3584,21 @@ private:
     int64_t reviewSuggestedPersonId_ = 0;
     QSpinBox* faceIdSpin_ = nullptr;
     QSpinBox* topKSpin_ = nullptr;
+    QDoubleSpinBox* searchThresholdSpin_ = nullptr;
+    QDoubleSpinBox* searchMinQualitySpin_ = nullptr;
+    QCheckBox* searchIncludeIgnoredCheck_ = nullptr;
     QLabel* identityLabel_ = nullptr;
+    QTableWidget* searchIdentityTable_ = nullptr;
     QTableWidget* searchTable_ = nullptr;
     QLineEdit* searchImageEdit_ = nullptr;
     QComboBox* searchFaceCombo_ = nullptr;
     QLabel* searchPreviewLabel_ = nullptr;
+    QLabel* searchResultPreviewLabel_ = nullptr;
+    QLineEdit* searchAssignPersonEdit_ = nullptr;
     std::vector<fsc::vision::AnalyzedFace> searchQueryFaces_;
+    std::vector<fsc::core::SearchHit> searchHits_;
+    fsc::core::IdentityResult lastSearchIdentityResult_;
+    int64_t currentSearchDatabaseFaceId_ = 0;
     int searchQueryFaceIndex_ = 0;
     QSpinBox* cameraIndexSpin_ = nullptr;
     QDoubleSpinBox* cameraThresholdSpin_ = nullptr;
@@ -3484,6 +3758,29 @@ int main(int argc, char** argv) {
                            !face->ignored
                        ? 0
                        : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 6 && std::string(argv[1]) == "--search-action-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto queryFaceId = std::strtoll(argv[3], nullptr, 10);
+            const auto assignFaceId = std::strtoll(argv[4], nullptr, 10);
+            const auto personName = std::string(argv[5]);
+            const auto query = database.loadFace(queryFaceId);
+            if (!query.has_value()) {
+                return 1;
+            }
+            const auto hits = fsc::core::searchFaces(database.loadFaces(false), query->embedding, 10, -1.0, false);
+            if (hits.empty()) {
+                return 1;
+            }
+            const auto personId = database.upsertPerson(personName);
+            database.assignFaceToPerson(assignFaceId, personId);
+            database.rebuildIdentityProfiles();
+            const auto assigned = database.loadFace(assignFaceId);
+            return assigned.has_value() && assigned->personName == personName ? 0 : 1;
         } catch (...) {
             return 1;
         }
