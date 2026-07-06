@@ -89,9 +89,22 @@ Acceptance:
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
-Status: pending.
+Status: minimal Qt desktop shell verified; full page parity and installer pending.
 
 Acceptance:
 
 - Qt Widgets app covers Overview, Library, People, Search, Camera, Review, Clusters, Compare, and Runtime.
 - Installer contains Qt runtime, ONNX Runtime, models, and app files, but no Python runtime and no user data.
+
+Current Qt shell:
+
+- Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
+- Includes Overview, Library, People, Search, and Import tabs backed by native `FscCore` / `FscVision`.
+- Can create/open `.fscdb`, list faces and people, search by face id, identify by face id, and import images through native ONNX.
+- `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
+- Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
+
+Dependency notes:
+
+- `qtbase` was installed through vcpkg feature `qt-app`.
+- vcpkg downloads for `mity-md4c-release-0.5.3.tar.gz` and `strawberry-perl-5.42.2.1-64bit-portable.zip` needed manual caching because GitHub downloads intermittently failed through the current proxy.

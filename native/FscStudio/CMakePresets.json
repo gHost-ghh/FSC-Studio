@@ -42,6 +42,39 @@
         "FSC_ENABLE_ONNX": "OFF",
         "FSC_BUILD_QT_APP": "OFF"
       }
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "displayName": "MSVC Visual Studio DB/ONNX Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-db-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "OFF",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "displayName": "MSVC Visual Studio Qt Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
     }
   ],
   "buildPresets": [
@@ -57,6 +90,16 @@
       "name": "msvc-vs-debug",
       "configurePreset": "msvc-vs-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "configurePreset": "msvc-vs-db-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "configurePreset": "msvc-vs-qt-debug",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -70,6 +113,22 @@
     {
       "name": "msvc-vs-debug",
       "configurePreset": "msvc-vs-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "configurePreset": "msvc-vs-db-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "configurePreset": "msvc-vs-qt-debug",
       "configuration": "Debug",
       "output": {
         "outputOnFailure": true

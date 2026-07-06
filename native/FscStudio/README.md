@@ -27,6 +27,7 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
+- Minimal Qt Widgets desktop shell with Overview, Library, People, Search, and Import tabs.
 
 ## Build
 
@@ -79,6 +80,22 @@ ctest --test-dir out\build\msvc-vs-db-debug -C Debug --output-on-failure
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb assign-person 1 1
 .\out\build\msvc-vs-db-debug\Debug\fsc_native_probe.exe .\out\probe\native_created.fscdb train-profiles 0.35 12
 ```
+
+To build the current minimal Qt desktop shell:
+
+```powershell
+cmake --preset msvc-vs-qt-debug
+cmake --build --preset msvc-vs-qt-debug
+ctest --preset msvc-vs-qt-debug
+$p = Start-Process -FilePath .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe `
+  -ArgumentList @("--smoke", "D:\FSC\new_full.fscdb") -Wait -PassThru
+$p.ExitCode
+```
+
+If vcpkg download through the local proxy fails while installing Qt, place the
+failed archive into `D:\FSC\.deps\vcpkg\downloads` and rerun the preset. On this
+machine `mity-md4c-release-0.5.3.tar.gz` and
+`strawberry-perl-5.42.2.1-64bit-portable.zip` needed that manual cache step.
 
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.
