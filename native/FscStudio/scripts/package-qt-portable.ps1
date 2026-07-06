@@ -5,6 +5,7 @@ param(
     [string]$BuildDir = "",
     [string]$OutputDir = "",
     [string]$ModelRoot = "D:\FSC\model\insightface\models",
+    [switch]$Camera,
     [switch]$AllowOutsideOutput,
     [switch]$Zip
 )
@@ -14,11 +15,13 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..")
 if (-not $BuildDir) {
-    $presetName = if ($Configuration -eq "Release") { "msvc-vs-qt-release" } else { "msvc-vs-qt-debug" }
+    $flavor = if ($Camera) { "camera-" } else { "" }
+    $presetName = if ($Configuration -eq "Release") { "msvc-vs-qt-$flavor" + "release" } else { "msvc-vs-qt-$flavor" + "debug" }
     $BuildDir = Join-Path $projectRoot "out\build\$presetName"
 }
 if (-not $OutputDir) {
-    $OutputDir = Join-Path $projectRoot "out\package\FSC-Studio-Native-$Configuration"
+    $packageName = if ($Camera) { "FSC-Studio-Native-Camera-$Configuration" } else { "FSC-Studio-Native-$Configuration" }
+    $OutputDir = Join-Path $projectRoot "out\package\$packageName"
 }
 
 $packageRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "out\package"))
@@ -73,6 +76,7 @@ Set-Content -LiteralPath $launcher -Encoding ASCII -Value "@echo off`r`nstart ""
 $manifest = [ordered]@{
     app = "FSC Studio Native"
     configuration = $Configuration
+    camera = [bool]$Camera
     packaged_at = (Get-Date).ToString("o")
     includes_python_runtime = $false
     includes_user_database = $false

@@ -124,9 +124,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Conf
 powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip
 ```
 
+To build the OpenCV-backed native Camera flavor:
+
+```powershell
+cmake --preset msvc-vs-qt-camera-release
+cmake --build --preset msvc-vs-qt-camera-release
+ctest --preset msvc-vs-qt-camera-release
+.\out\build\msvc-vs-qt-camera-release\Release\FscStudioQt.exe --camera-open-smoke 0
+powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip
+```
+
 The package contains the app, Qt runtime DLLs, Qt platform plugin, ONNX Runtime,
-and the local InsightFace model directory. It intentionally does not include
-Python, user databases, or personal photos.
+and the local InsightFace model directory. The Camera flavor also includes the
+OpenCV runtime DLLs copied beside the executable. It intentionally does not
+include Python, user databases, or personal photos.
 
 The full Qt application is intentionally not the first milestone. The first
 milestone is native algorithm correctness.

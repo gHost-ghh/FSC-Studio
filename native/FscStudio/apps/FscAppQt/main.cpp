@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSplitter>
@@ -29,14 +30,22 @@
 #include <QStyle>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#ifdef FSC_ENABLE_OPENCV
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+#endif
 
 #include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -243,6 +252,28 @@ std::vector<ClusterSummary> buildClusters(std::vector<fsc::core::FaceRecord> rec
     });
     return clusters;
 }
+
+#ifdef FSC_ENABLE_OPENCV
+fsc::vision::RgbImage rgbImageFromBgrMat(const cv::Mat& frame) {
+    if (frame.empty() || frame.channels() != 3) {
+        throw std::runtime_error("Camera frame is empty or not BGR.");
+    }
+    fsc::vision::RgbImage image;
+    image.width = frame.cols;
+    image.height = frame.rows;
+    image.pixels.resize(static_cast<size_t>(image.width * image.height * 3));
+    for (int y = 0; y < frame.rows; ++y) {
+        const auto* source = frame.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < frame.cols; ++x) {
+            const size_t offset = static_cast<size_t>((y * frame.cols + x) * 3);
+            image.pixels[offset + 0] = source[x][2];
+            image.pixels[offset + 1] = source[x][1];
+            image.pixels[offset + 2] = source[x][0];
+        }
+    }
+    return image;
+}
+#endif
 
 class PointCloudWidget final : public QWidget {
 public:
@@ -462,6 +493,7 @@ private:
         buildPeopleTab();
         buildReviewTab();
         buildSearchTab();
+        buildCameraTab();
         buildCompareTab();
         buildClustersTab();
         buildDenseMeshTab();
@@ -676,6 +708,63 @@ private:
         connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
     }
 
+    void buildCameraTab() {
+        auto* page = new QWidget(tabs_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* controls = new QWidget(page);
+        auto* controlsLayout = new QHBoxLayout(controls);
+        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        cameraIndexSpin_ = new QSpinBox(controls);
+        cameraIndexSpin_->setRange(0, 16);
+        cameraIndexSpin_->setPrefix("Camera ");
+        cameraAutoCheck_ = new QCheckBox("Auto Identify", controls);
+        cameraAutoCheck_->setChecked(true);
+        auto* startButton = new QPushButton("Start", controls);
+        auto* stopButton = new QPushButton("Stop", controls);
+        auto* identifyButton = new QPushButton("Identify Frame", controls);
+        cameraStatusLabel_ = new QLabel("Camera stopped", controls);
+        controlsLayout->addWidget(cameraIndexSpin_);
+        controlsLayout->addWidget(cameraAutoCheck_);
+        controlsLayout->addWidget(startButton);
+        controlsLayout->addWidget(stopButton);
+        controlsLayout->addWidget(identifyButton);
+        controlsLayout->addWidget(cameraStatusLabel_, 1);
+        layout->addWidget(controls);
+
+        cameraPreviewLabel_ = new QLabel(page);
+        cameraPreviewLabel_->setMinimumSize(640, 360);
+        cameraPreviewLabel_->setAlignment(Qt::AlignCenter);
+        cameraPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;");
+        cameraPreviewLabel_->setText("Camera preview");
+        layout->addWidget(cameraPreviewLabel_, 1);
+
+        cameraIdentityLabel_ = new QLabel("Identity: -", page);
+        layout->addWidget(cameraIdentityLabel_);
+        cameraResultTable_ = new QTableWidget(page);
+        cameraResultTable_->setColumnCount(5);
+        cameraResultTable_->setHorizontalHeaderLabels({"Rank", "Person", "Decision", "Score", "Evidence"});
+        fitTable(cameraResultTable_);
+        layout->addWidget(cameraResultTable_, 1);
+
+        cameraFrameTimer_ = new QTimer(this);
+        cameraFrameTimer_->setInterval(33);
+        cameraIdentifyTimer_ = new QTimer(this);
+        cameraIdentifyTimer_->setInterval(1200);
+        tabs_->addTab(page, "Camera");
+
+        connect(startButton, &QPushButton::clicked, this, [this] { startCamera(); });
+        connect(stopButton, &QPushButton::clicked, this, [this] { stopCamera(); });
+        connect(identifyButton, &QPushButton::clicked, this, [this] { identifyCameraFrame(); });
+        connect(cameraFrameTimer_, &QTimer::timeout, this, [this] { captureCameraFrame(); });
+        connect(cameraIdentifyTimer_, &QTimer::timeout, this, [this] {
+            if (cameraAutoCheck_ != nullptr && cameraAutoCheck_->isChecked()) {
+                identifyCameraFrame();
+            }
+        });
+    }
+
     void buildCompareTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
@@ -812,7 +901,10 @@ private:
         tabs_->addTab(page, "Runtime");
 
         connect(refreshButton, &QPushButton::clicked, this, [this] { refreshRuntimeInfo(); });
-        connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] { refreshRuntimeInfo(); });
+        connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] {
+            resetCameraEngine();
+            refreshRuntimeInfo();
+        });
         refreshRuntimeInfo();
     }
 
@@ -894,6 +986,7 @@ private:
             statusBar()->showMessage("Opened " + path);
         } catch (const std::exception& ex) {
             database_.reset();
+            cameraIdentityProfiles_.clear();
             showError(ex);
         }
     }
@@ -906,6 +999,7 @@ private:
         loadLibrary();
         loadPeople();
         loadReview();
+        cameraIdentityProfiles_ = database_->loadIdentityProfiles();
     }
 
     void loadOverview() {
@@ -1171,6 +1265,159 @@ private:
         }
     }
 
+    QString smoothedCameraName(const QString& name) {
+        cameraVotes_.push_back(name);
+        while (cameraVotes_.size() > 5) {
+            cameraVotes_.pop_front();
+        }
+        std::map<QString, int> counts;
+        for (const auto& vote : cameraVotes_) {
+            ++counts[vote];
+        }
+        return std::max_element(counts.begin(), counts.end(), [](const auto& left, const auto& right) {
+            return left.second < right.second;
+        })->first;
+    }
+
+    void resetCameraEngine() {
+#ifdef FSC_ENABLE_ONNX
+        cameraEngine_.reset();
+        cameraEngineKey_.clear();
+#endif
+    }
+
+    void startCamera() {
+#ifdef FSC_ENABLE_OPENCV
+        try {
+            stopCamera();
+            if (!camera_.open(cameraIndexSpin_->value())) {
+                throw std::runtime_error("Could not open camera.");
+            }
+            camera_.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+            camera_.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+            cameraVotes_.clear();
+            cameraFrameTimer_->start();
+            cameraIdentifyTimer_->start();
+            cameraStatusLabel_->setText("Camera running");
+            statusBar()->showMessage("Camera started");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+#else
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with OpenCV camera support.");
+#endif
+    }
+
+    void stopCamera() {
+#ifdef FSC_ENABLE_OPENCV
+        if (cameraFrameTimer_ != nullptr) {
+            cameraFrameTimer_->stop();
+        }
+        if (cameraIdentifyTimer_ != nullptr) {
+            cameraIdentifyTimer_->stop();
+        }
+        if (camera_.isOpened()) {
+            camera_.release();
+        }
+        lastCameraFrame_.release();
+        resetCameraEngine();
+        if (cameraStatusLabel_ != nullptr) {
+            cameraStatusLabel_->setText("Camera stopped");
+        }
+#endif
+    }
+
+    void captureCameraFrame() {
+#ifdef FSC_ENABLE_OPENCV
+        if (!camera_.isOpened()) {
+            return;
+        }
+        cv::Mat frame;
+        camera_ >> frame;
+        if (frame.empty()) {
+            return;
+        }
+        lastCameraFrame_ = frame.clone();
+        cv::Mat rgb;
+        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+        QImage image(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888);
+        cameraPreviewLabel_->setPixmap(QPixmap::fromImage(image.copy()).scaled(
+            cameraPreviewLabel_->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation));
+#endif
+    }
+
+    void identifyCameraFrame() {
+#if defined(FSC_ENABLE_OPENCV) && defined(FSC_ENABLE_ONNX)
+        if (cameraAnalyzeBusy_) {
+            return;
+        }
+        if (lastCameraFrame_.empty()) {
+            cameraStatusLabel_->setText("No camera frame");
+            return;
+        }
+        cameraAnalyzeBusy_ = true;
+        try {
+            const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+            const auto mode = selectedRuntimeMode();
+            const std::string engineKey = modelRoot.string() + "|" + fsc::vision::toString(mode);
+            if (!cameraEngine_ || cameraEngineKey_ != engineKey) {
+                cameraEngine_ = std::make_unique<fsc::vision::InsightFaceEngine>(
+                    fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot),
+                    mode);
+                cameraEngineKey_ = engineKey;
+            }
+
+            const auto image = rgbImageFromBgrMat(lastCameraFrame_);
+            const auto faces = cameraEngine_->analyze(image, 0.50f, 5);
+            if (faces.empty()) {
+                cameraIdentityLabel_->setText("Identity: no face");
+                cameraResultTable_->setRowCount(0);
+                cameraStatusLabel_->setText("No face detected");
+                cameraAnalyzeBusy_ = false;
+                return;
+            }
+            const auto& face = bestFace(faces);
+            QString headline = QString("Identity: %1 face(s)").arg(faces.size());
+            fsc::core::IdentityResult identity;
+            if (database_) {
+                identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, fsc::core::IdentityMode::Strict, 5);
+                QString rawName = "unknown";
+                if (!identity.candidates.empty() && identity.decision != "unknown") {
+                    rawName = qs(identity.candidates.front().profile.personName);
+                }
+                const auto stableName = smoothedCameraName(rawName);
+                headline += QString(" | %1 | stable %2").arg(qs(identity.decision), stableName);
+            } else {
+                headline += " | open database for identity";
+            }
+            cameraIdentityLabel_->setText(headline);
+            cameraStatusLabel_->setText(QString("Detection %1, quality %2")
+                                            .arg(face.detection.score, 0, 'f', 3)
+                                            .arg(face.qualityScore, 0, 'f', 3));
+
+            cameraResultTable_->setRowCount(static_cast<int>(identity.candidates.size()));
+            for (int row = 0; row < static_cast<int>(identity.candidates.size()); ++row) {
+                const auto& candidate = identity.candidates[static_cast<size_t>(row)];
+                cameraResultTable_->setItem(row, 0, item(QString::number(row + 1)));
+                cameraResultTable_->setItem(row, 1, item(qs(candidate.profile.personName)));
+                cameraResultTable_->setItem(row, 2, item(qs(identity.decision)));
+                cameraResultTable_->setItem(row, 3, numberItem(candidate.score, 4));
+                cameraResultTable_->setItem(row, 4, item(QString::number(candidate.evidenceFaceId)));
+            }
+            cameraResultTable_->resizeColumnsToContents();
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+        cameraAnalyzeBusy_ = false;
+#elif !defined(FSC_ENABLE_OPENCV)
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with OpenCV camera support.");
+#else
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
+#endif
+    }
+
     void chooseImage(QLineEdit* target) {
         const auto path = QFileDialog::getOpenFileName(this, "Select image", {}, "Images (*.jpg *.jpeg *.png *.bmp *.ppm)");
         if (!path.isEmpty()) {
@@ -1323,6 +1570,14 @@ private:
     QSpinBox* topKSpin_ = nullptr;
     QLabel* identityLabel_ = nullptr;
     QTableWidget* searchTable_ = nullptr;
+    QSpinBox* cameraIndexSpin_ = nullptr;
+    QCheckBox* cameraAutoCheck_ = nullptr;
+    QLabel* cameraStatusLabel_ = nullptr;
+    QLabel* cameraPreviewLabel_ = nullptr;
+    QLabel* cameraIdentityLabel_ = nullptr;
+    QTableWidget* cameraResultTable_ = nullptr;
+    QTimer* cameraFrameTimer_ = nullptr;
+    QTimer* cameraIdentifyTimer_ = nullptr;
     QLineEdit* compareImageAEdit_ = nullptr;
     QLineEdit* compareImageBEdit_ = nullptr;
     QLabel* compareResultLabel_ = nullptr;
@@ -1343,6 +1598,17 @@ private:
     QLineEdit* importImageEdit_ = nullptr;
     QTableWidget* importLog_ = nullptr;
     std::vector<ClusterSummary> clusters_;
+    std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
+    std::deque<QString> cameraVotes_;
+#ifdef FSC_ENABLE_OPENCV
+    cv::VideoCapture camera_;
+    cv::Mat lastCameraFrame_;
+#endif
+#ifdef FSC_ENABLE_ONNX
+    std::unique_ptr<fsc::vision::InsightFaceEngine> cameraEngine_;
+    std::string cameraEngineKey_;
+#endif
+    bool cameraAnalyzeBusy_ = false;
     std::unique_ptr<fsc::core::Database> database_;
 };
 
@@ -1390,6 +1656,27 @@ int main(int argc, char** argv) {
         } catch (...) {
             return 1;
         }
+    }
+    if (argc >= 2 && std::string(argv[1]) == "--camera-smoke") {
+#ifdef FSC_ENABLE_OPENCV
+        return cv::getBuildInformation().empty() ? 1 : 0;
+#else
+        return 1;
+#endif
+    }
+    if (argc >= 2 && std::string(argv[1]) == "--camera-open-smoke") {
+#ifdef FSC_ENABLE_OPENCV
+        const int cameraIndex = argc >= 3 ? std::atoi(argv[2]) : 0;
+        cv::VideoCapture capture(cameraIndex);
+        if (!capture.isOpened()) {
+            return 2;
+        }
+        cv::Mat frame;
+        capture >> frame;
+        return frame.empty() ? 3 : 0;
+#else
+        return 1;
+#endif
     }
 #ifdef FSC_ENABLE_ONNX
     if (argc >= 5 && std::string(argv[1]) == "--compare-smoke") {

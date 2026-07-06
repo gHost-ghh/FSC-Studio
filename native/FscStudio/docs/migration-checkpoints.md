@@ -80,7 +80,7 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: cached 3D data display started; native camera and native Dense Mesh generation pending.
+Status: cached 3D data display and native Camera capture started; native Dense Mesh generation pending.
 
 Acceptance:
 
@@ -93,6 +93,13 @@ Current Dense Mesh shell:
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
 - Qt Dense Mesh tab renders cached dense mesh or falls back to 3D landmarks in a native draggable point-cloud preview.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
+
+Current Camera shell:
+
+- OpenCV is optional through vcpkg feature `opencv` with default OpenCV features disabled; only `core`, `dshow`, `msmf`, and `thread` are enabled.
+- Qt Camera tab captures frames natively through OpenCV, displays live preview, analyzes the latest frame through native ONNX InsightFace, identifies against cached Identity Gallery profiles, and smooths displayed names through a short 5-vote window.
+- `FscStudioQt.exe --camera-smoke`: exit code `0`.
+- `FscStudioQt.exe --camera-open-smoke 0`: exit code `0` on this machine; OpenCV selected the MSMF backend and captured a frame from camera index `0`.
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
@@ -125,6 +132,8 @@ Current portable package:
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Debug`.
 - `cmake --preset msvc-vs-qt-release`, `cmake --build --preset msvc-vs-qt-release`, and `ctest --preset msvc-vs-qt-release`: passed.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release.zip`.
+- `cmake --preset msvc-vs-qt-camera-release`, `cmake --build --preset msvc-vs-qt-camera-release`, and `ctest --preset msvc-vs-qt-camera-release`: passed.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release.zip`.
 - Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
 - It does not include Python runtime, user databases, or personal image data.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
@@ -132,7 +141,11 @@ Current portable package:
 - `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-smoke`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.
+- Launch check from the Camera Release portable directory stayed running for 3 seconds.
 
 Dependency notes:
 

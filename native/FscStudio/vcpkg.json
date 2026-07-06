@@ -23,7 +23,15 @@
     "opencv": {
       "description": "OpenCV image and camera dependencies for later native UI/camera work.",
       "dependencies": [
-        "opencv4"
+        {
+          "name": "opencv4",
+          "default-features": false,
+          "features": [
+            "dshow",
+            "msmf",
+            "thread"
+          ]
+        }
       ]
     },
     "onnxruntime-vcpkg": {
