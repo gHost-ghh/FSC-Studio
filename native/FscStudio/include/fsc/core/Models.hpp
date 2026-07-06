@@ -26,6 +26,7 @@ struct FaceRecord {
     double qualityScore = 0.0;
     int64_t personId = 0;
     std::string personName;
+    std::string tagText;
     bool ignored = false;
     std::string reviewState;
     std::string notes;

@@ -79,7 +79,7 @@ workflows, and user experience before the migration can be considered complete.
 ## Current Native Gaps
 
 - Native shell now uses left navigation and lower-left language / identity-mode controls, but the page internals remain structurally simplified.
-- Native Library now has a selected-face preview with bbox/landmarks and focus toggle, but still lacks the full Python right visual/metadata panel.
+- Native Library now has a selected-face preview with bbox/landmarks, focus toggle, and Selected/Batch metadata tabs; it still lacks Python's full visual tab set inside the Library page.
 - Native Search can analyze a standalone query image and choose among detected faces, but still lacks Python's full result action panel and animated comparison preview.
 - Native Compare now supports two previews, detected-face lists, click-to-select boxes, focus toggles, and selected-pair comparison.
 - Native Review now has selected-face preview and AI suggested-person confirmation, but still lacks the complete Python metadata layout.

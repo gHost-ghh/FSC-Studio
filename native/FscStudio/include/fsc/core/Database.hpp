@@ -35,6 +35,7 @@ public:
     [[nodiscard]] bool imageHashExists(const std::string& imageHash) const;
     int64_t upsertPerson(const std::string& name, const std::string& notes = {});
     void assignFaceToPerson(int64_t faceId, int64_t personId);
+    void setFaceTags(int64_t faceId, const std::string& tagText, bool append = false);
     void updateFaceReview(int64_t faceId, const std::string& reviewState, bool ignored, const std::string& notes = {});
     void updateFaceMesh3d(int64_t faceId, const std::vector<std::vector<double>>& faceMesh3d);
     int64_t insertFace(const FaceInsertRecord& record);

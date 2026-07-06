@@ -37,6 +37,7 @@
 #include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -914,9 +915,10 @@ private:
 
         auto* splitter = new QSplitter(Qt::Vertical, leftPanel);
         libraryTable_ = new QTableWidget(splitter);
-        libraryTable_->setColumnCount(8);
-        libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Source"});
+        libraryTable_->setColumnCount(9);
+        libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Tags", "Quality", "Detection", "Review", "Ignored", "Source"});
         fitTable(libraryTable_);
+        libraryTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         importLog_ = new QTableWidget(splitter);
         importLog_->setColumnCount(6);
         importLog_->setHorizontalHeaderLabels({"Inserted ID", "Face", "Detection", "Quality", "2D", "3D"});
@@ -939,6 +941,46 @@ private:
         libraryPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
         visualLayout->addWidget(libraryFocusButton_, 0, Qt::AlignLeft);
         visualLayout->addWidget(libraryPreviewLabel_, 1);
+        auto* metadataTabs = new QTabWidget(visualPanel);
+        auto* selectedTab = new QWidget(metadataTabs);
+        auto* selectedForm = new QFormLayout(selectedTab);
+        libraryPersonEdit_ = new QLineEdit(selectedTab);
+        libraryTagsEdit_ = new QLineEdit(selectedTab);
+        libraryReviewCombo_ = new QComboBox(selectedTab);
+        libraryReviewCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
+        libraryIgnoredCheck_ = new QCheckBox("Ignore in search", selectedTab);
+        libraryNotesEdit_ = new QTextEdit(selectedTab);
+        libraryNotesEdit_->setMinimumHeight(62);
+        auto* saveMetadataButton = new QPushButton("Save Metadata", selectedTab);
+        selectedForm->addRow("Person", libraryPersonEdit_);
+        selectedForm->addRow("Tags", libraryTagsEdit_);
+        selectedForm->addRow("Review", libraryReviewCombo_);
+        selectedForm->addRow("", libraryIgnoredCheck_);
+        selectedForm->addRow("Notes", libraryNotesEdit_);
+        selectedForm->addRow("", saveMetadataButton);
+
+        auto* batchTab = new QWidget(metadataTabs);
+        auto* batchForm = new QFormLayout(batchTab);
+        libraryBatchPersonEdit_ = new QLineEdit(batchTab);
+        libraryBatchTagsEdit_ = new QLineEdit(batchTab);
+        libraryBatchAppendTagsCheck_ = new QCheckBox("Append tags", batchTab);
+        libraryBatchReviewCombo_ = new QComboBox(batchTab);
+        libraryBatchReviewCombo_->addItems({"No change", "open", "reviewed", "duplicate", "low_quality", "ignored"});
+        libraryBatchIgnoredCombo_ = new QComboBox(batchTab);
+        libraryBatchIgnoredCombo_->addItems({"No change", "Ignore", "Restore"});
+        libraryBatchNotesEdit_ = new QLineEdit(batchTab);
+        libraryBatchNotesEdit_->setPlaceholderText("leave blank for no change");
+        auto* applyBatchButton = new QPushButton("Apply to Selection", batchTab);
+        batchForm->addRow("Person", libraryBatchPersonEdit_);
+        batchForm->addRow("Tags", libraryBatchTagsEdit_);
+        batchForm->addRow("", libraryBatchAppendTagsCheck_);
+        batchForm->addRow("Review", libraryBatchReviewCombo_);
+        batchForm->addRow("Ignored", libraryBatchIgnoredCombo_);
+        batchForm->addRow("Notes", libraryBatchNotesEdit_);
+        batchForm->addRow("", applyBatchButton);
+        metadataTabs->addTab(selectedTab, "Selected");
+        metadataTabs->addTab(batchTab, "Batch");
+        visualLayout->addWidget(metadataTabs, 1);
 
         mainSplitter->addWidget(leftPanel);
         mainSplitter->addWidget(visualPanel);
@@ -968,6 +1010,7 @@ private:
                     meshFaceIdSpin_->setValue(faceId);
                 }
                 libraryFocusOnFace_ = false;
+                loadLibraryMetadata(faceId);
                 updateLibraryPreview(faceId);
             }
         });
@@ -985,6 +1028,8 @@ private:
                 updateLibraryPreview(libraryPreviewFaceId_);
             }
         });
+        connect(saveMetadataButton, &QPushButton::clicked, this, [this] { saveLibrarySelectedMetadata(); });
+        connect(applyBatchButton, &QPushButton::clicked, this, [this] { applyLibraryBatchMetadata(); });
     }
 
     void buildPeopleTab() {
@@ -1508,13 +1553,143 @@ private:
             libraryTable_->setItem(row, 0, item(QString::number(record.id)));
             libraryTable_->setItem(row, 1, item(qs(record.fileName)));
             libraryTable_->setItem(row, 2, item(qs(record.personName)));
-            libraryTable_->setItem(row, 3, numberItem(record.qualityScore, 3));
-            libraryTable_->setItem(row, 4, numberItem(record.detectionScore, 3));
-            libraryTable_->setItem(row, 5, item(qs(record.reviewState)));
-            libraryTable_->setItem(row, 6, item(record.ignored ? "yes" : "no"));
-            libraryTable_->setItem(row, 7, item(qs(record.sourcePath)));
+            libraryTable_->setItem(row, 3, item(qs(record.tagText)));
+            libraryTable_->setItem(row, 4, numberItem(record.qualityScore, 3));
+            libraryTable_->setItem(row, 5, numberItem(record.detectionScore, 3));
+            libraryTable_->setItem(row, 6, item(qs(record.reviewState)));
+            libraryTable_->setItem(row, 7, item(record.ignored ? "yes" : "no"));
+            libraryTable_->setItem(row, 8, item(qs(record.sourcePath)));
         }
         libraryTable_->resizeColumnsToContents();
+    }
+
+    void loadLibraryMetadata(int faceId) {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                return;
+            }
+            if (libraryPersonEdit_ != nullptr) {
+                libraryPersonEdit_->setText(qs(face->personName));
+            }
+            if (libraryTagsEdit_ != nullptr) {
+                libraryTagsEdit_->setText(qs(face->tagText));
+            }
+            if (libraryReviewCombo_ != nullptr) {
+                libraryReviewCombo_->setCurrentText(qs(face->reviewState));
+            }
+            if (libraryIgnoredCheck_ != nullptr) {
+                libraryIgnoredCheck_->setChecked(face->ignored);
+            }
+            if (libraryNotesEdit_ != nullptr) {
+                libraryNotesEdit_->setPlainText(qs(face->notes));
+            }
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    std::vector<int64_t> selectedLibraryFaceIds() const {
+        std::vector<int64_t> ids;
+        if (libraryTable_ == nullptr || libraryTable_->selectionModel() == nullptr) {
+            return ids;
+        }
+        const auto rows = libraryTable_->selectionModel()->selectedRows();
+        ids.reserve(static_cast<size_t>(rows.size()));
+        for (const auto& index : rows) {
+            const auto* idItem = libraryTable_->item(index.row(), 0);
+            if (idItem != nullptr) {
+                const auto id = idItem->text().toLongLong();
+                if (id > 0) {
+                    ids.push_back(id);
+                }
+            }
+        }
+        return ids;
+    }
+
+    void assignFaceToPersonName(int64_t faceId, const QString& name) {
+        const auto cleanName = name.trimmed();
+        if (cleanName.isEmpty()) {
+            database_->assignFaceToPerson(faceId, 0);
+            return;
+        }
+        const auto personId = database_->upsertPerson(cleanName.toUtf8().constData());
+        database_->assignFaceToPerson(faceId, personId);
+    }
+
+    void saveLibrarySelectedMetadata() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto faceIds = selectedLibraryFaceIds();
+            if (faceIds.empty()) {
+                throw std::runtime_error("Select a face first.");
+            }
+            const auto faceId = faceIds.front();
+            assignFaceToPersonName(faceId, libraryPersonEdit_->text());
+            database_->setFaceTags(faceId, libraryTagsEdit_->text().toUtf8().constData(), false);
+            database_->updateFaceReview(
+                faceId,
+                libraryReviewCombo_->currentText().toStdString(),
+                libraryIgnoredCheck_->isChecked(),
+                libraryNotesEdit_->toPlainText().toUtf8().constData());
+            reloadAll();
+            statusBar()->showMessage(QString("Updated face %1").arg(faceId));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void applyLibraryBatchMetadata() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto faceIds = selectedLibraryFaceIds();
+            if (faceIds.empty()) {
+                throw std::runtime_error("Select one or more faces first.");
+            }
+            const bool changePerson = !libraryBatchPersonEdit_->text().trimmed().isEmpty();
+            const bool changeTags = !libraryBatchTagsEdit_->text().trimmed().isEmpty();
+            const bool appendTags = libraryBatchAppendTagsCheck_->isChecked();
+            const QString reviewState = libraryBatchReviewCombo_->currentText();
+            const QString ignoredMode = libraryBatchIgnoredCombo_->currentText();
+            const QString notes = libraryBatchNotesEdit_->text();
+            for (const auto faceId : faceIds) {
+                if (changePerson) {
+                    assignFaceToPersonName(faceId, libraryBatchPersonEdit_->text());
+                }
+                if (changeTags) {
+                    database_->setFaceTags(faceId, libraryBatchTagsEdit_->text().toUtf8().constData(), appendTags);
+                }
+                if (reviewState != "No change" || ignoredMode != "No change" || !notes.isEmpty()) {
+                    const auto face = database_->loadFace(faceId);
+                    if (!face.has_value()) {
+                        continue;
+                    }
+                    bool ignored = face->ignored;
+                    if (ignoredMode == "Ignore") {
+                        ignored = true;
+                    } else if (ignoredMode == "Restore") {
+                        ignored = false;
+                    }
+                    database_->updateFaceReview(
+                        faceId,
+                        reviewState == "No change" ? face->reviewState : reviewState.toStdString(),
+                        ignored,
+                        notes.isEmpty() ? face->notes : std::string(notes.toUtf8().constData()));
+                }
+            }
+            reloadAll();
+            statusBar()->showMessage(QString("Batch updated %1 selected face(s)").arg(faceIds.size()));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
     }
 
     void updateLibraryPreview(int faceId) {
@@ -2463,6 +2638,17 @@ private:
     QTableWidget* libraryTable_ = nullptr;
     QLabel* libraryPreviewLabel_ = nullptr;
     QPushButton* libraryFocusButton_ = nullptr;
+    QLineEdit* libraryPersonEdit_ = nullptr;
+    QLineEdit* libraryTagsEdit_ = nullptr;
+    QComboBox* libraryReviewCombo_ = nullptr;
+    QCheckBox* libraryIgnoredCheck_ = nullptr;
+    QTextEdit* libraryNotesEdit_ = nullptr;
+    QLineEdit* libraryBatchPersonEdit_ = nullptr;
+    QLineEdit* libraryBatchTagsEdit_ = nullptr;
+    QCheckBox* libraryBatchAppendTagsCheck_ = nullptr;
+    QComboBox* libraryBatchReviewCombo_ = nullptr;
+    QComboBox* libraryBatchIgnoredCombo_ = nullptr;
+    QLineEdit* libraryBatchNotesEdit_ = nullptr;
     int libraryPreviewFaceId_ = 0;
     bool libraryFocusOnFace_ = false;
     QTableWidget* peopleTable_ = nullptr;
@@ -2595,6 +2781,25 @@ int main(int argc, char** argv) {
             database.updateFaceMesh3d(faceId, mesh);
             const auto updated = database.loadFace(faceId);
             return updated.has_value() && !updated->faceMesh3d.empty() ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--metadata-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            database.setFaceTags(faceId, "native-smoke, parity", false);
+            database.updateFaceReview(faceId, "open", false, "native metadata smoke");
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value()) {
+                return 1;
+            }
+            return face->tagText.find("native-smoke") != std::string::npos &&
+                           face->notes == "native metadata smoke" &&
+                           !face->ignored
+                       ? 0
+                       : 1;
         } catch (...) {
             return 1;
         }

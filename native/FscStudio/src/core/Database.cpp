@@ -8,10 +8,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <ctime>
 #include <cstring>
 #include <iomanip>
 #include <numeric>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -43,6 +45,44 @@ private:
 std::string textColumn(sqlite3_stmt* stmt, int column) {
     const auto* text = sqlite3_column_text(stmt, column);
     return text == nullptr ? std::string{} : reinterpret_cast<const char*>(text);
+}
+
+std::string trimText(std::string value) {
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::string lowerText(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::vector<std::string> parseTagText(const std::string& tagText) {
+    std::string normalized = tagText;
+    std::replace(normalized.begin(), normalized.end(), ';', ',');
+    std::replace(normalized.begin(), normalized.end(), '|', ',');
+    std::vector<std::string> tags;
+    std::set<std::string> seen;
+    std::stringstream stream(normalized);
+    std::string part;
+    while (std::getline(stream, part, ',')) {
+        auto tag = trimText(part);
+        const auto key = lowerText(tag);
+        if (!tag.empty() && seen.insert(key).second) {
+            tags.push_back(std::move(tag));
+        }
+    }
+    return tags;
 }
 
 std::vector<float> floatBlob(sqlite3_stmt* stmt, int column, int expectedDim = 0) {
@@ -838,7 +878,11 @@ std::vector<FaceRecord> Database::loadFaces(bool includeIgnored, int limit) cons
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
-        "COALESCE(f.created_at, '') "
+        "COALESCE(f.created_at, ''), "
+        "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
+        "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
+        "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
+        ")), '') "
         "FROM faces f LEFT JOIN persons p ON p.id = f.person_id "
         "WHERE (?1 != 0 OR f.ignored = 0) "
         "ORDER BY f.id DESC "
@@ -863,6 +907,7 @@ std::vector<FaceRecord> Database::loadFaces(bool includeIgnored, int limit) cons
         record.reviewState = textColumn(statement.get(), 10);
         record.notes = textColumn(statement.get(), 11);
         record.createdAt = textColumn(statement.get(), 12);
+        record.tagText = textColumn(statement.get(), 13);
         if (!record.embedding.empty()) {
             records.push_back(std::move(record));
         }
@@ -876,7 +921,11 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
         "COALESCE(f.created_at, ''), COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, ''), "
-        "COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, '') "
+        "COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, ''), "
+        "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
+        "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
+        "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
+        ")), '') "
         "FROM faces f LEFT JOIN persons p ON p.id = f.person_id WHERE f.id = ?1";
     Statement statement(db_, sql);
     sqlite3_bind_int64(statement.get(), 1, faceId);
@@ -901,6 +950,7 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 14));
     record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 15));
     record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 16));
+    record.tagText = textColumn(statement.get(), 17);
     return record;
 }
 
@@ -1086,6 +1136,58 @@ void Database::assignFaceToPerson(int64_t faceId, int64_t personId) {
     }
     if (sqlite3_changes(db_) == 0) {
         throw std::runtime_error("Face id not found: " + std::to_string(faceId));
+    }
+}
+
+void Database::setFaceTags(int64_t faceId, const std::string& tagText, bool append) {
+    {
+        Statement check(db_, "SELECT 1 FROM faces WHERE id = ? LIMIT 1");
+        sqlite3_bind_int64(check.get(), 1, faceId);
+        if (sqlite3_step(check.get()) != SQLITE_ROW) {
+            throw std::runtime_error("Face id not found: " + std::to_string(faceId));
+        }
+    }
+
+    const auto tags = parseTagText(tagText);
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        if (!append) {
+            {
+                Statement clear(db_, "DELETE FROM face_tags WHERE face_id = ?");
+                sqlite3_bind_int64(clear.get(), 1, faceId);
+                if (sqlite3_step(clear.get()) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite3_errmsg(db_));
+                }
+            }
+        }
+        for (const auto& tag : tags) {
+            {
+                Statement insertTag(db_, "INSERT OR IGNORE INTO tags(name) VALUES (?)");
+                sqlite3_bind_text(insertTag.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+                if (sqlite3_step(insertTag.get()) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite3_errmsg(db_));
+                }
+            }
+            int64_t tagId = 0;
+            {
+                Statement selectTag(db_, "SELECT id FROM tags WHERE name = ?");
+                sqlite3_bind_text(selectTag.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+                if (sqlite3_step(selectTag.get()) != SQLITE_ROW) {
+                    throw std::runtime_error("Failed to read tag id.");
+                }
+                tagId = sqlite3_column_int64(selectTag.get(), 0);
+            }
+            Statement link(db_, "INSERT OR IGNORE INTO face_tags(face_id, tag_id) VALUES (?, ?)");
+            sqlite3_bind_int64(link.get(), 1, faceId);
+            sqlite3_bind_int64(link.get(), 2, tagId);
+            if (sqlite3_step(link.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+        execSql(db_, "COMMIT");
+    } catch (...) {
+        execSql(db_, "ROLLBACK");
+        throw;
     }
 }
 
