@@ -53,6 +53,7 @@
 
 #include <array>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
@@ -61,6 +62,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1252,44 +1254,106 @@ private:
         cameraIndexSpin_ = new QSpinBox(controls);
         cameraIndexSpin_->setRange(0, 16);
         cameraIndexSpin_->setPrefix("Camera ");
+        cameraThresholdSpin_ = new QDoubleSpinBox(controls);
+        cameraThresholdSpin_->setRange(-1.0, 1.0);
+        cameraThresholdSpin_->setDecimals(3);
+        cameraThresholdSpin_->setSingleStep(0.010);
+        cameraThresholdSpin_->setValue(0.350);
+        cameraThresholdSpin_->setPrefix("Threshold ");
+        cameraTopKSpin_ = new QSpinBox(controls);
+        cameraTopKSpin_->setRange(1, 10);
+        cameraTopKSpin_->setValue(3);
+        cameraTopKSpin_->setPrefix("Top ");
+        cameraIntervalSpin_ = new QSpinBox(controls);
+        cameraIntervalSpin_->setRange(100, 5000);
+        cameraIntervalSpin_->setSingleStep(50);
+        cameraIntervalSpin_->setValue(1200);
+        cameraIntervalSpin_->setSuffix(" ms");
         cameraAutoCheck_ = new QCheckBox("Auto Identify", controls);
         cameraAutoCheck_->setChecked(true);
         auto* startButton = new QPushButton("Start", controls);
         auto* stopButton = new QPushButton("Stop", controls);
         auto* identifyButton = new QPushButton("Identify Frame", controls);
+        auto* useLibraryButton = new QPushButton("Use Library DB", controls);
         cameraStatusLabel_ = new QLabel("Camera stopped", controls);
+        cameraDatabaseLabel_ = new QLabel("Database: not opened", controls);
         controlsLayout->addWidget(cameraIndexSpin_);
+        controlsLayout->addWidget(cameraThresholdSpin_);
+        controlsLayout->addWidget(cameraTopKSpin_);
+        controlsLayout->addWidget(cameraIntervalSpin_);
         controlsLayout->addWidget(cameraAutoCheck_);
         controlsLayout->addWidget(startButton);
         controlsLayout->addWidget(stopButton);
         controlsLayout->addWidget(identifyButton);
+        controlsLayout->addWidget(useLibraryButton);
         controlsLayout->addWidget(cameraStatusLabel_, 1);
         layout->addWidget(controls);
 
+        auto* databaseRow = new QWidget(page);
+        auto* databaseRowLayout = new QHBoxLayout(databaseRow);
+        databaseRowLayout->setContentsMargins(0, 4, 0, 4);
+        databaseRowLayout->addWidget(cameraDatabaseLabel_, 1);
+        layout->addWidget(databaseRow);
+
+        auto* splitter = new QSplitter(Qt::Horizontal, page);
         cameraPreviewLabel_ = new QLabel(page);
         cameraPreviewLabel_->setMinimumSize(640, 360);
         cameraPreviewLabel_->setAlignment(Qt::AlignCenter);
         cameraPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;");
         cameraPreviewLabel_->setText("Camera preview");
-        layout->addWidget(cameraPreviewLabel_, 1);
+        splitter->addWidget(cameraPreviewLabel_);
+
+        auto* resultsPanel = new QWidget(splitter);
+        auto* resultsLayout = new QVBoxLayout(resultsPanel);
+        resultsLayout->setContentsMargins(0, 0, 0, 0);
+        cameraMatchPreviewLabel_ = new QLabel(resultsPanel);
+        cameraMatchPreviewLabel_->setMinimumSize(320, 240);
+        cameraMatchPreviewLabel_->setAlignment(Qt::AlignCenter);
+        cameraMatchPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        cameraMatchPreviewLabel_->setText("Best match preview");
+        resultsLayout->addWidget(cameraMatchPreviewLabel_, 1);
+        cameraMatchStatusLabel_ = new QLabel("Match: --", resultsPanel);
+        resultsLayout->addWidget(cameraMatchStatusLabel_);
 
         cameraIdentityLabel_ = new QLabel("Identity: -", page);
-        layout->addWidget(cameraIdentityLabel_);
+        resultsLayout->addWidget(cameraIdentityLabel_);
         cameraResultTable_ = new QTableWidget(page);
-        cameraResultTable_->setColumnCount(5);
-        cameraResultTable_->setHorizontalHeaderLabels({"Rank", "Person", "Decision", "Score", "Evidence"});
+        cameraResultTable_->setColumnCount(11);
+        cameraResultTable_->setHorizontalHeaderLabels({
+            "Face",
+            "Identity",
+            "Decision",
+            "Conf",
+            "Evidence",
+            "ID",
+            "Name",
+            "Person",
+            "Cosine",
+            "Similarity",
+            "Quality",
+        });
         fitTable(cameraResultTable_);
-        layout->addWidget(cameraResultTable_, 1);
+        resultsLayout->addWidget(cameraResultTable_, 2);
+        splitter->addWidget(resultsPanel);
+        splitter->setStretchFactor(0, 3);
+        splitter->setStretchFactor(1, 2);
+        layout->addWidget(splitter, 1);
 
         cameraFrameTimer_ = new QTimer(this);
         cameraFrameTimer_->setInterval(33);
         cameraIdentifyTimer_ = new QTimer(this);
-        cameraIdentifyTimer_->setInterval(1200);
+        cameraIdentifyTimer_->setInterval(cameraIntervalSpin_->value());
         addMainTab(page, "Camera");
 
         connect(startButton, &QPushButton::clicked, this, [this] { startCamera(); });
         connect(stopButton, &QPushButton::clicked, this, [this] { stopCamera(); });
         connect(identifyButton, &QPushButton::clicked, this, [this] { identifyCameraFrame(); });
+        connect(useLibraryButton, &QPushButton::clicked, this, [this] { refreshCameraDatabaseLabel(); });
+        connect(cameraIntervalSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+            if (cameraIdentifyTimer_ != nullptr) {
+                cameraIdentifyTimer_->setInterval(value);
+            }
+        });
         connect(cameraFrameTimer_, &QTimer::timeout, this, [this] { captureCameraFrame(); });
         connect(cameraIdentifyTimer_, &QTimer::timeout, this, [this] {
             if (cameraAutoCheck_ != nullptr && cameraAutoCheck_->isChecked()) {
@@ -1562,6 +1626,7 @@ private:
         } catch (const std::exception& ex) {
             database_.reset();
             cameraIdentityProfiles_.clear();
+            refreshCameraDatabaseLabel();
             showError(ex);
         }
     }
@@ -1576,6 +1641,7 @@ private:
         loadReview();
         cameraIdentityProfiles_ = database_->loadIdentityProfiles();
         refreshRuntimeDatabaseInfo();
+        refreshCameraDatabaseLabel();
     }
 
     void loadOverview() {
@@ -2392,6 +2458,119 @@ private:
         })->first;
     }
 
+    void refreshCameraDatabaseLabel() {
+        if (cameraDatabaseLabel_ == nullptr) {
+            return;
+        }
+        if (!database_) {
+            cameraDatabaseLabel_->setText("Database: not opened");
+            return;
+        }
+        const auto stats = database_->statistics();
+        cameraDatabaseLabel_->setText(QString("Database: %1 | %2 faces | %3 identity profiles")
+                                          .arg(qs(database_->path().string()))
+                                          .arg(stats.faceCount)
+                                          .arg(cameraIdentityProfiles_.size()));
+    }
+
+    void setCameraMatchPlaceholder(const QString& status) {
+        if (cameraMatchStatusLabel_ != nullptr) {
+            cameraMatchStatusLabel_->setText(status);
+        }
+        if (cameraMatchPreviewLabel_ != nullptr) {
+            cameraMatchPreviewLabel_->setPixmap(QPixmap());
+            cameraMatchPreviewLabel_->setText("Best match preview");
+        }
+    }
+
+    void updateCameraMatchPreview(int64_t faceId, const QString& status) {
+        if (cameraMatchStatusLabel_ != nullptr) {
+            cameraMatchStatusLabel_->setText(status);
+        }
+        if (cameraMatchPreviewLabel_ == nullptr || !database_ || faceId <= 0) {
+            setCameraMatchPlaceholder(status);
+            return;
+        }
+        const auto face = database_->loadFace(faceId);
+        if (!face.has_value()) {
+            setCameraMatchPlaceholder(status);
+            return;
+        }
+        QImage image(qs(face->sourcePath));
+        if (image.isNull()) {
+            setCameraMatchPlaceholder(status + " | preview unavailable");
+            return;
+        }
+        QPixmap pixmap = QPixmap::fromImage(image).scaled(
+            cameraMatchPreviewLabel_->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
+        if (!pixmap.isNull()) {
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
+            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
+            if (face->bbox.size() >= 4) {
+                const QRectF box(
+                    QPointF(face->bbox[0] * sx, face->bbox[1] * sy),
+                    QPointF(face->bbox[2] * sx, face->bbox[3] * sy));
+                painter.setPen(QPen(QColor(0, 230, 70), 2.0));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRect(box.normalized());
+            }
+            painter.setPen(QPen(QColor(20, 170, 220), 1.1));
+            painter.setBrush(QColor(20, 210, 235));
+            for (const auto& point : face->landmarks2d) {
+                if (point.size() < 2) {
+                    continue;
+                }
+                painter.drawEllipse(QPointF(point[0] * sx, point[1] * sy), 1.7, 1.7);
+            }
+        }
+        cameraMatchPreviewLabel_->setPixmap(pixmap);
+    }
+
+#ifdef FSC_ENABLE_OPENCV
+    void updateCameraPreviewPixmap(
+        const cv::Mat& frame,
+        const std::vector<fsc::vision::AnalyzedFace>* faces = nullptr,
+        const std::set<int>* matchedFaces = nullptr) {
+        if (cameraPreviewLabel_ == nullptr || frame.empty()) {
+            return;
+        }
+        cv::Mat rgb;
+        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+        QImage image(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888);
+        QPixmap pixmap = QPixmap::fromImage(image.copy()).scaled(
+            cameraPreviewLabel_->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
+        if (!pixmap.isNull() && faces != nullptr && !faces->empty()) {
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, frame.cols));
+            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, frame.rows));
+            for (int index = 0; index < static_cast<int>(faces->size()); ++index) {
+                const auto& face = (*faces)[static_cast<size_t>(index)];
+                const auto& box = face.detection.box;
+                const bool matched = matchedFaces != nullptr && matchedFaces->find(index) != matchedFaces->end();
+                const QColor color = matched ? QColor(0, 230, 70) : QColor(20, 180, 235);
+                const QRectF rect(
+                    box.x1 * sx,
+                    box.y1 * sy,
+                    (box.x2 - box.x1) * sx,
+                    (box.y2 - box.y1) * sy);
+                painter.setPen(QPen(color, matched ? 2.5 : 1.8));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRect(rect.normalized());
+                painter.setPen(QPen(color, 1.0));
+                painter.drawText(rect.topLeft() + QPointF(4.0, -4.0), QString("#%1").arg(index + 1));
+            }
+        }
+        cameraPreviewLabel_->setPixmap(pixmap);
+    }
+#endif
+
     void resetCameraEngine() {
 #ifdef FSC_ENABLE_ONNX
         cameraEngine_.reset();
@@ -2409,6 +2588,11 @@ private:
             camera_.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
             camera_.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
             cameraVotes_.clear();
+            latestCameraFaces_.clear();
+            latestCameraMatchedFaceIndexes_.clear();
+            latestCameraFacesAt_ = {};
+            refreshCameraDatabaseLabel();
+            setCameraMatchPlaceholder("Match: waiting for frame");
             cameraFrameTimer_->start();
             cameraIdentifyTimer_->start();
             cameraStatusLabel_->setText("Camera running");
@@ -2433,6 +2617,10 @@ private:
             camera_.release();
         }
         lastCameraFrame_.release();
+        latestCameraFaces_.clear();
+        latestCameraMatchedFaceIndexes_.clear();
+        latestCameraFacesAt_ = {};
+        setCameraMatchPlaceholder("Match: --");
         resetCameraEngine();
         if (cameraStatusLabel_ != nullptr) {
             cameraStatusLabel_->setText("Camera stopped");
@@ -2451,13 +2639,14 @@ private:
             return;
         }
         lastCameraFrame_ = frame.clone();
-        cv::Mat rgb;
-        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
-        QImage image(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888);
-        cameraPreviewLabel_->setPixmap(QPixmap::fromImage(image.copy()).scaled(
-            cameraPreviewLabel_->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation));
+        const auto now = std::chrono::steady_clock::now();
+        const bool showRecentFaces = !latestCameraFaces_.empty() &&
+            latestCameraFacesAt_ != std::chrono::steady_clock::time_point{} &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - latestCameraFacesAt_).count() <= 1000;
+        updateCameraPreviewPixmap(
+            frame,
+            showRecentFaces ? &latestCameraFaces_ : nullptr,
+            showRecentFaces ? &latestCameraMatchedFaceIndexes_ : nullptr);
 #endif
     }
 
@@ -2483,42 +2672,133 @@ private:
             }
 
             const auto image = rgbImageFromBgrMat(lastCameraFrame_);
-            const auto faces = cameraEngine_->analyze(image, 0.50f, 5);
+            const auto faces = cameraEngine_->analyze(image, 0.50f, 10);
             if (faces.empty()) {
                 cameraIdentityLabel_->setText("Identity: no face");
                 cameraResultTable_->setRowCount(0);
+                latestCameraFaces_.clear();
+                latestCameraMatchedFaceIndexes_.clear();
+                latestCameraFacesAt_ = {};
+                setCameraMatchPlaceholder("Match: no face detected");
                 cameraStatusLabel_->setText("No face detected");
                 cameraAnalyzeBusy_ = false;
                 return;
             }
-            const auto& face = bestFace(faces);
-            QString headline = QString("Identity: %1 face(s)").arg(faces.size());
-            fsc::core::IdentityResult identity;
-            if (database_) {
-                identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, selectedIdentityMode(), 5);
-                QString rawName = "unknown";
-                if (!identity.candidates.empty() && identity.decision != "unknown") {
-                    rawName = qs(identity.candidates.front().profile.personName);
-                }
-                const auto stableName = smoothedCameraName(rawName);
-                headline += QString(" | %1 | stable %2").arg(qs(identity.decision), stableName);
-            } else {
-                headline += " | open database for identity";
-            }
-            cameraIdentityLabel_->setText(headline);
-            cameraStatusLabel_->setText(QString("Detection %1, quality %2")
-                                            .arg(face.detection.score, 0, 'f', 3)
-                                            .arg(face.qualityScore, 0, 'f', 3));
 
-            cameraResultTable_->setRowCount(static_cast<int>(identity.candidates.size()));
-            for (int row = 0; row < static_cast<int>(identity.candidates.size()); ++row) {
-                const auto& candidate = identity.candidates[static_cast<size_t>(row)];
-                cameraResultTable_->setItem(row, 0, item(QString::number(row + 1)));
-                cameraResultTable_->setItem(row, 1, item(qs(candidate.profile.personName)));
-                cameraResultTable_->setItem(row, 2, item(qs(identity.decision)));
-                cameraResultTable_->setItem(row, 3, numberItem(candidate.score, 4));
-                cameraResultTable_->setItem(row, 4, item(QString::number(candidate.evidenceFaceId)));
+            const std::vector<fsc::core::FaceRecord> storedFaces = database_ ? database_->loadFaces(false) : std::vector<fsc::core::FaceRecord>{};
+            const int topK = cameraTopKSpin_ != nullptr ? cameraTopKSpin_->value() : 3;
+            const double threshold = cameraThresholdSpin_ != nullptr ? cameraThresholdSpin_->value() : 0.35;
+            std::set<int> matchedFaceIndexes;
+            QString bestRawName = "unknown";
+            QString bestStatus = "Match: no database hit";
+            int64_t bestPreviewFaceId = 0;
+            double bestIdentityConfidence = -1.0;
+            double bestHitCosine = -2.0;
+            bool bestPreviewFromIdentity = false;
+
+            cameraResultTable_->setRowCount(0);
+            const auto addRow = [&](int faceIndex,
+                                    const QString& identityName,
+                                    const QString& decision,
+                                    double confidence,
+                                    int64_t evidenceFaceId,
+                                    const fsc::core::SearchHit* hit) {
+                const int row = cameraResultTable_->rowCount();
+                cameraResultTable_->insertRow(row);
+                cameraResultTable_->setItem(row, 0, item(QString("#%1").arg(faceIndex + 1)));
+                cameraResultTable_->setItem(row, 1, item(identityName));
+                cameraResultTable_->setItem(row, 2, item(decision));
+                cameraResultTable_->setItem(row, 3, confidence >= 0.0 ? numberItem(confidence * 100.0, 1) : item("--"));
+                cameraResultTable_->setItem(row, 4, evidenceFaceId > 0 ? item(QString::number(evidenceFaceId)) : item("--"));
+                if (hit != nullptr) {
+                    cameraResultTable_->setItem(row, 5, item(QString::number(hit->record.id)));
+                    cameraResultTable_->setItem(row, 6, item(qs(hit->record.fileName)));
+                    cameraResultTable_->setItem(row, 7, item(qs(hit->record.personName)));
+                    cameraResultTable_->setItem(row, 8, numberItem(hit->cosine, 4));
+                    cameraResultTable_->setItem(row, 9, numberItem(hit->similarityPercent(), 1));
+                    cameraResultTable_->setItem(row, 10, numberItem(hit->record.qualityScore, 3));
+                } else {
+                    for (int column = 5; column < 11; ++column) {
+                        cameraResultTable_->setItem(row, column, item("--"));
+                    }
+                }
+            };
+
+            for (int faceIndex = 0; faceIndex < static_cast<int>(faces.size()); ++faceIndex) {
+                const auto& face = faces[static_cast<size_t>(faceIndex)];
+                QString identityName = "--";
+                QString decision = database_ ? "unknown" : "no database";
+                double confidence = -1.0;
+                int64_t evidenceFaceId = 0;
+
+                if (database_) {
+                    const auto identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, selectedIdentityMode(), 5);
+                    decision = qs(identity.decision);
+                    if (!identity.candidates.empty()) {
+                        const auto& candidate = identity.candidates.front();
+                        identityName = qs(candidate.profile.personName);
+                        confidence = candidate.confidence;
+                        evidenceFaceId = candidate.evidenceFaceId;
+                        if (identity.decision != "unknown") {
+                            matchedFaceIndexes.insert(faceIndex);
+                            if (candidate.confidence > bestIdentityConfidence ||
+                                (!bestPreviewFromIdentity && candidate.evidenceFaceId > 0)) {
+                                bestIdentityConfidence = candidate.confidence;
+                                bestRawName = identityName;
+                                if (candidate.evidenceFaceId > 0) {
+                                    bestPreviewFaceId = candidate.evidenceFaceId;
+                                    bestPreviewFromIdentity = true;
+                                    bestStatus = QString("Identity: %1 | %2 | confidence %3% | evidence %4")
+                                                     .arg(identityName, decision)
+                                                     .arg(candidate.confidence * 100.0, 0, 'f', 1)
+                                                     .arg(candidate.evidenceFaceId);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const auto hits = storedFaces.empty()
+                    ? std::vector<fsc::core::SearchHit>{}
+                    : fsc::core::searchFaces(storedFaces, face.embedding, topK, threshold, false);
+                if (!hits.empty()) {
+                    matchedFaceIndexes.insert(faceIndex);
+                    if (!bestPreviewFromIdentity && (bestPreviewFaceId <= 0 || hits.front().cosine > bestHitCosine)) {
+                        bestHitCosine = hits.front().cosine;
+                        bestPreviewFaceId = hits.front().record.id;
+                        bestStatus = QString("Nearest: face %1 | %2 | cosine %3 | similarity %4%")
+                                         .arg(hits.front().record.id)
+                                         .arg(qs(hits.front().record.personName).isEmpty() ? qs(hits.front().record.fileName) : qs(hits.front().record.personName))
+                                         .arg(hits.front().cosine, 0, 'f', 4)
+                                         .arg(hits.front().similarityPercent(), 0, 'f', 1);
+                    }
+                    for (const auto& hit : hits) {
+                        addRow(faceIndex, identityName, decision, confidence, evidenceFaceId, &hit);
+                    }
+                } else {
+                    addRow(faceIndex, identityName, decision, confidence, evidenceFaceId, nullptr);
+                }
             }
+
+            latestCameraFaces_ = faces;
+            latestCameraMatchedFaceIndexes_ = matchedFaceIndexes;
+            latestCameraFacesAt_ = std::chrono::steady_clock::now();
+            updateCameraPreviewPixmap(lastCameraFrame_, &latestCameraFaces_, &latestCameraMatchedFaceIndexes_);
+
+            const auto stableName = smoothedCameraName(bestRawName);
+            cameraIdentityLabel_->setText(QString("Identity: %1 face(s) | best %2 | stable %3")
+                                              .arg(faces.size())
+                                              .arg(bestRawName)
+                                              .arg(stableName));
+            if (bestPreviewFaceId > 0) {
+                updateCameraMatchPreview(bestPreviewFaceId, bestStatus);
+            } else {
+                setCameraMatchPlaceholder(bestStatus);
+            }
+            cameraStatusLabel_->setText(QString("Detected %1 face(s), threshold %2, top %3")
+                                            .arg(faces.size())
+                                            .arg(threshold, 0, 'f', 3)
+                                            .arg(topK));
             cameraResultTable_->resizeColumnsToContents();
         } catch (const std::exception& ex) {
             showError(ex);
@@ -2823,9 +3103,15 @@ private:
     std::vector<fsc::vision::AnalyzedFace> searchQueryFaces_;
     int searchQueryFaceIndex_ = 0;
     QSpinBox* cameraIndexSpin_ = nullptr;
+    QDoubleSpinBox* cameraThresholdSpin_ = nullptr;
+    QSpinBox* cameraTopKSpin_ = nullptr;
+    QSpinBox* cameraIntervalSpin_ = nullptr;
     QCheckBox* cameraAutoCheck_ = nullptr;
     QLabel* cameraStatusLabel_ = nullptr;
+    QLabel* cameraDatabaseLabel_ = nullptr;
     QLabel* cameraPreviewLabel_ = nullptr;
+    QLabel* cameraMatchPreviewLabel_ = nullptr;
+    QLabel* cameraMatchStatusLabel_ = nullptr;
     QLabel* cameraIdentityLabel_ = nullptr;
     QTableWidget* cameraResultTable_ = nullptr;
     QTimer* cameraFrameTimer_ = nullptr;
@@ -2866,6 +3152,9 @@ private:
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
     std::deque<QString> cameraVotes_;
+    std::vector<fsc::vision::AnalyzedFace> latestCameraFaces_;
+    std::set<int> latestCameraMatchedFaceIndexes_;
+    std::chrono::steady_clock::time_point latestCameraFacesAt_;
 #ifdef FSC_ENABLE_OPENCV
     cv::VideoCapture camera_;
     cv::Mat lastCameraFrame_;
@@ -2993,6 +3282,23 @@ int main(int argc, char** argv) {
 #endif
     }
 #ifdef FSC_ENABLE_ONNX
+    if (argc >= 5 && std::string(argv[1]) == "--camera-result-smoke") {
+        try {
+            const auto mode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Cpu;
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[3])));
+            fsc::vision::InsightFaceEngine engine(
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(QString::fromLocal8Bit(argv[2]))),
+                mode);
+            const auto image = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[4])));
+            const auto face = bestFace(engine.analyze(image, 0.50f, 10));
+            const auto identity = fsc::core::identifyPerson(database.loadIdentityProfiles(), face.embedding, fsc::core::IdentityMode::Strict, 5);
+            const auto hits = fsc::core::searchFaces(database.loadFaces(false), face.embedding, 3, 0.35, false);
+            const bool identityOk = identity.decision == "unknown" || !identity.candidates.empty();
+            return identityOk && !hits.empty() && std::isfinite(hits.front().cosine) ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
     if (argc >= 5 && std::string(argv[1]) == "--compare-smoke") {
         try {
             const auto mode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Cpu;

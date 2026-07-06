@@ -100,8 +100,10 @@ Current Camera shell:
 
 - OpenCV is optional through vcpkg feature `opencv` with default OpenCV features disabled; only `core`, `dshow`, `msmf`, and `thread` are enabled.
 - Qt Camera tab captures frames natively through OpenCV, displays live preview, analyzes the latest frame through native ONNX InsightFace, identifies against cached Identity Gallery profiles, and smooths displayed names through a short 5-vote window.
+- Qt Camera tab now has threshold, top-k, recognition interval, current database status, a live preview with recent face boxes, a best-match preview, and a Python-style result table that combines identity decision, evidence face, similar-face hit, cosine, similarity, and quality.
 - `FscStudioQt.exe --camera-smoke`: exit code `0`.
 - `FscStudioQt.exe --camera-open-smoke 0`: exit code `0` on this machine; OpenCV selected the MSMF backend and captured a frame from camera index `0`.
+- `FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 
 Current DirectML shell:
 
@@ -109,6 +111,7 @@ Current DirectML shell:
 - DirectML builds use `dml_provider_factory.h`, disable memory pattern optimization, force sequential execution mode, and append `SessionOptionsAppendExecutionProvider_DML`.
 - `fsc_vision_probe.exe onnx D:\FSC\model\insightface\models\buffalo_l\det_10g.onnx directml`: provider `DmlExecutionProvider`, exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
+- `FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
@@ -166,6 +169,7 @@ Current portable package:
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-result-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.
 - Launch check from the Camera Release portable directory stayed running for 3 seconds.

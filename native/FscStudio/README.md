@@ -33,6 +33,7 @@ continuing that prototype.
 - Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
+- Camera captures native frames, overlays recent detected face boxes, and shows identity/gallery candidates plus similar database hits beside a best-match preview.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
 
@@ -151,6 +152,7 @@ cmake --preset msvc-vs-qt-camera-dml-release
 cmake --build --preset msvc-vs-qt-camera-dml-release
 ctest --preset msvc-vs-qt-camera-dml-release
 .\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml
+.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml
 powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip
 ```
 
