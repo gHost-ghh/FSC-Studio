@@ -31,6 +31,7 @@ continuing that prototype.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
 - Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
+- Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
 Track that explicitly in `docs/python-ui-parity.md`.

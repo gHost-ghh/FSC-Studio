@@ -81,6 +81,7 @@ workflows, and user experience before the migration can be considered complete.
 - Native shell now uses left navigation and lower-left language / identity-mode controls, but the page internals remain structurally simplified.
 - Native Library now has a selected-face preview with bbox/landmarks and focus toggle, but still lacks the full Python right visual/metadata panel.
 - Native Search can analyze a standalone query image and choose among detected faces, but still lacks Python's full result action panel and animated comparison preview.
+- Native Compare now supports two previews, detected-face lists, click-to-select boxes, focus toggles, and selected-pair comparison.
 - Native UI does not yet match the Python Review, Camera, and Runtime workflows.
 - Dense Mesh native generation currently has a deterministic synthetic fallback from 3D landmarks. It is not a MediaPipe-equivalent textured mesh and cannot be treated as final parity.
 - Final installer should be MSI/WiX or QtIFW style; the current package includes portable files plus install/uninstall scripts.
