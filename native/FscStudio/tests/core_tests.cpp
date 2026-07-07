@@ -1,12 +1,16 @@
 #include "fsc/core/IdentityGallery.hpp"
+#include "fsc/core/Database.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
 #include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/FaceGeometry.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 
 using namespace fsc::core;
@@ -106,6 +110,53 @@ void syntheticMeshBuildsFromLandmarks() {
     assert(mesh.front().size() == 3);
 }
 
+void databasePersonActionsRoundTrip() {
+    const auto path = std::filesystem::temp_directory_path() /
+        ("fsc_core_people_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".fscdb");
+    Database::createEmpty(path, true);
+    {
+        Database database(path);
+
+        FaceInsertRecord record;
+        record.fileName = "person-test.jpg";
+        record.sourcePath = "person-test.jpg";
+        record.embedding = normalize(std::vector<float>{1.0f, 0.0f, 0.0f});
+        record.embeddingDim = static_cast<int>(record.embedding.size());
+        record.bbox = {1.0, 2.0, 12.0, 22.0};
+        record.detectionScore = 0.9;
+        record.qualityScore = 0.8;
+        record.imageHash = "person-action-smoke";
+        const auto faceId = database.insertFace(record);
+
+        const auto sourceId = database.upsertPerson("Source", "source notes");
+        const auto targetId = database.upsertPerson("Target", "target notes");
+        database.assignFaceToPerson(faceId, sourceId);
+        database.renamePerson(sourceId, "Renamed", "renamed notes");
+
+        const auto people = database.loadPeople();
+        const auto renamed = std::find_if(people.begin(), people.end(), [sourceId](const auto& person) {
+            return person.id == sourceId && person.name == "Renamed" && person.notes == "renamed notes" &&
+                person.faceCount == 1 && person.representativeFaceId > 0;
+        });
+        assert(renamed != people.end());
+
+        const int moved = database.mergePeople(sourceId, targetId);
+        assert(moved == 1);
+        auto members = database.loadFacesForPerson(targetId, true);
+        assert(members.size() == 1);
+        assert(members.front().id == faceId);
+
+        const int cleared = database.clearPersonAssignment(targetId, true);
+        assert(cleared == 1);
+        const auto face = database.loadFace(faceId);
+        assert(face.has_value());
+        assert(face->personId == 0);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + "-wal");
+    std::filesystem::remove(path.string() + "-shm");
+}
+
 } // namespace
 
 int main() {
@@ -116,6 +167,7 @@ int main() {
     visionNmsKeepsBestBoxes();
     modelPathResolutionUsesBuffaloRoot();
     syntheticMeshBuildsFromLandmarks();
+    databasePersonActionsRoundTrip();
     std::cout << "fsc_core_tests passed\n";
     return 0;
 }

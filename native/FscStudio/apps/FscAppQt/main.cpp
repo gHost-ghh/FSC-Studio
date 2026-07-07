@@ -47,6 +47,7 @@
 #include <QTime>
 #include <QTimer>
 #include <QToolButton>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -1260,50 +1261,115 @@ private:
         layout->setContentsMargins(0, 0, 0, 0);
 
         auto* controls = new QWidget(page);
-        auto* controlsLayout = new QHBoxLayout(controls);
+        auto* controlsLayout = new QGridLayout(controls);
         controlsLayout->setContentsMargins(0, 0, 0, 0);
+        peopleDatabaseEdit_ = new QLineEdit(controls);
+        peopleDatabaseEdit_->setReadOnly(true);
+        peopleFilterEdit_ = new QLineEdit(controls);
+        peopleFilterEdit_->setPlaceholderText("person name or notes");
         personNameEdit_ = new QLineEdit(controls);
-        personNameEdit_->setPlaceholderText("Person name");
-        assignFaceSpin_ = new QSpinBox(controls);
-        assignFaceSpin_->setRange(1, 999999999);
-        assignFaceSpin_->setPrefix("Face ");
-        assignPersonSpin_ = new QSpinBox(controls);
-        assignPersonSpin_->setRange(1, 999999999);
-        assignPersonSpin_->setPrefix("Person ");
+        personNameEdit_->setPlaceholderText("New person name");
+        auto* reloadPeopleButton = new QPushButton("Reload", controls);
+        auto* trainButton = new QPushButton("Train Identity Profiles", controls);
         auto* addButton = new QPushButton("Add Person", controls);
-        auto* assignButton = new QPushButton("Assign Face", controls);
-        auto* trainButton = new QPushButton("Train Profiles", controls);
-        controlsLayout->addWidget(personNameEdit_, 1);
-        controlsLayout->addWidget(addButton);
-        controlsLayout->addWidget(assignFaceSpin_);
-        controlsLayout->addWidget(assignPersonSpin_);
-        controlsLayout->addWidget(assignButton);
-        controlsLayout->addWidget(trainButton);
+        controlsLayout->addWidget(new QLabel("Database", controls), 0, 0);
+        controlsLayout->addWidget(peopleDatabaseEdit_, 0, 1, 1, 4);
+        controlsLayout->addWidget(reloadPeopleButton, 0, 5);
+        controlsLayout->addWidget(trainButton, 0, 6);
+        controlsLayout->addWidget(new QLabel("Filter", controls), 1, 0);
+        controlsLayout->addWidget(peopleFilterEdit_, 1, 1, 1, 4);
+        controlsLayout->addWidget(personNameEdit_, 1, 5);
+        controlsLayout->addWidget(addButton, 1, 6);
         layout->addWidget(controls);
 
-        peopleTable_ = new QTableWidget(page);
-        peopleTable_->setColumnCount(8);
-        peopleTable_->setHorizontalHeaderLabels({"ID", "Name", "Faces", "Avg Quality", "Identity", "Samples", "Exemplars", "Health"});
+        auto* splitter = new QSplitter(Qt::Horizontal, page);
+        peopleTable_ = new QTableWidget(splitter);
+        peopleTable_->setColumnCount(11);
+        peopleTable_->setHorizontalHeaderLabels({"Name", "Faces", "Avg Q", "Rev", "Ign", "Identity", "Samples", "Exemplars", "Accept", "Health", "Scorer"});
         fitTable(peopleTable_);
-        layout->addWidget(peopleTable_, 1);
+        peopleTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+        peopleTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+        peopleMemberTable_ = new QTableWidget(splitter);
+        peopleMemberTable_->setColumnCount(6);
+        peopleMemberTable_->setHorizontalHeaderLabels({"ID", "Name", "Tags", "Quality", "Review", "Ignored"});
+        fitTable(peopleMemberTable_);
+        peopleMemberTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+        peopleMemberTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+        auto* rightPanel = new QWidget(splitter);
+        auto* rightLayout = new QVBoxLayout(rightPanel);
+        rightLayout->setContentsMargins(8, 0, 0, 0);
+        peopleFocusButton_ = new QPushButton("Focus on Face", rightPanel);
+        peopleFocusButton_->setMaximumWidth(132);
+        peoplePreviewLabel_ = new QLabel("Select a person", rightPanel);
+        peoplePreviewLabel_->setAlignment(Qt::AlignCenter);
+        peoplePreviewLabel_->setMinimumWidth(300);
+        peoplePreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        rightLayout->addWidget(peopleFocusButton_, 0, Qt::AlignLeft);
+        rightLayout->addWidget(peoplePreviewLabel_, 1);
+
+        auto* editor = new QGroupBox("Manage Person", rightPanel);
+        auto* form = new QFormLayout(editor);
+        peopleNameEdit_ = new QLineEdit(editor);
+        peopleNotesEdit_ = new QTextEdit(editor);
+        peopleNotesEdit_->setMinimumHeight(84);
+        peopleMergeTargetCombo_ = new QComboBox(editor);
+        assignFaceSpin_ = new QSpinBox(editor);
+        assignFaceSpin_->setRange(1, 999999999);
+        assignFaceSpin_->setPrefix("Face ");
+        assignPersonSpin_ = new QSpinBox(editor);
+        assignPersonSpin_->setRange(1, 999999999);
+        assignPersonSpin_->setPrefix("Person ");
+        auto* savePersonButton = new QPushButton("Save Name / Notes", editor);
+        auto* mergeButton = new QPushButton("Merge Into Target", editor);
+        auto* clearButton = new QPushButton("Clear Assignment", editor);
+        auto* assignButton = new QPushButton("Assign Face", editor);
+        auto* assignRow = new QWidget(editor);
+        auto* assignRowLayout = new QHBoxLayout(assignRow);
+        assignRowLayout->setContentsMargins(0, 0, 0, 0);
+        assignRowLayout->addWidget(assignFaceSpin_);
+        assignRowLayout->addWidget(assignPersonSpin_);
+        assignRowLayout->addWidget(assignButton);
+        form->addRow("Name", peopleNameEdit_);
+        form->addRow("Notes", peopleNotesEdit_);
+        form->addRow("Target", peopleMergeTargetCombo_);
+        form->addRow("", savePersonButton);
+        form->addRow("", mergeButton);
+        form->addRow("", clearButton);
+        form->addRow("Assign", assignRow);
+        peopleSummaryLabel_ = new QLabel("No person selected", rightPanel);
+        peopleProfileStatusLabel_ = new QLabel("Identity profile: not trained", rightPanel);
+        peopleProfileStatusLabel_->setWordWrap(true);
+        rightLayout->addWidget(editor);
+        rightLayout->addWidget(peopleSummaryLabel_);
+        rightLayout->addWidget(peopleProfileStatusLabel_);
+        rightLayout->addStretch();
+
+        splitter->addWidget(peopleTable_);
+        splitter->addWidget(peopleMemberTable_);
+        splitter->addWidget(rightPanel);
+        splitter->setStretchFactor(0, 2);
+        splitter->setStretchFactor(1, 2);
+        splitter->setStretchFactor(2, 1);
+        layout->addWidget(splitter, 1);
         addMainTab(page, "People");
-        connect(peopleTable_, &QTableWidget::itemSelectionChanged, this, [this] {
-            const auto selected = peopleTable_->selectedItems();
-            if (selected.empty()) {
-                return;
-            }
-            const int row = selected.front()->row();
-            const auto* idItem = peopleTable_->item(row, 0);
-            if (idItem != nullptr) {
-                const int personId = idItem->text().toInt();
-                if (personId > 0) {
-                    assignPersonSpin_->setValue(personId);
-                }
-            }
-        });
+        connect(peopleTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedPerson(); });
+        connect(peopleMemberTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedPeopleMember(); });
+        connect(peopleFilterEdit_, &QLineEdit::returnPressed, this, [this] { loadPeople(); });
+        connect(reloadPeopleButton, &QPushButton::clicked, this, [this] { loadPeople(); });
         connect(addButton, &QPushButton::clicked, this, [this] { addPerson(); });
+        connect(savePersonButton, &QPushButton::clicked, this, [this] { saveSelectedPerson(); });
+        connect(mergeButton, &QPushButton::clicked, this, [this] { mergeSelectedPerson(); });
+        connect(clearButton, &QPushButton::clicked, this, [this] { clearSelectedPerson(); });
         connect(assignButton, &QPushButton::clicked, this, [this] { assignFace(); });
         connect(trainButton, &QPushButton::clicked, this, [this] { trainProfiles(); });
+        connect(peopleFocusButton_, &QPushButton::clicked, this, [this] {
+            peopleFocusOnFace_ = !peopleFocusOnFace_;
+            if (peoplePreviewFaceId_ > 0) {
+                updatePeoplePreview(peoplePreviewFaceId_);
+            }
+        });
     }
 
     void buildReviewTab() {
@@ -2251,7 +2317,7 @@ private:
         }
     }
 
-    void setDatabaseFacePreview(QLabel* label, const fsc::core::FaceRecord& face, const QString& fallbackText) {
+    void setDatabaseFacePreview(QLabel* label, const fsc::core::FaceRecord& face, const QString& fallbackText, bool focusOnFace = false) {
         if (label == nullptr) {
             return;
         }
@@ -2261,19 +2327,41 @@ private:
             label->setPixmap(QPixmap());
             return;
         }
-        QPixmap pixmap = QPixmap::fromImage(image).scaled(
+        QRectF bbox;
+        if (face.bbox.size() >= 4) {
+            bbox = QRectF(QPointF(face.bbox[0], face.bbox[1]), QPointF(face.bbox[2], face.bbox[3])).normalized();
+        }
+        QPointF offset(0.0, 0.0);
+        QImage view = image;
+        if (focusOnFace && bbox.isValid() && bbox.width() > 1.0 && bbox.height() > 1.0) {
+            const double pad = std::max(bbox.width(), bbox.height()) * 0.75;
+            QRect crop(
+                static_cast<int>(std::floor(bbox.left() - pad)),
+                static_cast<int>(std::floor(bbox.top() - pad)),
+                static_cast<int>(std::ceil(bbox.width() + pad * 2.0)),
+                static_cast<int>(std::ceil(bbox.height() + pad * 2.0)));
+            crop = crop.intersected(QRect(0, 0, image.width(), image.height()));
+            if (crop.isValid() && crop.width() > 0 && crop.height() > 0) {
+                view = image.copy(crop);
+                offset = crop.topLeft();
+            }
+        }
+
+        QPixmap pixmap = QPixmap::fromImage(view).scaled(
             label->size(),
             Qt::KeepAspectRatio,
             Qt::SmoothTransformation);
         if (!pixmap.isNull()) {
             QPainter painter(&pixmap);
             painter.setRenderHint(QPainter::Antialiasing, true);
-            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
-            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
-            if (face.bbox.size() >= 4) {
+            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, view.width()));
+            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, view.height()));
+            if (bbox.isValid() && bbox.width() > 1.0 && bbox.height() > 1.0) {
                 const QRectF box(
-                    QPointF(face.bbox[0] * sx, face.bbox[1] * sy),
-                    QPointF(face.bbox[2] * sx, face.bbox[3] * sy));
+                    (bbox.left() - offset.x()) * sx,
+                    (bbox.top() - offset.y()) * sy,
+                    bbox.width() * sx,
+                    bbox.height() * sy);
                 painter.setPen(QPen(QColor(0, 230, 70), 2.0));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawRect(box.normalized());
@@ -2284,7 +2372,10 @@ private:
                 if (point.size() < 2) {
                     continue;
                 }
-                painter.drawEllipse(QPointF(point[0] * sx, point[1] * sy), 1.7, 1.7);
+                const QPointF drawPoint((point[0] - offset.x()) * sx, (point[1] - offset.y()) * sy);
+                if (drawPoint.x() >= 0.0 && drawPoint.y() >= 0.0 && drawPoint.x() <= pixmap.width() && drawPoint.y() <= pixmap.height()) {
+                    painter.drawEllipse(drawPoint, 1.7, 1.7);
+                }
             }
         }
         label->setPixmap(pixmap);
@@ -2470,20 +2561,189 @@ private:
     }
 
     void loadPeople() {
-        const auto people = database_->loadPeople();
-        peopleTable_->setRowCount(static_cast<int>(people.size()));
-        for (int row = 0; row < static_cast<int>(people.size()); ++row) {
-            const auto& person = people[static_cast<size_t>(row)];
-            peopleTable_->setItem(row, 0, item(QString::number(person.id)));
-            peopleTable_->setItem(row, 1, item(qs(person.name)));
-            peopleTable_->setItem(row, 2, item(QString::number(person.faceCount)));
-            peopleTable_->setItem(row, 3, numberItem(person.averageQuality, 3));
-            peopleTable_->setItem(row, 4, item(qs(person.identityStatus)));
-            peopleTable_->setItem(row, 5, item(QString::number(person.identitySampleCount)));
-            peopleTable_->setItem(row, 6, item(QString::number(person.identityExemplarCount)));
-            peopleTable_->setItem(row, 7, item(qs(person.identityHealth)));
+        if (!database_ || peopleTable_ == nullptr) {
+            return;
+        }
+        if (peopleDatabaseEdit_ != nullptr) {
+            peopleDatabaseEdit_->setText(qs(database_->path().string()));
+        }
+        const QString filter = peopleFilterEdit_ == nullptr ? QString() : peopleFilterEdit_->text().trimmed();
+        peopleRows_ = database_->loadPeople();
+        peopleRows_.erase(
+            std::remove_if(peopleRows_.begin(), peopleRows_.end(), [filter](const auto& person) {
+                if (filter.isEmpty()) {
+                    return false;
+                }
+                return !qs(person.name).contains(filter, Qt::CaseInsensitive) &&
+                    !qs(person.notes).contains(filter, Qt::CaseInsensitive);
+            }),
+            peopleRows_.end());
+        peopleTable_->setRowCount(static_cast<int>(peopleRows_.size()));
+        for (int row = 0; row < static_cast<int>(peopleRows_.size()); ++row) {
+            const auto& person = peopleRows_[static_cast<size_t>(row)];
+            peopleTable_->setItem(row, 0, item(qs(person.name)));
+            peopleTable_->setItem(row, 1, item(QString::number(person.faceCount)));
+            peopleTable_->setItem(row, 2, numberItem(person.averageQuality, 3));
+            peopleTable_->setItem(row, 3, item(QString::number(person.reviewCount)));
+            peopleTable_->setItem(row, 4, item(QString::number(person.ignoredCount)));
+            peopleTable_->setItem(row, 5, item(person.identityStatus.empty() ? "not trained" : qs(person.identityStatus)));
+            peopleTable_->setItem(row, 6, item(person.identitySampleCount > 0 ? QString::number(person.identitySampleCount) : ""));
+            peopleTable_->setItem(row, 7, item(person.identityExemplarCount > 0 ? QString::number(person.identityExemplarCount) : ""));
+            peopleTable_->setItem(row, 8, item(person.identityAcceptThreshold > 0.0 ? QString::number(person.identityAcceptThreshold, 'f', 3) : ""));
+            peopleTable_->setItem(row, 9, item(qs(person.identityHealth)));
+            peopleTable_->setItem(row, 10, item(qs(person.identityScoringModelVersion)));
         }
         peopleTable_->resizeColumnsToContents();
+        refreshPeopleMergeTargets(0);
+        if (peopleSummaryLabel_ != nullptr) {
+            peopleSummaryLabel_->setText(QString("%1 person(s)").arg(peopleRows_.size()));
+        }
+        if (peopleMemberTable_ != nullptr) {
+            peopleMemberTable_->setRowCount(0);
+        }
+        peopleMembers_.clear();
+        currentPersonId_ = 0;
+        peoplePreviewFaceId_ = 0;
+        if (peoplePreviewLabel_ != nullptr) {
+            peoplePreviewLabel_->setText(peopleRows_.empty() ? "No people" : "Select a person");
+            peoplePreviewLabel_->setPixmap(QPixmap());
+        }
+        if (!peopleRows_.empty()) {
+            peopleTable_->selectRow(0);
+        }
+    }
+
+    void refreshPeopleMergeTargets(int64_t excludePersonId) {
+        if (peopleMergeTargetCombo_ == nullptr) {
+            return;
+        }
+        const auto current = peopleMergeTargetCombo_->currentData().toLongLong();
+        peopleMergeTargetCombo_->blockSignals(true);
+        peopleMergeTargetCombo_->clear();
+        peopleMergeTargetCombo_->addItem("Select target", 0);
+        for (const auto& person : peopleRows_) {
+            if (person.id == excludePersonId) {
+                continue;
+            }
+            peopleMergeTargetCombo_->addItem(QString("%1 (%2)").arg(qs(person.name)).arg(person.faceCount), QVariant::fromValue<qlonglong>(person.id));
+        }
+        const int index = peopleMergeTargetCombo_->findData(QVariant::fromValue<qlonglong>(current));
+        peopleMergeTargetCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        peopleMergeTargetCombo_->blockSignals(false);
+    }
+
+    void showSelectedPerson() {
+        if (peopleTable_ == nullptr || peopleTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = peopleTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        if (row < 0 || row >= static_cast<int>(peopleRows_.size())) {
+            return;
+        }
+        const auto& person = peopleRows_[static_cast<size_t>(row)];
+        currentPersonId_ = person.id;
+        if (assignPersonSpin_ != nullptr) {
+            assignPersonSpin_->setValue(static_cast<int>(person.id));
+        }
+        if (peopleNameEdit_ != nullptr) {
+            peopleNameEdit_->setText(qs(person.name));
+        }
+        if (peopleNotesEdit_ != nullptr) {
+            peopleNotesEdit_->setPlainText(qs(person.notes));
+        }
+        refreshPeopleMergeTargets(person.id);
+        loadPeopleMembers(person.id);
+        if (person.representativeFaceId > 0) {
+            updatePeoplePreview(person.representativeFaceId);
+        } else if (peoplePreviewLabel_ != nullptr) {
+            peoplePreviewLabel_->setText("No faces");
+            peoplePreviewLabel_->setPixmap(QPixmap());
+        }
+        if (peopleSummaryLabel_ != nullptr) {
+            peopleSummaryLabel_->setText(
+                QString("%1: %2 face(s), %3 review item(s), avg quality %4")
+                    .arg(qs(person.name))
+                    .arg(person.faceCount)
+                    .arg(person.reviewCount)
+                    .arg(person.averageQuality, 0, 'f', 3));
+        }
+        if (peopleProfileStatusLabel_ != nullptr) {
+            if (!person.identityStatus.empty()) {
+                peopleProfileStatusLabel_->setText(
+                    QString("Identity profile: %1, samples %2, exemplars %3, accept %4, health %5, scorer %6")
+                        .arg(qs(person.identityStatus))
+                        .arg(person.identitySampleCount)
+                        .arg(person.identityExemplarCount)
+                        .arg(person.identityAcceptThreshold, 0, 'f', 3)
+                        .arg(person.identityHealth.empty() ? "unknown" : qs(person.identityHealth))
+                        .arg(person.identityScoringModelVersion.empty() ? "unknown" : qs(person.identityScoringModelVersion)));
+            } else {
+                peopleProfileStatusLabel_->setText("Identity profile: not trained");
+            }
+        }
+    }
+
+    void loadPeopleMembers(int64_t personId) {
+        if (!database_ || peopleMemberTable_ == nullptr || personId <= 0) {
+            return;
+        }
+        peopleMembers_ = database_->loadFacesForPerson(personId, true);
+        peopleMemberTable_->setRowCount(static_cast<int>(peopleMembers_.size()));
+        for (int row = 0; row < static_cast<int>(peopleMembers_.size()); ++row) {
+            const auto& record = peopleMembers_[static_cast<size_t>(row)];
+            peopleMemberTable_->setItem(row, 0, item(QString::number(record.id)));
+            peopleMemberTable_->setItem(row, 1, item(qs(record.fileName)));
+            peopleMemberTable_->setItem(row, 2, item(qs(record.tagText)));
+            peopleMemberTable_->setItem(row, 3, numberItem(record.qualityScore, 3));
+            peopleMemberTable_->setItem(row, 4, item(qs(record.reviewState)));
+            peopleMemberTable_->setItem(row, 5, item(record.ignored ? "yes" : ""));
+        }
+        peopleMemberTable_->resizeColumnsToContents();
+    }
+
+    void showSelectedPeopleMember() {
+        if (peopleMemberTable_ == nullptr || peopleMemberTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = peopleMemberTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        if (row < 0 || row >= static_cast<int>(peopleMembers_.size())) {
+            return;
+        }
+        const auto faceId = peopleMembers_[static_cast<size_t>(row)].id;
+        if (assignFaceSpin_ != nullptr) {
+            assignFaceSpin_->setValue(static_cast<int>(faceId));
+        }
+        updatePeoplePreview(faceId);
+    }
+
+    void updatePeoplePreview(int64_t faceId) {
+        peoplePreviewFaceId_ = faceId;
+        if (peopleFocusButton_ != nullptr) {
+            peopleFocusButton_->setText(peopleFocusOnFace_ ? "Full Image" : "Focus on Face");
+        }
+        if (!database_ || peoplePreviewLabel_ == nullptr || faceId <= 0) {
+            return;
+        }
+        try {
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                peoplePreviewLabel_->setText("Face not found");
+                peoplePreviewLabel_->setPixmap(QPixmap());
+                return;
+            }
+            setDatabaseFacePreview(peoplePreviewLabel_, *face, "No preview", peopleFocusOnFace_);
+        } catch (const std::exception& ex) {
+            peoplePreviewLabel_->setText(ex.what());
+            peoplePreviewLabel_->setPixmap(QPixmap());
+        }
     }
 
     void loadReview() {
@@ -2864,6 +3124,65 @@ private:
             personNameEdit_->clear();
             reloadAll();
             statusBar()->showMessage("Person saved");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void saveSelectedPerson() {
+        if (!database_ || currentPersonId_ <= 0) {
+            showError(std::runtime_error("Select a person first."));
+            return;
+        }
+        try {
+            const std::string name = peopleNameEdit_ == nullptr
+                ? std::string()
+                : std::string(peopleNameEdit_->text().trimmed().toUtf8().constData());
+            const std::string notes = peopleNotesEdit_ == nullptr
+                ? std::string()
+                : std::string(peopleNotesEdit_->toPlainText().toUtf8().constData());
+            database_->renamePerson(currentPersonId_, name, notes);
+            reloadAll();
+            statusBar()->showMessage("Person updated");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void mergeSelectedPerson() {
+        if (!database_ || currentPersonId_ <= 0) {
+            showError(std::runtime_error("Select a person first."));
+            return;
+        }
+        try {
+            const int64_t targetId = peopleMergeTargetCombo_ == nullptr ? 0 : peopleMergeTargetCombo_->currentData().toLongLong();
+            if (targetId <= 0) {
+                throw std::runtime_error("Select a merge target first.");
+            }
+            const int moved = database_->mergePeople(currentPersonId_, targetId);
+            reloadAll();
+            statusBar()->showMessage(QString("Merged %1 face(s)").arg(moved));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void clearSelectedPerson() {
+        if (!database_ || currentPersonId_ <= 0) {
+            showError(std::runtime_error("Select a person first."));
+            return;
+        }
+        const QString name = peopleNameEdit_ == nullptr ? QString("this person") : peopleNameEdit_->text();
+        if (QMessageBox::question(
+                this,
+                "FSC Studio Native",
+                QString("Clear all assignments for %1 and delete this person?").arg(name)) != QMessageBox::Yes) {
+            return;
+        }
+        try {
+            const int cleared = database_->clearPersonAssignment(currentPersonId_, true);
+            reloadAll();
+            statusBar()->showMessage(QString("Cleared %1 face assignment(s)").arg(cleared));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -4293,9 +4612,24 @@ private:
     int libraryPreviewFaceId_ = 0;
     bool libraryFocusOnFace_ = false;
     QTableWidget* peopleTable_ = nullptr;
+    QLineEdit* peopleDatabaseEdit_ = nullptr;
+    QLineEdit* peopleFilterEdit_ = nullptr;
+    QTableWidget* peopleMemberTable_ = nullptr;
+    QLabel* peoplePreviewLabel_ = nullptr;
+    QPushButton* peopleFocusButton_ = nullptr;
+    QLineEdit* peopleNameEdit_ = nullptr;
+    QTextEdit* peopleNotesEdit_ = nullptr;
+    QComboBox* peopleMergeTargetCombo_ = nullptr;
+    QLabel* peopleSummaryLabel_ = nullptr;
+    QLabel* peopleProfileStatusLabel_ = nullptr;
     QLineEdit* personNameEdit_ = nullptr;
     QSpinBox* assignFaceSpin_ = nullptr;
     QSpinBox* assignPersonSpin_ = nullptr;
+    std::vector<fsc::core::PersonSummary> peopleRows_;
+    std::vector<fsc::core::FaceRecord> peopleMembers_;
+    int64_t currentPersonId_ = 0;
+    int64_t peoplePreviewFaceId_ = 0;
+    bool peopleFocusOnFace_ = false;
     QTableWidget* reviewTable_ = nullptr;
     QComboBox* reviewStateCombo_ = nullptr;
     QComboBox* reviewIgnoredCombo_ = nullptr;
@@ -4428,6 +4762,31 @@ int main(int argc, char** argv) {
             database.updateFaceReview(faceId, "reviewed", false, "qt-review-smoke");
             const auto face = database.loadFace(faceId);
             return face.has_value() && face->reviewState == "reviewed" && !face->ignored ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--people-action-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto sourceId = database.upsertPerson("NativePeopleSmokeSource", "source notes");
+            const auto targetId = database.upsertPerson("NativePeopleSmokeTarget", "target notes");
+            database.assignFaceToPerson(faceId, sourceId);
+            database.renamePerson(sourceId, "NativePeopleSmokeRenamed", "renamed notes");
+            const auto people = database.loadPeople();
+            const bool renamed = std::any_of(people.begin(), people.end(), [sourceId](const auto& person) {
+                return person.id == sourceId && person.name == "NativePeopleSmokeRenamed" && person.notes == "renamed notes";
+            });
+            const int moved = database.mergePeople(sourceId, targetId);
+            const auto assigned = database.loadFace(faceId);
+            const auto members = database.loadFacesForPerson(targetId, true);
+            const int cleared = database.clearPersonAssignment(targetId, true);
+            const auto clearedFace = database.loadFace(faceId);
+            return renamed && moved >= 1 && assigned.has_value() && assigned->personId == targetId &&
+                    !members.empty() && cleared >= 1 && clearedFace.has_value() && clearedFace->personId == 0
+                ? 0
+                : 1;
         } catch (...) {
             return 1;
         }

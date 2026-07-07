@@ -29,6 +29,7 @@ public:
     [[nodiscard]] std::map<std::string, std::string> metadata() const;
     [[nodiscard]] DatabaseStatistics statistics() const;
     [[nodiscard]] std::vector<FaceRecord> loadFaces(bool includeIgnored = true, int limit = 0) const;
+    [[nodiscard]] std::vector<FaceRecord> loadFacesForPerson(int64_t personId, bool includeIgnored = true) const;
     [[nodiscard]] std::optional<FaceRecord> loadFace(int64_t faceId) const;
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<std::string> loadTags() const;
@@ -39,6 +40,9 @@ public:
     [[nodiscard]] MaintenanceResult checkpointWal(bool truncate = true);
     [[nodiscard]] MaintenanceResult vacuum();
     int64_t upsertPerson(const std::string& name, const std::string& notes = {});
+    void renamePerson(int64_t personId, const std::string& name, const std::string& notes = {});
+    int mergePeople(int64_t sourcePersonId, int64_t targetPersonId);
+    int clearPersonAssignment(int64_t personId, bool deletePerson = true);
     void assignFaceToPerson(int64_t faceId, int64_t personId);
     void setFaceTags(int64_t faceId, const std::string& tagText, bool append = false);
     void updateFaceReview(int64_t faceId, const std::string& reviewState, bool ignored, const std::string& notes = {});

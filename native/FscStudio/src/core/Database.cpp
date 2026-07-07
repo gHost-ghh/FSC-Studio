@@ -927,6 +927,47 @@ std::vector<FaceRecord> Database::loadFaces(bool includeIgnored, int limit) cons
     return records;
 }
 
+std::vector<FaceRecord> Database::loadFacesForPerson(int64_t personId, bool includeIgnored) const {
+    const char* sql =
+        "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
+        "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
+        "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
+        "COALESCE(f.created_at, ''), "
+        "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
+        "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
+        "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
+        ")), '') "
+        "FROM faces f LEFT JOIN persons p ON p.id = f.person_id "
+        "WHERE f.person_id = ?1 AND (?2 != 0 OR f.ignored = 0) "
+        "ORDER BY f.quality_score DESC, f.id DESC";
+    Statement statement(db_, sql);
+    sqlite3_bind_int64(statement.get(), 1, personId);
+    sqlite3_bind_int(statement.get(), 2, includeIgnored ? 1 : 0);
+
+    std::vector<FaceRecord> records;
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        FaceRecord record;
+        record.id = sqlite3_column_int64(statement.get(), 0);
+        record.fileName = textColumn(statement.get(), 1);
+        record.sourcePath = textColumn(statement.get(), 2);
+        record.embeddingDim = sqlite3_column_int(statement.get(), 4);
+        record.embedding = normalize(floatBlob(statement.get(), 3, record.embeddingDim));
+        record.detectionScore = sqlite3_column_double(statement.get(), 5);
+        record.qualityScore = sqlite3_column_double(statement.get(), 6);
+        record.personId = sqlite3_column_int64(statement.get(), 7);
+        record.personName = textColumn(statement.get(), 8);
+        record.ignored = sqlite3_column_int(statement.get(), 9) != 0;
+        record.reviewState = textColumn(statement.get(), 10);
+        record.notes = textColumn(statement.get(), 11);
+        record.createdAt = textColumn(statement.get(), 12);
+        record.tagText = textColumn(statement.get(), 13);
+        if (!record.embedding.empty()) {
+            records.push_back(std::move(record));
+        }
+    }
+    return records;
+}
+
 std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     const char* sql =
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
@@ -968,38 +1009,43 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
 
 std::vector<PersonSummary> Database::loadPeople() const {
     const char* sql =
-        "SELECT p.id, p.name, COUNT(f.id) AS face_count, "
-        "SUM(CASE WHEN f.ignored != 0 THEN 1 ELSE 0 END) AS ignored_count, "
-        "SUM(CASE WHEN f.ignored = 0 AND f.review_state != 'reviewed' THEN 1 ELSE 0 END) AS review_count, "
+        "SELECT p.id, p.name, COALESCE(p.notes, ''), COUNT(f.id) AS face_count, "
+        "COALESCE(SUM(CASE WHEN f.ignored != 0 THEN 1 ELSE 0 END), 0) AS ignored_count, "
+        "COALESCE(SUM(CASE WHEN f.review_state != 'reviewed' OR f.ignored != 0 THEN 1 ELSE 0 END), 0) AS review_count, "
         "COALESCE(AVG(f.quality_score), 0), COALESCE(profile.status, ''), "
         "COALESCE(profile.sample_count, 0), COALESCE(profile.prototype_count, 0), "
-        "COALESCE(profile.accept_threshold, 0), COALESCE(profile.calibration_json, '{}') "
+        "COALESCE(profile.accept_threshold, 0), COALESCE(profile.calibration_json, '{}'), "
+        "COALESCE(profile.scoring_model_version, ''), "
+        "(SELECT f2.id FROM faces f2 WHERE f2.person_id = p.id ORDER BY f2.quality_score DESC, f2.id ASC LIMIT 1) "
         "FROM persons p "
         "LEFT JOIN faces f ON f.person_id = p.id "
         "LEFT JOIN person_identity_profiles profile ON profile.person_id = p.id "
-        "GROUP BY p.id, p.name, profile.status, profile.sample_count, profile.prototype_count, "
-        "profile.accept_threshold, profile.calibration_json "
-        "ORDER BY p.name COLLATE NOCASE";
+        "GROUP BY p.id, p.name, p.notes, profile.status, profile.sample_count, profile.prototype_count, "
+        "profile.accept_threshold, profile.calibration_json, profile.scoring_model_version "
+        "ORDER BY face_count DESC, p.name COLLATE NOCASE";
     Statement statement(db_, sql);
     std::vector<PersonSummary> people;
     while (sqlite3_step(statement.get()) == SQLITE_ROW) {
         PersonSummary person;
         person.id = sqlite3_column_int64(statement.get(), 0);
         person.name = textColumn(statement.get(), 1);
-        person.faceCount = sqlite3_column_int64(statement.get(), 2);
-        person.ignoredCount = sqlite3_column_int64(statement.get(), 3);
-        person.reviewCount = sqlite3_column_int64(statement.get(), 4);
-        person.averageQuality = sqlite3_column_double(statement.get(), 5);
-        person.identityStatus = textColumn(statement.get(), 6);
-        person.identitySampleCount = sqlite3_column_int(statement.get(), 7);
-        person.identityExemplarCount = sqlite3_column_int(statement.get(), 8);
-        person.identityAcceptThreshold = sqlite3_column_double(statement.get(), 9);
+        person.notes = textColumn(statement.get(), 2);
+        person.faceCount = sqlite3_column_int64(statement.get(), 3);
+        person.ignoredCount = sqlite3_column_int64(statement.get(), 4);
+        person.reviewCount = sqlite3_column_int64(statement.get(), 5);
+        person.averageQuality = sqlite3_column_double(statement.get(), 6);
+        person.identityStatus = textColumn(statement.get(), 7);
+        person.identitySampleCount = sqlite3_column_int(statement.get(), 8);
+        person.identityExemplarCount = sqlite3_column_int(statement.get(), 9);
+        person.identityAcceptThreshold = sqlite3_column_double(statement.get(), 10);
         try {
-            const auto calibration = nlohmann::json::parse(textColumn(statement.get(), 10));
+            const auto calibration = nlohmann::json::parse(textColumn(statement.get(), 11));
             person.identityHealth = calibration.value("health", "");
         } catch (...) {
             person.identityHealth.clear();
         }
+        person.identityScoringModelVersion = textColumn(statement.get(), 12);
+        person.representativeFaceId = sqlite3_column_int64(statement.get(), 13);
         people.push_back(std::move(person));
     }
     return people;
@@ -1235,6 +1281,107 @@ int64_t Database::upsertPerson(const std::string& name, const std::string& notes
         throw std::runtime_error("Failed to read inserted person id.");
     }
     return sqlite3_column_int64(select.get(), 0);
+}
+
+void Database::renamePerson(int64_t personId, const std::string& name, const std::string& notes) {
+    if (personId <= 0) {
+        throw std::runtime_error("Person id must be positive.");
+    }
+    if (trimText(name).empty()) {
+        throw std::runtime_error("Person name cannot be empty.");
+    }
+    Statement statement(db_, "UPDATE persons SET name = ?, notes = ? WHERE id = ?");
+    sqlite3_bind_text(statement.get(), 1, name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(statement.get(), 2, notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(statement.get(), 3, personId);
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(db_));
+    }
+    if (sqlite3_changes(db_) == 0) {
+        throw std::runtime_error("Person id not found: " + std::to_string(personId));
+    }
+}
+
+int Database::mergePeople(int64_t sourcePersonId, int64_t targetPersonId) {
+    if (sourcePersonId <= 0 || targetPersonId <= 0) {
+        throw std::runtime_error("Source and target person ids must be positive.");
+    }
+    if (sourcePersonId == targetPersonId) {
+        return 0;
+    }
+
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        {
+            Statement check(db_, "SELECT COUNT(*) FROM persons WHERE id IN (?, ?)");
+            sqlite3_bind_int64(check.get(), 1, sourcePersonId);
+            sqlite3_bind_int64(check.get(), 2, targetPersonId);
+            if (sqlite3_step(check.get()) != SQLITE_ROW || sqlite3_column_int(check.get(), 0) != 2) {
+                throw std::runtime_error("Source or target person does not exist.");
+            }
+        }
+        Statement update(db_, "UPDATE faces SET person_id = ? WHERE person_id = ?");
+        sqlite3_bind_int64(update.get(), 1, targetPersonId);
+        sqlite3_bind_int64(update.get(), 2, sourcePersonId);
+        if (sqlite3_step(update.get()) != SQLITE_DONE) {
+            throw std::runtime_error(sqlite3_errmsg(db_));
+        }
+        const int moved = sqlite3_changes(db_);
+        {
+            Statement deleteProfile(db_, "DELETE FROM person_identity_profiles WHERE person_id = ?");
+            sqlite3_bind_int64(deleteProfile.get(), 1, sourcePersonId);
+            if (sqlite3_step(deleteProfile.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+        {
+            Statement deletePerson(db_, "DELETE FROM persons WHERE id = ?");
+            sqlite3_bind_int64(deletePerson.get(), 1, sourcePersonId);
+            if (sqlite3_step(deletePerson.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+        execSql(db_, "COMMIT");
+        return moved;
+    } catch (...) {
+        execSql(db_, "ROLLBACK");
+        throw;
+    }
+}
+
+int Database::clearPersonAssignment(int64_t personId, bool deletePerson) {
+    if (personId <= 0) {
+        throw std::runtime_error("Person id must be positive.");
+    }
+
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        Statement update(db_, "UPDATE faces SET person_id = NULL WHERE person_id = ?");
+        sqlite3_bind_int64(update.get(), 1, personId);
+        if (sqlite3_step(update.get()) != SQLITE_DONE) {
+            throw std::runtime_error(sqlite3_errmsg(db_));
+        }
+        const int cleared = sqlite3_changes(db_);
+        {
+            Statement deleteProfile(db_, "DELETE FROM person_identity_profiles WHERE person_id = ?");
+            sqlite3_bind_int64(deleteProfile.get(), 1, personId);
+            if (sqlite3_step(deleteProfile.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+        if (deletePerson) {
+            Statement deletePersonStatement(db_, "DELETE FROM persons WHERE id = ?");
+            sqlite3_bind_int64(deletePersonStatement.get(), 1, personId);
+            if (sqlite3_step(deletePersonStatement.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+        execSql(db_, "COMMIT");
+        return cleared;
+    } catch (...) {
+        execSql(db_, "ROLLBACK");
+        throw;
+    }
 }
 
 void Database::assignFaceToPerson(int64_t faceId, int64_t personId) {

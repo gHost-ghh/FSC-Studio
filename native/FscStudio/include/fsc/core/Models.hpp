@@ -67,14 +67,17 @@ struct FaceInsertRecord {
 struct PersonSummary {
     int64_t id = 0;
     std::string name;
+    std::string notes;
     int64_t faceCount = 0;
     int64_t ignoredCount = 0;
     int64_t reviewCount = 0;
     double averageQuality = 0.0;
+    int64_t representativeFaceId = 0;
     std::string identityStatus;
     int identitySampleCount = 0;
     int identityExemplarCount = 0;
     double identityAcceptThreshold = 0.0;
+    std::string identityScoringModelVersion;
     std::string identityHealth;
 };
 

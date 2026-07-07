@@ -78,8 +78,9 @@ workflows, and user experience before the migration can be considered complete.
 
 ## Current Native Gaps
 
-- Native shell now uses left navigation and lower-left language / identity-mode controls, but the page internals remain structurally simplified.
+- Native shell now uses left navigation and lower-left language / identity-mode controls, but some page internals remain structurally simplified.
 - Native Library now has create/open, single-image import, recursive folder import, reload, filtered CSV export, text/person/tag/review/quality filters, selected-face Image / 3D Landmarks / Dense Mesh visual tabs, focus toggle, selected/batch metadata tabs, Activity logging, progress, and import preview.
+- Native People now has database/filter controls, the Python-style identity health table, member table, selected-member preview with focus toggle, person name/notes editing, merge into target, clear assignment, manual face assignment, and profile training.
 - Native Search can analyze a standalone query image, choose among detected faces, filter by threshold/min-quality/ignored/person/tag state, show identity candidates plus a separate result preview, cycle quickly through top result previews, and assign/confirm people from results. It still lacks Python's true background progressive comparison status for every database face.
 - Native Compare now supports two previews, detected-face lists, click-to-select boxes, focus toggles, and selected-pair comparison.
 - Native Review now has selected-face preview and AI suggested-person confirmation, but still lacks the complete Python metadata layout.
