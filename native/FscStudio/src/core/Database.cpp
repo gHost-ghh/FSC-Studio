@@ -1005,6 +1005,15 @@ std::vector<PersonSummary> Database::loadPeople() const {
     return people;
 }
 
+std::vector<std::string> Database::loadTags() const {
+    Statement statement(db_, "SELECT name FROM tags ORDER BY name COLLATE NOCASE");
+    std::vector<std::string> tags;
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        tags.push_back(textColumn(statement.get(), 0));
+    }
+    return tags;
+}
+
 std::vector<IdentityProfile> Database::loadIdentityProfiles() const {
     const char* sql =
         "SELECT profile.person_id, p.name, profile.sample_count, profile.prototype_count, "
