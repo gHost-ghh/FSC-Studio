@@ -40,6 +40,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStyle>
+#include <QStringList>
 #include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -1378,45 +1379,75 @@ private:
         layout->setContentsMargins(0, 0, 0, 0);
 
         auto* controls = new QWidget(page);
-        auto* controlsLayout = new QHBoxLayout(controls);
+        auto* controlsLayout = new QGridLayout(controls);
         controlsLayout->setContentsMargins(0, 0, 0, 0);
-        reviewStateCombo_ = new QComboBox(controls);
-        reviewStateCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
-        reviewIgnoredCombo_ = new QComboBox(controls);
-        reviewIgnoredCombo_->addItems({"Not ignored", "Ignored"});
-        reviewNotesEdit_ = new QLineEdit(controls);
-        reviewNotesEdit_->setPlaceholderText("Notes");
-        auto* applyButton = new QPushButton("Apply", controls);
-        auto* reviewedButton = new QPushButton("Reviewed", controls);
-        auto* ignoredButton = new QPushButton("Ignore", controls);
-        auto* suggestButton = new QPushButton("Suggest Person", controls);
-        auto* confirmSuggestionButton = new QPushButton("Confirm Suggestion", controls);
-        controlsLayout->addWidget(reviewStateCombo_);
-        controlsLayout->addWidget(reviewIgnoredCombo_);
-        controlsLayout->addWidget(reviewNotesEdit_, 1);
-        controlsLayout->addWidget(applyButton);
-        controlsLayout->addWidget(reviewedButton);
-        controlsLayout->addWidget(ignoredButton);
-        controlsLayout->addWidget(suggestButton);
-        controlsLayout->addWidget(confirmSuggestionButton);
+        reviewDatabaseEdit_ = new QLineEdit(controls);
+        reviewDatabaseEdit_->setReadOnly(true);
+        reviewFilterEdit_ = new QLineEdit(controls);
+        reviewFilterEdit_->setPlaceholderText("name, path, person, tag, notes");
+        reviewLimitSpin_ = new QSpinBox(controls);
+        reviewLimitSpin_->setRange(10, 10000);
+        reviewLimitSpin_->setValue(500);
+        auto* reloadButton = new QPushButton("Reload", controls);
+        auto* reviewedButton = new QPushButton("Mark Reviewed", controls);
+        auto* ignoredButton = new QPushButton("Ignore / Restore", controls);
+        auto* saveButton = new QPushButton("Save Metadata", controls);
+        auto* resetButton = new QPushButton("Reset Filter", controls);
+        controlsLayout->addWidget(new QLabel("Database", controls), 0, 0);
+        controlsLayout->addWidget(reviewDatabaseEdit_, 0, 1, 1, 5);
+        controlsLayout->addWidget(reloadButton, 0, 6);
+        controlsLayout->addWidget(reviewedButton, 0, 7);
+        controlsLayout->addWidget(ignoredButton, 0, 8);
+        controlsLayout->addWidget(saveButton, 0, 9);
+        controlsLayout->addWidget(new QLabel("Filter", controls), 1, 0);
+        controlsLayout->addWidget(reviewFilterEdit_, 1, 1, 1, 4);
+        controlsLayout->addWidget(new QLabel("Limit", controls), 1, 5);
+        controlsLayout->addWidget(reviewLimitSpin_, 1, 6);
+        controlsLayout->addWidget(resetButton, 1, 7);
+        controlsLayout->setColumnStretch(4, 1);
         layout->addWidget(controls);
 
         auto* splitter = new QSplitter(Qt::Horizontal, page);
         reviewTable_ = new QTableWidget(splitter);
         reviewTable_->setColumnCount(8);
-        reviewTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Quality", "Detection", "Review", "Ignored", "Notes"});
+        reviewTable_->setHorizontalHeaderLabels({"ID", "Name", "Reason", "Person", "Tags", "Quality", "Dupes", "Notes"});
         fitTable(reviewTable_);
+        reviewTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+        reviewTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
         auto* detailPanel = new QWidget(splitter);
         auto* detailLayout = new QVBoxLayout(detailPanel);
         detailLayout->setContentsMargins(8, 0, 0, 0);
+        reviewFocusButton_ = new QPushButton("Focus on Face", detailPanel);
+        reviewFocusButton_->setMaximumWidth(132);
         reviewPreviewLabel_ = new QLabel("Select a review item", detailPanel);
         reviewPreviewLabel_->setAlignment(Qt::AlignCenter);
         reviewPreviewLabel_->setMinimumWidth(320);
         reviewPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        reviewSuggestionLabel_ = new QLabel("AI Suggested Person: -", detailPanel);
+        auto* editor = new QGroupBox("Edit", detailPanel);
+        auto* form = new QFormLayout(editor);
+        reviewPersonEdit_ = new QLineEdit(editor);
+        reviewTagsEdit_ = new QLineEdit(editor);
+        reviewStateCombo_ = new QComboBox(editor);
+        reviewStateCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
+        reviewIgnoredCheck_ = new QCheckBox("Ignore in search", editor);
+        reviewNotesEdit_ = new QTextEdit(editor);
+        reviewNotesEdit_->setMinimumHeight(96);
+        reviewSuggestionLabel_ = new QLabel("AI Suggested Person: not checked", editor);
         reviewSuggestionLabel_->setWordWrap(true);
+        auto* confirmSuggestionButton = new QPushButton("Confirm AI Person", editor);
+        auto* rejectSuggestionButton = new QPushButton("Reject AI Suggestion", editor);
+        form->addRow("Person", reviewPersonEdit_);
+        form->addRow("Tags", reviewTagsEdit_);
+        form->addRow("Review", reviewStateCombo_);
+        form->addRow("", reviewIgnoredCheck_);
+        form->addRow("Notes", reviewNotesEdit_);
+        form->addRow("AI Suggested Person", reviewSuggestionLabel_);
+        form->addRow("", confirmSuggestionButton);
+        form->addRow("", rejectSuggestionButton);
+        detailLayout->addWidget(reviewFocusButton_, 0, Qt::AlignLeft);
         detailLayout->addWidget(reviewPreviewLabel_, 1);
-        detailLayout->addWidget(reviewSuggestionLabel_);
+        detailLayout->addWidget(editor);
+        detailLayout->addStretch();
         splitter->addWidget(reviewTable_);
         splitter->addWidget(detailPanel);
         splitter->setStretchFactor(0, 3);
@@ -1424,37 +1455,29 @@ private:
         layout->addWidget(splitter, 1);
         addMainTab(page, "Review");
 
-        connect(reviewTable_, &QTableWidget::itemSelectionChanged, this, [this] {
-            const auto selected = reviewTable_->selectedItems();
-            if (selected.empty()) {
-                return;
+        connect(reviewTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedReviewRecord(); });
+        connect(reviewFilterEdit_, &QLineEdit::returnPressed, this, [this] { loadReview(); });
+        connect(reloadButton, &QPushButton::clicked, this, [this] { loadReview(); });
+        connect(resetButton, &QPushButton::clicked, this, [this] {
+            if (reviewFilterEdit_ != nullptr) {
+                reviewFilterEdit_->clear();
             }
-            const int row = selected.front()->row();
-            if (const auto* idItem = reviewTable_->item(row, 0); idItem != nullptr && faceIdSpin_ != nullptr) {
-                const int faceId = idItem->text().toInt();
-                faceIdSpin_->setValue(faceId);
-                if (meshFaceIdSpin_ != nullptr) {
-                    meshFaceIdSpin_->setValue(faceId);
-                }
+            if (reviewLimitSpin_ != nullptr) {
+                reviewLimitSpin_->setValue(500);
             }
-            if (const auto* stateItem = reviewTable_->item(row, 5); stateItem != nullptr) {
-                reviewStateCombo_->setCurrentText(stateItem->text());
-            }
-            if (const auto* ignoredItem = reviewTable_->item(row, 6); ignoredItem != nullptr) {
-                reviewIgnoredCombo_->setCurrentIndex(ignoredItem->text() == "yes" ? 1 : 0);
-            }
-            if (const auto* notesItem = reviewTable_->item(row, 7); notesItem != nullptr) {
-                reviewNotesEdit_->setText(notesItem->text());
-            }
-            if (const auto* idItem = reviewTable_->item(row, 0); idItem != nullptr) {
-                updateReviewDetail(idItem->text().toInt());
+            loadReview();
+        });
+        connect(reviewFocusButton_, &QPushButton::clicked, this, [this] {
+            reviewFocusOnFace_ = !reviewFocusOnFace_;
+            if (currentReviewFaceId_ > 0) {
+                updateReviewDetail(static_cast<int>(currentReviewFaceId_), false);
             }
         });
-        connect(applyButton, &QPushButton::clicked, this, [this] { applyReviewFromControls(); });
+        connect(saveButton, &QPushButton::clicked, this, [this] { saveReviewMetadata(); });
         connect(reviewedButton, &QPushButton::clicked, this, [this] { applyReviewState("reviewed", false); });
-        connect(ignoredButton, &QPushButton::clicked, this, [this] { applyReviewState("ignored", true); });
-        connect(suggestButton, &QPushButton::clicked, this, [this] { suggestReviewPerson(); });
+        connect(ignoredButton, &QPushButton::clicked, this, [this] { toggleReviewIgnored(); });
         connect(confirmSuggestionButton, &QPushButton::clicked, this, [this] { confirmReviewSuggestion(); });
+        connect(rejectSuggestionButton, &QPushButton::clicked, this, [this] { rejectReviewSuggestion(); });
     }
 
     void buildSearchTab() {
@@ -2747,43 +2770,146 @@ private:
     }
 
     void loadReview() {
-        if (reviewTable_ == nullptr) {
+        if (!database_ || reviewTable_ == nullptr) {
             return;
         }
-        const auto records = database_->loadFaces(true, 1000);
+        if (reviewDatabaseEdit_ != nullptr) {
+            reviewDatabaseEdit_->setText(qs(database_->path().string()));
+        }
+        const QString textFilter = reviewFilterEdit_ == nullptr ? QString() : reviewFilterEdit_->text().trimmed();
+        const int limit = reviewLimitSpin_ == nullptr ? 500 : reviewLimitSpin_->value();
+        auto records = database_->loadFaces(true);
+        records.erase(
+            std::remove_if(records.begin(), records.end(), [textFilter](const auto& record) {
+                if (!recordNeedsReview(record)) {
+                    return true;
+                }
+                if (textFilter.isEmpty()) {
+                    return false;
+                }
+                const QString haystack = QString("%1\n%2\n%3\n%4\n%5")
+                                             .arg(qs(record.fileName), qs(record.sourcePath), qs(record.personName), qs(record.tagText), qs(record.notes));
+                return !haystack.contains(textFilter, Qt::CaseInsensitive);
+            }),
+            records.end());
+        if (limit > 0 && records.size() > static_cast<size_t>(limit)) {
+            records.resize(static_cast<size_t>(limit));
+        }
+        reviewRows_ = std::move(records);
         reviewTable_->setRowCount(0);
-        for (const auto& record : records) {
-            if (!record.ignored && record.reviewState == "reviewed") {
-                continue;
-            }
+        for (const auto& record : reviewRows_) {
             const int row = reviewTable_->rowCount();
             reviewTable_->insertRow(row);
             reviewTable_->setItem(row, 0, item(QString::number(record.id)));
             reviewTable_->setItem(row, 1, item(qs(record.fileName)));
-            reviewTable_->setItem(row, 2, item(qs(record.personName)));
-            reviewTable_->setItem(row, 3, numberItem(record.qualityScore, 3));
-            reviewTable_->setItem(row, 4, numberItem(record.detectionScore, 3));
-            reviewTable_->setItem(row, 5, item(qs(record.reviewState)));
-            reviewTable_->setItem(row, 6, item(record.ignored ? "yes" : "no"));
+            reviewTable_->setItem(row, 2, item(reviewReason(record)));
+            reviewTable_->setItem(row, 3, item(qs(record.personName)));
+            reviewTable_->setItem(row, 4, item(qs(record.tagText)));
+            reviewTable_->setItem(row, 5, numberItem(record.qualityScore, 3));
+            reviewTable_->setItem(row, 6, item(record.duplicateCount > 1 ? QString::number(record.duplicateCount) : ""));
             reviewTable_->setItem(row, 7, item(qs(record.notes)));
         }
         reviewTable_->resizeColumnsToContents();
+        currentReviewFaceId_ = 0;
+        reviewSuggestedPersonId_ = 0;
+        reviewSuggestedPersonName_.clear();
+        if (reviewPreviewLabel_ != nullptr) {
+            reviewPreviewLabel_->setText(reviewRows_.empty() ? "No review items" : "Select a review item");
+            reviewPreviewLabel_->setPixmap(QPixmap());
+        }
+        if (reviewSuggestionLabel_ != nullptr) {
+            reviewSuggestionLabel_->setText("AI Suggested Person: not checked");
+        }
+        statusBar()->showMessage(QString("Review queue: %1 item(s)").arg(reviewRows_.size()));
+    }
+
+    static bool recordNeedsReview(const fsc::core::FaceRecord& record) {
+        return record.ignored ||
+            record.reviewState != "reviewed" ||
+            record.personId <= 0 ||
+            record.duplicateCount > 1 ||
+            record.qualityScore < 0.45;
+    }
+
+    static QString reviewReason(const fsc::core::FaceRecord& record) {
+        QStringList reasons;
+        if (record.ignored) {
+            reasons << "ignored";
+        }
+        if (record.reviewState != "reviewed") {
+            reasons << qs(record.reviewState);
+        }
+        if (record.personId <= 0) {
+            reasons << "unassigned";
+        }
+        if (record.duplicateCount > 1) {
+            reasons << "duplicate";
+        }
+        if (record.qualityScore < 0.45) {
+            reasons << "low quality";
+        }
+        reasons.removeDuplicates();
+        return reasons.empty() ? "review" : reasons.join(", ");
     }
 
     int selectedReviewFaceId() const {
-        const auto selected = reviewTable_->selectedItems();
+        if (reviewTable_ == nullptr || reviewTable_->selectionModel() == nullptr) {
+            return 0;
+        }
+        const auto selected = reviewTable_->selectionModel()->selectedRows();
         if (selected.empty()) {
             return 0;
         }
-        const int row = selected.front()->row();
+        const int row = selected.front().row();
         const auto* idItem = reviewTable_->item(row, 0);
         return idItem == nullptr ? 0 : idItem->text().toInt();
     }
 
-    void updateReviewDetail(int faceId) {
-        reviewSuggestedPersonId_ = 0;
-        if (reviewSuggestionLabel_ != nullptr) {
-            reviewSuggestionLabel_->setText("AI Suggested Person: -");
+    void showSelectedReviewRecord() {
+        if (reviewTable_ == nullptr || reviewTable_->selectionModel() == nullptr) {
+            return;
+        }
+        const auto selected = reviewTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return;
+        }
+        const int row = selected.front().row();
+        if (row < 0 || row >= static_cast<int>(reviewRows_.size())) {
+            return;
+        }
+        const auto& record = reviewRows_[static_cast<size_t>(row)];
+        currentReviewFaceId_ = record.id;
+        if (faceIdSpin_ != nullptr) {
+            faceIdSpin_->setValue(static_cast<int>(record.id));
+        }
+        if (meshFaceIdSpin_ != nullptr) {
+            meshFaceIdSpin_->setValue(static_cast<int>(record.id));
+        }
+        if (reviewPersonEdit_ != nullptr) {
+            reviewPersonEdit_->setText(qs(record.personName));
+        }
+        if (reviewTagsEdit_ != nullptr) {
+            reviewTagsEdit_->setText(qs(record.tagText));
+        }
+        if (reviewStateCombo_ != nullptr) {
+            reviewStateCombo_->setCurrentText(qs(record.reviewState));
+        }
+        if (reviewIgnoredCheck_ != nullptr) {
+            reviewIgnoredCheck_->setChecked(record.ignored);
+        }
+        if (reviewNotesEdit_ != nullptr) {
+            reviewNotesEdit_->setPlainText(qs(record.notes));
+        }
+        updateReviewDetail(static_cast<int>(record.id), true);
+    }
+
+    void updateReviewDetail(int faceId, bool refreshSuggestion = true) {
+        if (refreshSuggestion) {
+            reviewSuggestedPersonId_ = 0;
+            reviewSuggestedPersonName_.clear();
+        }
+        if (refreshSuggestion && reviewSuggestionLabel_ != nullptr) {
+            reviewSuggestionLabel_->setText("AI Suggested Person: not checked");
         }
         if (reviewPreviewLabel_ == nullptr || !database_) {
             return;
@@ -2795,35 +2921,13 @@ private:
                 reviewPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
-            QImage image(qs(face->sourcePath));
-            if (image.isNull()) {
-                reviewPreviewLabel_->setText("Image unavailable");
-                reviewPreviewLabel_->setPixmap(QPixmap());
-                return;
+            if (reviewFocusButton_ != nullptr) {
+                reviewFocusButton_->setText(reviewFocusOnFace_ ? "Full Image" : "Focus on Face");
             }
-            QPixmap pixmap = QPixmap::fromImage(image).scaled(reviewPreviewLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            if (!pixmap.isNull()) {
-                QPainter painter(&pixmap);
-                painter.setRenderHint(QPainter::Antialiasing, true);
-                const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
-                const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
-                if (face->bbox.size() >= 4) {
-                    QRectF box(QPointF(face->bbox[0], face->bbox[1]), QPointF(face->bbox[2], face->bbox[3]));
-                    box = box.normalized();
-                    painter.setPen(QPen(QColor(0, 230, 70), 2.0));
-                    painter.setBrush(Qt::NoBrush);
-                    painter.drawRect(QRectF(box.left() * sx, box.top() * sy, box.width() * sx, box.height() * sy));
-                }
-                painter.setPen(QPen(QColor(20, 170, 220), 1.1));
-                painter.setBrush(QColor(20, 210, 235));
-                for (const auto& point : face->landmarks2d) {
-                    if (point.size() < 2) {
-                        continue;
-                    }
-                    painter.drawEllipse(QPointF(point[0] * sx, point[1] * sy), 1.8, 1.8);
-                }
+            setDatabaseFacePreview(reviewPreviewLabel_, *face, "No preview", reviewFocusOnFace_);
+            if (refreshSuggestion) {
+                updateReviewSuggestion(*face);
             }
-            reviewPreviewLabel_->setPixmap(pixmap);
         } catch (const std::exception& ex) {
             reviewPreviewLabel_->setText(ex.what());
             reviewPreviewLabel_->setPixmap(QPixmap());
@@ -3028,13 +3132,6 @@ private:
         }
     }
 
-    void applyReviewFromControls() {
-        applyReviewState(
-            reviewStateCombo_->currentText().toStdString(),
-            reviewIgnoredCombo_->currentIndex() == 1,
-            reviewNotesEdit_->text().toStdString());
-    }
-
     void applyReviewState(const std::string& state, bool ignored, const std::string& notes = {}) {
         if (!database_) {
             return;
@@ -3044,11 +3141,87 @@ private:
             if (faceId <= 0) {
                 throw std::runtime_error("Select a review row first.");
             }
-            database_->updateFaceReview(faceId, state, ignored, notes.empty() ? reviewNotesEdit_->text().toStdString() : notes);
+            const std::string effectiveNotes = notes.empty() && reviewNotesEdit_ != nullptr
+                ? std::string(reviewNotesEdit_->toPlainText().toUtf8().constData())
+                : notes;
+            database_->updateFaceReview(faceId, state, ignored, effectiveNotes);
             reloadAll();
             statusBar()->showMessage("Review updated");
         } catch (const std::exception& ex) {
             showError(ex);
+        }
+    }
+
+    void saveReviewMetadata() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int faceId = selectedReviewFaceId();
+            if (faceId <= 0) {
+                throw std::runtime_error("Select a review row first.");
+            }
+            assignFaceToPersonName(faceId, reviewPersonEdit_ == nullptr ? QString() : reviewPersonEdit_->text());
+            database_->setFaceTags(faceId, reviewTagsEdit_ == nullptr ? std::string() : reviewTagsEdit_->text().toUtf8().constData(), false);
+            database_->updateFaceReview(
+                faceId,
+                reviewStateCombo_ == nullptr ? "open" : reviewStateCombo_->currentText().toStdString(),
+                reviewIgnoredCheck_ != nullptr && reviewIgnoredCheck_->isChecked(),
+                reviewNotesEdit_ == nullptr ? std::string() : std::string(reviewNotesEdit_->toPlainText().toUtf8().constData()));
+            reloadAll();
+            statusBar()->showMessage("Review metadata saved");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void toggleReviewIgnored() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int faceId = selectedReviewFaceId();
+            if (faceId <= 0) {
+                throw std::runtime_error("Select a review row first.");
+            }
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                throw std::runtime_error("Face id not found.");
+            }
+            const bool ignored = !face->ignored;
+            database_->updateFaceReview(faceId, ignored ? "ignored" : "open", ignored, face->notes);
+            reloadAll();
+            statusBar()->showMessage(ignored ? "Review item ignored" : "Review item restored");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void updateReviewSuggestion(const fsc::core::FaceRecord& face) {
+        reviewSuggestedPersonId_ = 0;
+        reviewSuggestedPersonName_.clear();
+        if (reviewSuggestionLabel_ == nullptr || !database_) {
+            return;
+        }
+        try {
+            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), face.embedding, selectedIdentityMode(), 3);
+            if (result.candidates.empty() || result.decision == "unknown") {
+                reviewSuggestionLabel_->setText("AI Suggested Person: unknown");
+                return;
+            }
+            const auto& candidate = result.candidates.front();
+            reviewSuggestedPersonId_ = candidate.profile.personId;
+            reviewSuggestedPersonName_ = candidate.profile.personName;
+            reviewSuggestionLabel_->setText(
+                QString("%1 | %2 | score %3 | confidence %4% | margin %5 | evidence face %6")
+                    .arg(qs(candidate.profile.personName))
+                    .arg(qs(result.decision))
+                    .arg(candidate.score, 0, 'f', 4)
+                    .arg(candidate.confidence * 100.0, 0, 'f', 1)
+                    .arg(candidate.margin, 0, 'f', 4)
+                    .arg(candidate.evidenceFaceId));
+        } catch (const std::exception& ex) {
+            reviewSuggestionLabel_->setText(QString("AI Suggested Person: %1").arg(QString::fromUtf8(ex.what())));
         }
     }
 
@@ -3065,21 +3238,7 @@ private:
             if (!face.has_value()) {
                 throw std::runtime_error("Face id not found.");
             }
-            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), face->embedding, selectedIdentityMode(), 5);
-            reviewSuggestedPersonId_ = 0;
-            if (result.candidates.empty()) {
-                reviewSuggestionLabel_->setText("AI Suggested Person: unknown");
-                return;
-            }
-            const auto& candidate = result.candidates.front();
-            reviewSuggestedPersonId_ = candidate.profile.personId;
-            reviewSuggestionLabel_->setText(
-                QString("AI Suggested Person: %1 | %2 | score %3 | confidence %4% | evidence face %5")
-                    .arg(qs(candidate.profile.personName))
-                    .arg(qs(result.decision))
-                    .arg(candidate.score, 0, 'f', 4)
-                    .arg(candidate.confidence * 100.0, 0, 'f', 1)
-                    .arg(candidate.evidenceFaceId));
+            updateReviewSuggestion(*face);
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -3105,6 +3264,45 @@ private:
             database_->rebuildIdentityProfiles();
             reloadAll();
             statusBar()->showMessage("Suggested person confirmed and profiles retrained");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void rejectReviewSuggestion() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const int faceId = selectedReviewFaceId();
+            if (faceId <= 0) {
+                throw std::runtime_error("Select a review row first.");
+            }
+            if (reviewSuggestedPersonName_.empty()) {
+                throw std::runtime_error("No AI suggested person is available.");
+            }
+            const auto face = database_->loadFace(faceId);
+            if (!face.has_value()) {
+                throw std::runtime_error("Face id not found.");
+            }
+            std::string notes = reviewNotesEdit_ == nullptr
+                ? face->notes
+                : std::string(reviewNotesEdit_->toPlainText().toUtf8().constData());
+            const std::string rejection = "AI suggestion rejected: " + reviewSuggestedPersonName_;
+            if (notes.find(rejection) == std::string::npos) {
+                if (!notes.empty()) {
+                    notes += "\n";
+                }
+                notes += rejection;
+            }
+            database_->updateFaceReview(faceId, face->reviewState, face->ignored, notes);
+            if (reviewNotesEdit_ != nullptr) {
+                reviewNotesEdit_->setPlainText(qs(notes));
+            }
+            if (reviewSuggestionLabel_ != nullptr) {
+                reviewSuggestionLabel_->setText("Rejected: " + qs(reviewSuggestedPersonName_));
+            }
+            statusBar()->showMessage(QString("Rejected AI suggestion for face %1").arg(faceId));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -4631,12 +4829,22 @@ private:
     int64_t peoplePreviewFaceId_ = 0;
     bool peopleFocusOnFace_ = false;
     QTableWidget* reviewTable_ = nullptr;
+    QLineEdit* reviewDatabaseEdit_ = nullptr;
+    QLineEdit* reviewFilterEdit_ = nullptr;
+    QSpinBox* reviewLimitSpin_ = nullptr;
+    QLineEdit* reviewPersonEdit_ = nullptr;
+    QLineEdit* reviewTagsEdit_ = nullptr;
     QComboBox* reviewStateCombo_ = nullptr;
-    QComboBox* reviewIgnoredCombo_ = nullptr;
-    QLineEdit* reviewNotesEdit_ = nullptr;
+    QCheckBox* reviewIgnoredCheck_ = nullptr;
+    QTextEdit* reviewNotesEdit_ = nullptr;
     QLabel* reviewPreviewLabel_ = nullptr;
+    QPushButton* reviewFocusButton_ = nullptr;
     QLabel* reviewSuggestionLabel_ = nullptr;
     int64_t reviewSuggestedPersonId_ = 0;
+    std::string reviewSuggestedPersonName_;
+    std::vector<fsc::core::FaceRecord> reviewRows_;
+    int64_t currentReviewFaceId_ = 0;
+    bool reviewFocusOnFace_ = false;
     QSpinBox* faceIdSpin_ = nullptr;
     QSpinBox* topKSpin_ = nullptr;
     QDoubleSpinBox* searchThresholdSpin_ = nullptr;
@@ -4762,6 +4970,30 @@ int main(int argc, char** argv) {
             database.updateFaceReview(faceId, "reviewed", false, "qt-review-smoke");
             const auto face = database.loadFace(faceId);
             return face.has_value() && face->reviewState == "reviewed" && !face->ignored ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--review-action-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto personId = database.upsertPerson("NativeReviewSmoke", "review smoke");
+            database.assignFaceToPerson(faceId, personId);
+            database.setFaceTags(faceId, "native-review-smoke", false);
+            database.updateFaceReview(faceId, "open", false, "native review action smoke");
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value()) {
+                return 1;
+            }
+            return face->personName == "NativeReviewSmoke" &&
+                    face->tagText.find("native-review-smoke") != std::string::npos &&
+                    face->reviewState == "open" &&
+                    !face->ignored &&
+                    face->notes == "native review action smoke" &&
+                    face->duplicateCount >= 0
+                ? 0
+                : 1;
         } catch (...) {
             return 1;
         }

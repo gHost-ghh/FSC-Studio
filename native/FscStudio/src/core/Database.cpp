@@ -891,6 +891,7 @@ std::vector<FaceRecord> Database::loadFaces(bool includeIgnored, int limit) cons
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
         "COALESCE(f.created_at, ''), "
+        "COALESCE((SELECT COUNT(*) FROM faces d WHERE COALESCE(f.image_hash, '') != '' AND d.image_hash = f.image_hash), 1), "
         "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
         "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
         "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
@@ -919,7 +920,8 @@ std::vector<FaceRecord> Database::loadFaces(bool includeIgnored, int limit) cons
         record.reviewState = textColumn(statement.get(), 10);
         record.notes = textColumn(statement.get(), 11);
         record.createdAt = textColumn(statement.get(), 12);
-        record.tagText = textColumn(statement.get(), 13);
+        record.duplicateCount = sqlite3_column_int(statement.get(), 13);
+        record.tagText = textColumn(statement.get(), 14);
         if (!record.embedding.empty()) {
             records.push_back(std::move(record));
         }
@@ -933,6 +935,7 @@ std::vector<FaceRecord> Database::loadFacesForPerson(int64_t personId, bool incl
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
         "COALESCE(f.created_at, ''), "
+        "COALESCE((SELECT COUNT(*) FROM faces d WHERE COALESCE(f.image_hash, '') != '' AND d.image_hash = f.image_hash), 1), "
         "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
         "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
         "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
@@ -960,7 +963,8 @@ std::vector<FaceRecord> Database::loadFacesForPerson(int64_t personId, bool incl
         record.reviewState = textColumn(statement.get(), 10);
         record.notes = textColumn(statement.get(), 11);
         record.createdAt = textColumn(statement.get(), 12);
-        record.tagText = textColumn(statement.get(), 13);
+        record.duplicateCount = sqlite3_column_int(statement.get(), 13);
+        record.tagText = textColumn(statement.get(), 14);
         if (!record.embedding.empty()) {
             records.push_back(std::move(record));
         }
@@ -975,6 +979,7 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
         "COALESCE(f.created_at, ''), COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, ''), "
         "COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, ''), "
+        "COALESCE((SELECT COUNT(*) FROM faces d WHERE COALESCE(f.image_hash, '') != '' AND d.image_hash = f.image_hash), 1), "
         "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
         "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
         "WHERE ft.face_id = f.id ORDER BY t.name COLLATE NOCASE"
@@ -1003,7 +1008,8 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 14));
     record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 15));
     record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 16));
-    record.tagText = textColumn(statement.get(), 17);
+    record.duplicateCount = sqlite3_column_int(statement.get(), 17);
+    record.tagText = textColumn(statement.get(), 18);
     return record;
 }
 

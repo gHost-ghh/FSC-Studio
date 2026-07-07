@@ -40,6 +40,7 @@ struct FaceRecord {
     std::string reviewState;
     std::string notes;
     std::string createdAt;
+    int duplicateCount = 0;
     std::vector<double> bbox;
     std::vector<std::vector<double>> landmarks2d;
     std::vector<std::vector<double>> landmarks3d;
