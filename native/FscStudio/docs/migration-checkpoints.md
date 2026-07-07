@@ -127,9 +127,9 @@ Current Qt shell:
 - Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
 - Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime pages backed by native `FscCore` / `FscVision`.
 - Uses the Python app's left navigation order with lower-left language and identity-mode controls.
-- Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, and import images from the Library page through native ONNX.
+- Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, import images or folders from the Library page through native ONNX, and export the filtered Library table to CSV.
 - Library has right-side Image / 3D Landmarks / Dense Mesh visual tabs for the selected face. Image overlays cached bbox / 2D landmarks and toggles full-image versus face-focused viewing; 3D tabs use cached landmarks / dense mesh or a native fallback mesh preview.
-- Library now includes Selected and Batch metadata tabs for person assignment, tags, review state, ignored state, and notes; native SQLite reads/writes `face_tags`.
+- Library now includes text/person/tag/review/quality filters, Selected and Batch metadata tabs for person assignment, tags, review state, ignored state, and notes, plus an Activity tab with import progress and processed-image preview; native SQLite reads/writes `face_tags`.
 - Search can now analyze a standalone query image natively, choose among detected query faces, preview boxes, filter by threshold/min-quality/ignored/person/tag state, show identity candidates, preview selected results/evidence, cycle quickly through top result previews, and assign/confirm people from result actions.
 - Compare now mirrors the Python multi-face workflow more closely: each side analyzes after image selection, lists detected faces, supports preview-box click selection, focus/full-image toggles, and compares the selected pair.
 - Review now shows a selected-face detail preview, can run the native identity suggestion scorer, and can confirm the suggested person while retraining identity profiles.
@@ -148,6 +148,7 @@ Current Qt shell:
 - `FscStudioQt.exe --metadata-smoke D:\FSC\native\FscStudio\out\probe\native_metadata_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --search-action-smoke D:\FSC\native\FscStudio\out\probe\native_search_action_smoke.fscdb 1 1 NativeSearchSmoke`: exit code `0`.
 - `FscStudioQt.exe --search-filter-smoke D:\FSC\native\FscStudio\out\probe\native_search_filter_smoke.fscdb 1`: exit code `0`.
+- `FscStudioQt.exe --library-export-smoke D:\FSC\new_full.fscdb D:\FSC\native\FscStudio\out\probe\native_library_export_smoke.csv`: exit code `0`.
 - `FscStudioQt.exe --maintenance-smoke D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke.fscdb D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke_backup.fscdb`: exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
@@ -173,6 +174,7 @@ Current portable package:
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
+- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --library-export-smoke D:\FSC\new_full.fscdb D:\FSC\native\FscStudio\out\probe\native_package_library_export_smoke.csv`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-result-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - Launch check from the portable directory stayed running for 3 seconds.

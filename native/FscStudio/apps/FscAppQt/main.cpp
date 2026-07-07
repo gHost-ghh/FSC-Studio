@@ -12,8 +12,11 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
+#include <QDirIterator>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
@@ -30,6 +33,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSpinBox>
@@ -40,6 +44,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QTime>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -58,6 +63,7 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -93,6 +99,53 @@ QTableWidgetItem* item(const QString& value) {
 
 QTableWidgetItem* numberItem(double value, int decimals = 4) {
     return item(QString::number(value, 'f', decimals));
+}
+
+std::string csvEscape(const std::string& value) {
+    const bool quote = value.find_first_of(",\"\r\n") != std::string::npos;
+    if (!quote) {
+        return value;
+    }
+    std::string output = "\"";
+    for (const char ch : value) {
+        if (ch == '"') {
+            output += "\"\"";
+        } else {
+            output += ch;
+        }
+    }
+    output += '"';
+    return output;
+}
+
+bool isSupportedImageFile(const QString& path) {
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    return suffix == "jpg" || suffix == "jpeg" || suffix == "png" || suffix == "bmp" || suffix == "ppm";
+}
+
+int writeFacesCsv(const std::vector<fsc::core::FaceRecord>& records, const std::filesystem::path& outputPath) {
+    if (!outputPath.parent_path().empty()) {
+        std::filesystem::create_directories(outputPath.parent_path());
+    }
+    std::ofstream stream(outputPath, std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("Unable to open CSV output file.");
+    }
+    stream << "id,file_name,person,tags,review,ignored,quality,detection,source,notes,created_at\n";
+    for (const auto& record : records) {
+        stream << record.id << ','
+               << csvEscape(record.fileName) << ','
+               << csvEscape(record.personName) << ','
+               << csvEscape(record.tagText) << ','
+               << csvEscape(record.reviewState) << ','
+               << (record.ignored ? "1" : "0") << ','
+               << record.qualityScore << ','
+               << record.detectionScore << ','
+               << csvEscape(record.sourcePath) << ','
+               << csvEscape(record.notes) << ','
+               << csvEscape(record.createdAt) << '\n';
+    }
+    return static_cast<int>(records.size());
 }
 
 QString translatedText(const QString& key, const QString& language) {
@@ -963,6 +1016,9 @@ private:
         auto* modelButton = new QPushButton("Browse", controls);
         auto* imageButton = new QPushButton("Browse", controls);
         auto* importButton = new QPushButton("Import Image", controls);
+        auto* importFolderButton = new QPushButton("Import Folder", controls);
+        auto* exportButton = new QPushButton("Export CSV", controls);
+        auto* reloadLibraryButton = new QPushButton("Reload", controls);
         auto* modelRow = new QWidget(controls);
         auto* modelRowLayout = new QHBoxLayout(modelRow);
         modelRowLayout->setContentsMargins(0, 0, 0, 0);
@@ -974,14 +1030,58 @@ private:
         imageRowLayout->addWidget(importImageEdit_, 1);
         imageRowLayout->addWidget(imageButton);
         imageRowLayout->addWidget(importButton);
+        imageRowLayout->addWidget(importFolderButton);
+        imageRowLayout->addWidget(reloadLibraryButton);
+        imageRowLayout->addWidget(exportButton);
         form->addRow("Models", modelRow);
         form->addRow("Image", imageRow);
+        libraryImportMinQualitySpin_ = new QDoubleSpinBox(controls);
+        libraryImportMinQualitySpin_->setRange(0.0, 1.0);
+        libraryImportMinQualitySpin_->setDecimals(3);
+        libraryImportMinQualitySpin_->setSingleStep(0.050);
+        libraryImportMinQualitySpin_->setValue(0.0);
+        form->addRow("Import min quality", libraryImportMinQualitySpin_);
         leftLayout->addWidget(controls);
+
+        auto* filterControls = new QWidget(leftPanel);
+        auto* filterLayout = new QGridLayout(filterControls);
+        filterLayout->setContentsMargins(0, 0, 0, 0);
+        libraryFilterTextEdit_ = new QLineEdit(filterControls);
+        libraryFilterTextEdit_->setPlaceholderText("name, path, person, tag, notes");
+        libraryFilterPersonCombo_ = new QComboBox(filterControls);
+        libraryFilterTagCombo_ = new QComboBox(filterControls);
+        libraryFilterReviewCombo_ = new QComboBox(filterControls);
+        libraryFilterReviewCombo_->addItem("All", "");
+        libraryFilterReviewCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
+        libraryFilterMinQualitySpin_ = new QDoubleSpinBox(filterControls);
+        libraryFilterMinQualitySpin_->setRange(0.0, 1.0);
+        libraryFilterMinQualitySpin_->setDecimals(3);
+        libraryFilterMinQualitySpin_->setSingleStep(0.050);
+        libraryFilterMinQualitySpin_->setValue(0.0);
+        libraryFilterIncludeIgnoredCheck_ = new QCheckBox("Include ignored", filterControls);
+        libraryFilterIncludeIgnoredCheck_->setChecked(true);
+        auto* applyFilterButton = new QPushButton("Apply Filter", filterControls);
+        auto* resetFilterButton = new QPushButton("Reset Filter", filterControls);
+        filterLayout->addWidget(new QLabel("Filter", filterControls), 0, 0);
+        filterLayout->addWidget(libraryFilterTextEdit_, 0, 1, 1, 2);
+        filterLayout->addWidget(new QLabel("Person", filterControls), 0, 3);
+        filterLayout->addWidget(libraryFilterPersonCombo_, 0, 4);
+        filterLayout->addWidget(new QLabel("Tag", filterControls), 0, 5);
+        filterLayout->addWidget(libraryFilterTagCombo_, 0, 6);
+        filterLayout->addWidget(libraryFilterIncludeIgnoredCheck_, 0, 7);
+        filterLayout->addWidget(applyFilterButton, 0, 8);
+        filterLayout->addWidget(resetFilterButton, 0, 9);
+        filterLayout->addWidget(new QLabel("Review", filterControls), 1, 0);
+        filterLayout->addWidget(libraryFilterReviewCombo_, 1, 1);
+        filterLayout->addWidget(new QLabel("Min quality", filterControls), 1, 2);
+        filterLayout->addWidget(libraryFilterMinQualitySpin_, 1, 3);
+        filterLayout->setColumnStretch(10, 1);
+        leftLayout->addWidget(filterControls);
 
         auto* splitter = new QSplitter(Qt::Vertical, leftPanel);
         libraryTable_ = new QTableWidget(splitter);
         libraryTable_->setColumnCount(9);
-        libraryTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Tags", "Quality", "Detection", "Review", "Ignored", "Source"});
+        libraryTable_->setHorizontalHeaderLabels({"ID", "Name", "Person", "Tags", "Review", "Ignored", "Dupes", "Quality", "Source"});
         fitTable(libraryTable_);
         libraryTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         importLog_ = new QTableWidget(splitter);
@@ -1078,6 +1178,18 @@ private:
         batchForm->addRow("", applyBatchButton);
         metadataTabs->addTab(selectedTab, "Selected");
         metadataTabs->addTab(batchTab, "Batch");
+        auto* activityTab = new QWidget(metadataTabs);
+        auto* activityLayout = new QVBoxLayout(activityTab);
+        activityLayout->setContentsMargins(0, 0, 0, 0);
+        libraryProgressBar_ = new QProgressBar(activityTab);
+        libraryProgressBar_->setRange(0, 100);
+        libraryProgressBar_->setValue(0);
+        libraryActivityLog_ = new QTextEdit(activityTab);
+        libraryActivityLog_->setReadOnly(true);
+        libraryActivityLog_->setMinimumHeight(130);
+        activityLayout->addWidget(libraryProgressBar_);
+        activityLayout->addWidget(libraryActivityLog_, 1);
+        metadataTabs->addTab(activityTab, "Activity");
         visualLayout->addWidget(metadataTabs, 1);
 
         mainSplitter->addWidget(leftPanel);
@@ -1120,6 +1232,12 @@ private:
         });
         connect(imageButton, &QPushButton::clicked, this, [this] { chooseImage(importImageEdit_); });
         connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
+        connect(importFolderButton, &QPushButton::clicked, this, [this] { importFolder(); });
+        connect(reloadLibraryButton, &QPushButton::clicked, this, [this] { loadLibrary(); });
+        connect(exportButton, &QPushButton::clicked, this, [this] { exportLibraryCsv(); });
+        connect(applyFilterButton, &QPushButton::clicked, this, [this] { loadLibrary(); });
+        connect(resetFilterButton, &QPushButton::clicked, this, [this] { resetLibraryFilters(); });
+        connect(libraryFilterTextEdit_, &QLineEdit::returnPressed, this, [this] { loadLibrary(); });
         connect(libraryFocusButton_, &QPushButton::clicked, this, [this] {
             libraryFocusOnFace_ = !libraryFocusOnFace_;
             if (libraryPreviewFaceId_ > 0) {
@@ -1855,6 +1973,7 @@ private:
             return;
         }
         loadOverview();
+        refreshLibraryFilterOptions();
         loadLibrary();
         loadPeople();
         loadReview();
@@ -1876,7 +1995,16 @@ private:
     }
 
     void loadLibrary() {
-        const auto records = database_->loadFaces(true, 1000);
+        if (!database_ || libraryTable_ == nullptr) {
+            return;
+        }
+        const bool includeIgnored = libraryFilterIncludeIgnoredCheck_ == nullptr || libraryFilterIncludeIgnoredCheck_->isChecked();
+        auto records = database_->loadFaces(includeIgnored);
+        records.erase(
+            std::remove_if(records.begin(), records.end(), [this](const auto& record) {
+                return !recordMatchesLibraryFilters(record);
+            }),
+            records.end());
         libraryTable_->setRowCount(static_cast<int>(records.size()));
         for (int row = 0; row < static_cast<int>(records.size()); ++row) {
             const auto& record = records[static_cast<size_t>(row)];
@@ -1884,13 +2012,114 @@ private:
             libraryTable_->setItem(row, 1, item(qs(record.fileName)));
             libraryTable_->setItem(row, 2, item(qs(record.personName)));
             libraryTable_->setItem(row, 3, item(qs(record.tagText)));
-            libraryTable_->setItem(row, 4, numberItem(record.qualityScore, 3));
-            libraryTable_->setItem(row, 5, numberItem(record.detectionScore, 3));
-            libraryTable_->setItem(row, 6, item(qs(record.reviewState)));
-            libraryTable_->setItem(row, 7, item(record.ignored ? "yes" : "no"));
+            libraryTable_->setItem(row, 4, item(qs(record.reviewState)));
+            libraryTable_->setItem(row, 5, item(record.ignored ? "yes" : "no"));
+            libraryTable_->setItem(row, 6, item(record.reviewState == "duplicate" ? "yes" : "no"));
+            libraryTable_->setItem(row, 7, numberItem(record.qualityScore, 3));
             libraryTable_->setItem(row, 8, item(qs(record.sourcePath)));
         }
         libraryTable_->resizeColumnsToContents();
+        appendLibraryActivity(QString("Loaded %1 face(s)").arg(records.size()));
+    }
+
+    bool recordMatchesLibraryFilters(const fsc::core::FaceRecord& record) const {
+        if (libraryFilterMinQualitySpin_ != nullptr && record.qualityScore < libraryFilterMinQualitySpin_->value()) {
+            return false;
+        }
+        const QString personFilter = libraryFilterPersonCombo_ == nullptr ? QString() : libraryFilterPersonCombo_->currentData().toString();
+        if (!personFilter.isEmpty() && qs(record.personName).compare(personFilter, Qt::CaseInsensitive) != 0) {
+            return false;
+        }
+        const QString tagFilter = libraryFilterTagCombo_ == nullptr ? QString() : libraryFilterTagCombo_->currentData().toString();
+        if (!tagFilter.isEmpty()) {
+            QString tagText = qs(record.tagText);
+            tagText.replace(';', ',');
+            tagText.replace('|', ',');
+            bool found = false;
+            for (const auto& tag : tagText.split(',', Qt::SkipEmptyParts)) {
+                if (tag.trimmed().compare(tagFilter, Qt::CaseInsensitive) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        const QString reviewFilter = libraryFilterReviewCombo_ == nullptr ? QString() : libraryFilterReviewCombo_->currentText();
+        if (!reviewFilter.isEmpty() && reviewFilter != "All" && qs(record.reviewState).compare(reviewFilter, Qt::CaseInsensitive) != 0) {
+            return false;
+        }
+        const QString text = libraryFilterTextEdit_ == nullptr ? QString() : libraryFilterTextEdit_->text().trimmed();
+        if (!text.isEmpty()) {
+            const QString haystack = QString("%1\n%2\n%3\n%4\n%5")
+                                         .arg(qs(record.fileName), qs(record.sourcePath), qs(record.personName), qs(record.tagText), qs(record.notes));
+            if (!haystack.contains(text, Qt::CaseInsensitive)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void appendLibraryActivity(const QString& message) {
+        if (libraryActivityLog_ != nullptr) {
+            const QString stamp = QTime::currentTime().toString("HH:mm:ss");
+            libraryActivityLog_->append(QString("[%1] %2").arg(stamp, message));
+        }
+        statusBar()->showMessage(message);
+    }
+
+    void refreshLibraryFilterOptions() {
+        if (libraryFilterPersonCombo_ == nullptr || libraryFilterTagCombo_ == nullptr) {
+            return;
+        }
+        const QString currentPerson = libraryFilterPersonCombo_->currentData().toString();
+        const QString currentTag = libraryFilterTagCombo_->currentData().toString();
+        libraryFilterPersonCombo_->blockSignals(true);
+        libraryFilterTagCombo_->blockSignals(true);
+        libraryFilterPersonCombo_->clear();
+        libraryFilterTagCombo_->clear();
+        libraryFilterPersonCombo_->addItem("All", "");
+        libraryFilterTagCombo_->addItem("All", "");
+        if (database_) {
+            try {
+                for (const auto& person : database_->loadPeople()) {
+                    libraryFilterPersonCombo_->addItem(qs(person.name), qs(person.name));
+                }
+                for (const auto& tag : database_->loadTags()) {
+                    libraryFilterTagCombo_->addItem(qs(tag), qs(tag));
+                }
+            } catch (...) {
+            }
+        }
+        const int personIndex = libraryFilterPersonCombo_->findData(currentPerson);
+        const int tagIndex = libraryFilterTagCombo_->findData(currentTag);
+        libraryFilterPersonCombo_->setCurrentIndex(personIndex >= 0 ? personIndex : 0);
+        libraryFilterTagCombo_->setCurrentIndex(tagIndex >= 0 ? tagIndex : 0);
+        libraryFilterPersonCombo_->blockSignals(false);
+        libraryFilterTagCombo_->blockSignals(false);
+    }
+
+    void resetLibraryFilters() {
+        if (libraryFilterTextEdit_ != nullptr) {
+            libraryFilterTextEdit_->clear();
+        }
+        if (libraryFilterPersonCombo_ != nullptr) {
+            libraryFilterPersonCombo_->setCurrentIndex(0);
+        }
+        if (libraryFilterTagCombo_ != nullptr) {
+            libraryFilterTagCombo_->setCurrentIndex(0);
+        }
+        if (libraryFilterReviewCombo_ != nullptr) {
+            libraryFilterReviewCombo_->setCurrentIndex(0);
+        }
+        if (libraryFilterMinQualitySpin_ != nullptr) {
+            libraryFilterMinQualitySpin_->setValue(0.0);
+        }
+        if (libraryFilterIncludeIgnoredCheck_ != nullptr) {
+            libraryFilterIncludeIgnoredCheck_->setChecked(true);
+        }
+        loadLibrary();
     }
 
     void loadLibraryMetadata(int faceId) {
@@ -3821,6 +4050,80 @@ private:
         }
     }
 
+    void setLibraryImportPreview(const std::filesystem::path& imagePath) {
+        if (libraryPreviewLabel_ == nullptr) {
+            return;
+        }
+        libraryPreviewFaceId_ = 0;
+        libraryFocusOnFace_ = false;
+        if (libraryFocusButton_ != nullptr) {
+            libraryFocusButton_->setText("Focus on Face");
+        }
+        if (libraryVisualTabs_ != nullptr) {
+            libraryVisualTabs_->setCurrentIndex(0);
+        }
+        const QString displayPath = QString::fromStdWString(imagePath.wstring());
+        QImage image(displayPath);
+        if (image.isNull()) {
+            libraryPreviewLabel_->setText("Image preview unavailable");
+            libraryPreviewLabel_->setPixmap(QPixmap());
+            return;
+        }
+        QSize target = libraryPreviewLabel_->size();
+        if (target.width() < 32 || target.height() < 32) {
+            target = QSize(420, 420);
+        }
+        const auto pixmap = QPixmap::fromImage(image).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        libraryPreviewLabel_->setPixmap(pixmap);
+    }
+
+#ifdef FSC_ENABLE_ONNX
+    int importImagePath(
+        const std::filesystem::path& imagePath,
+        fsc::vision::InsightFaceEngine& engine,
+        bool clearLog) {
+        if (importLog_ != nullptr && clearLog) {
+            importLog_->setRowCount(0);
+        }
+        setLibraryImportPreview(imagePath);
+        QApplication::processEvents();
+
+        const auto imageHash = fsc::core::sha256File(imagePath);
+        const bool duplicate = database_->imageHashExists(imageHash);
+        const auto image = fsc::vision::loadImageRgb(imagePath);
+        const auto faces = engine.analyze(image, 0.50f, 10);
+        const double minQuality = libraryImportMinQualitySpin_ != nullptr ? libraryImportMinQualitySpin_->value() : 0.0;
+        int inserted = 0;
+        for (int index = 0; index < static_cast<int>(faces.size()); ++index) {
+            const auto& face = faces[static_cast<size_t>(index)];
+            QString insertedText = "skipped";
+            if (face.qualityScore >= minQuality) {
+                const auto id = database_->insertFace(insertRecordFromFace(imagePath, face, imageHash, duplicate));
+                insertedText = QString::number(id);
+                ++inserted;
+            }
+            if (importLog_ != nullptr) {
+                const int row = importLog_->rowCount();
+                importLog_->insertRow(row);
+                importLog_->setItem(row, 0, item(insertedText));
+                importLog_->setItem(row, 1, item(QString::number(index + 1)));
+                importLog_->setItem(row, 2, numberItem(face.detection.score, 4));
+                importLog_->setItem(row, 3, numberItem(face.qualityScore, 4));
+                importLog_->setItem(row, 4, item(QString::number(face.landmarks2d.size())));
+                importLog_->setItem(row, 5, item(QString::number(face.landmarks3d.size())));
+            }
+        }
+        if (importLog_ != nullptr) {
+            importLog_->resizeColumnsToContents();
+        }
+        appendLibraryActivity(QString("Imported %1 from %2%3")
+                                  .arg(inserted)
+                                  .arg(QString::fromStdWString(imagePath.filename().wstring()))
+                                  .arg(duplicate ? " (duplicate source)" : ""));
+        return inserted;
+    }
+#endif
+
     void importImage() {
 #ifdef FSC_ENABLE_ONNX
         if (!database_) {
@@ -3829,32 +4132,113 @@ private:
         try {
             const auto modelRoot = pathFrom(modelRootEdit_->text());
             const auto imagePath = pathFrom(importImageEdit_->text());
-            const auto imageHash = fsc::core::sha256File(imagePath);
-            const bool duplicate = database_->imageHashExists(imageHash);
-            const auto image = fsc::vision::loadImageRgb(imagePath);
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
-            const auto faces = engine.analyze(image, 0.50f, 10);
-            importLog_->setRowCount(0);
-            for (int index = 0; index < static_cast<int>(faces.size()); ++index) {
-                const auto id = database_->insertFace(insertRecordFromFace(imagePath, faces[static_cast<size_t>(index)], imageHash, duplicate));
-                const int row = importLog_->rowCount();
-                importLog_->insertRow(row);
-                importLog_->setItem(row, 0, item(QString::number(id)));
-                importLog_->setItem(row, 1, item(QString::number(index)));
-                importLog_->setItem(row, 2, numberItem(faces[static_cast<size_t>(index)].detection.score, 4));
-                importLog_->setItem(row, 3, numberItem(faces[static_cast<size_t>(index)].qualityScore, 4));
-                importLog_->setItem(row, 4, item(QString::number(faces[static_cast<size_t>(index)].landmarks2d.size())));
-                importLog_->setItem(row, 5, item(QString::number(faces[static_cast<size_t>(index)].landmarks3d.size())));
+            if (imagePath.empty()) {
+                throw std::runtime_error("Select an image first.");
             }
-            importLog_->resizeColumnsToContents();
+            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
+            if (libraryProgressBar_ != nullptr) {
+                libraryProgressBar_->setRange(0, 1);
+                libraryProgressBar_->setValue(0);
+            }
+            const int inserted = importImagePath(imagePath, engine, true);
+            if (libraryProgressBar_ != nullptr) {
+                libraryProgressBar_->setValue(1);
+            }
             reloadAll();
-            statusBar()->showMessage(QString("Imported %1 face(s)%2").arg(faces.size()).arg(duplicate ? " as duplicate" : ""));
+            statusBar()->showMessage(QString("Imported %1 face(s)").arg(inserted));
         } catch (const std::exception& ex) {
             showError(ex);
         }
 #else
         QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
 #endif
+    }
+
+    void importFolder() {
+#ifdef FSC_ENABLE_ONNX
+        if (!database_) {
+            return;
+        }
+        try {
+            const QString folder = QFileDialog::getExistingDirectory(this, "Import image folder", importImageEdit_ == nullptr ? QString() : importImageEdit_->text());
+            if (folder.isEmpty()) {
+                return;
+            }
+            const QStringList filters = {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.ppm"};
+            std::vector<QString> files;
+            QDirIterator iterator(folder, filters, QDir::Files, QDirIterator::Subdirectories);
+            while (iterator.hasNext()) {
+                const QString file = iterator.next();
+                if (isSupportedImageFile(file)) {
+                    files.push_back(file);
+                }
+            }
+            if (files.empty()) {
+                throw std::runtime_error("No supported image files found.");
+            }
+            if (importLog_ != nullptr) {
+                importLog_->setRowCount(0);
+            }
+            if (libraryProgressBar_ != nullptr) {
+                libraryProgressBar_->setRange(0, static_cast<int>(files.size()));
+                libraryProgressBar_->setValue(0);
+            }
+            fsc::vision::InsightFaceEngine engine(
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(modelRootEdit_->text())),
+                selectedRuntimeMode());
+            int insertedTotal = 0;
+            int failed = 0;
+            for (int index = 0; index < static_cast<int>(files.size()); ++index) {
+                try {
+                    insertedTotal += importImagePath(pathFrom(files[static_cast<size_t>(index)]), engine, false);
+                } catch (const std::exception& ex) {
+                    ++failed;
+                    appendLibraryActivity(QString("Failed %1: %2")
+                                              .arg(QFileInfo(files[static_cast<size_t>(index)]).fileName(), QString::fromUtf8(ex.what())));
+                }
+                if (libraryProgressBar_ != nullptr) {
+                    libraryProgressBar_->setValue(index + 1);
+                }
+                QApplication::processEvents();
+            }
+            reloadAll();
+            appendLibraryActivity(QString("Folder import complete: %1 face(s), %2 failed file(s)")
+                                      .arg(insertedTotal)
+                                      .arg(failed));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+#else
+        QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
+#endif
+    }
+
+    void exportLibraryCsv() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto defaultPath = database_->path().parent_path() / (database_->path().stem().string() + "_faces.csv");
+            const QString path = QFileDialog::getSaveFileName(
+                this,
+                "Export Library CSV",
+                qs(defaultPath.string()),
+                "CSV Files (*.csv);;All Files (*)");
+            if (path.isEmpty()) {
+                return;
+            }
+            const bool includeIgnored = libraryFilterIncludeIgnoredCheck_ == nullptr || libraryFilterIncludeIgnoredCheck_->isChecked();
+            auto records = database_->loadFaces(includeIgnored);
+            records.erase(
+                std::remove_if(records.begin(), records.end(), [this](const auto& record) {
+                    return !recordMatchesLibraryFilters(record);
+                }),
+                records.end());
+            const int count = writeFacesCsv(records, pathFrom(path));
+            appendLibraryActivity(QString("Exported %1 face(s) to %2").arg(count).arg(path));
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
     }
 
     void showError(const std::exception& ex) {
@@ -3897,6 +4281,15 @@ private:
     QComboBox* libraryBatchReviewCombo_ = nullptr;
     QComboBox* libraryBatchIgnoredCombo_ = nullptr;
     QLineEdit* libraryBatchNotesEdit_ = nullptr;
+    QDoubleSpinBox* libraryImportMinQualitySpin_ = nullptr;
+    QLineEdit* libraryFilterTextEdit_ = nullptr;
+    QComboBox* libraryFilterPersonCombo_ = nullptr;
+    QComboBox* libraryFilterTagCombo_ = nullptr;
+    QComboBox* libraryFilterReviewCombo_ = nullptr;
+    QDoubleSpinBox* libraryFilterMinQualitySpin_ = nullptr;
+    QCheckBox* libraryFilterIncludeIgnoredCheck_ = nullptr;
+    QProgressBar* libraryProgressBar_ = nullptr;
+    QTextEdit* libraryActivityLog_ = nullptr;
     int libraryPreviewFaceId_ = 0;
     bool libraryFocusOnFace_ = false;
     QTableWidget* peopleTable_ = nullptr;
@@ -4015,6 +4408,15 @@ int main(int argc, char** argv) {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
             const auto stats = database.statistics();
             return stats.formatVersion.empty() ? 1 : 0;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--library-export-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const int count = writeFacesCsv(database.loadFaces(true), pathFrom(QString::fromLocal8Bit(argv[3])));
+            return count > 0 && std::filesystem::exists(pathFrom(QString::fromLocal8Bit(argv[3]))) ? 0 : 1;
         } catch (...) {
             return 1;
         }
