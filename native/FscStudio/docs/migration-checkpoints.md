@@ -138,6 +138,7 @@ Current Qt shell:
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with configurable cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options; the page shows known people, member tags, selected-member preview, and batch assignment actions.
+- Camera result rows now support selected-match actions: confirm the identity suggestion onto a stored match, manually assign the stored match to a person, or mark the stored match reviewed without changing live frame processing.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Runtime tab now shows current database stats and provides native SQLite maintenance actions: integrity check, database backup, WAL checkpoint, VACUUM, and operation log.
 - Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
@@ -149,6 +150,7 @@ Current Qt shell:
 - `FscStudioQt.exe --library-visual-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --metadata-smoke D:\FSC\native\FscStudio\out\probe\native_metadata_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --search-action-smoke D:\FSC\native\FscStudio\out\probe\native_search_action_smoke.fscdb 1 1 NativeSearchSmoke`: exit code `0`.
+- `FscStudioQt.exe --camera-action-smoke D:\FSC\native\FscStudio\out\probe\native_camera_action_smoke.fscdb 1 NativeCameraSmoke`: exit code `0`.
 - `FscStudioQt.exe --search-filter-smoke D:\FSC\native\FscStudio\out\probe\native_search_filter_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --library-export-smoke D:\FSC\new_full.fscdb D:\FSC\native\FscStudio\out\probe\native_library_export_smoke.csv`: exit code `0`.
 - `FscStudioQt.exe --review-action-smoke D:\FSC\native\FscStudio\out\probe\native_review_action_smoke.fscdb 1`: exit code `0`.

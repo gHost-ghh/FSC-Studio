@@ -70,6 +70,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -814,6 +815,18 @@ public:
     }
 
 private:
+    struct CameraResultActionRow {
+        int faceIndex = -1;
+        int64_t identityPersonId = 0;
+        QString identityName;
+        QString identityActionName;
+        QString decision;
+        int64_t evidenceFaceId = 0;
+        int64_t hitFaceId = 0;
+        QString hitPersonName;
+        double hitCosine = -2.0;
+    };
+
     QString trUi(const QString& key) const {
         const QString language = languageCombo_ == nullptr ? QString("en") : languageCombo_->currentData().toString();
         return translatedText(key, language);
@@ -1697,6 +1710,7 @@ private:
         cameraIdentityLabel_ = new QLabel("Identity: -", page);
         resultsLayout->addWidget(cameraIdentityLabel_);
         cameraResultTable_ = new QTableWidget(page);
+        cameraResultTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         cameraResultTable_->setColumnCount(11);
         cameraResultTable_->setHorizontalHeaderLabels({
             "Face",
@@ -1713,6 +1727,21 @@ private:
         });
         fitTable(cameraResultTable_);
         resultsLayout->addWidget(cameraResultTable_, 2);
+        auto* cameraActions = new QGroupBox("Selected Match", resultsPanel);
+        auto* cameraActionLayout = new QGridLayout(cameraActions);
+        cameraActionLayout->setContentsMargins(8, 8, 8, 8);
+        cameraActionLayout->setHorizontalSpacing(6);
+        cameraActionLayout->setVerticalSpacing(6);
+        cameraAssignPersonEdit_ = new QLineEdit(cameraActions);
+        cameraAssignPersonEdit_->setPlaceholderText("Person name");
+        auto* confirmCameraIdentityButton = new QPushButton("Confirm Identity", cameraActions);
+        auto* assignCameraMatchButton = new QPushButton("Assign Match", cameraActions);
+        auto* reviewCameraMatchButton = new QPushButton("Mark Reviewed", cameraActions);
+        cameraActionLayout->addWidget(cameraAssignPersonEdit_, 0, 0, 1, 3);
+        cameraActionLayout->addWidget(confirmCameraIdentityButton, 1, 0);
+        cameraActionLayout->addWidget(assignCameraMatchButton, 1, 1);
+        cameraActionLayout->addWidget(reviewCameraMatchButton, 1, 2);
+        resultsLayout->addWidget(cameraActions);
         splitter->addWidget(resultsPanel);
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
@@ -1739,6 +1768,10 @@ private:
                 identifyCameraFrame();
             }
         });
+        connect(cameraResultTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedCameraResultPreview(); });
+        connect(confirmCameraIdentityButton, &QPushButton::clicked, this, [this] { confirmSelectedCameraIdentity(); });
+        connect(assignCameraMatchButton, &QPushButton::clicked, this, [this] { assignSelectedCameraMatch(); });
+        connect(reviewCameraMatchButton, &QPushButton::clicked, this, [this] { markSelectedCameraMatchReviewed(); });
     }
 
     void buildCompareTab() {
@@ -3826,6 +3859,141 @@ private:
         }
     }
 
+    std::optional<CameraResultActionRow> selectedCameraResultRow() const {
+        if (cameraResultTable_ == nullptr || cameraResultTable_->selectionModel() == nullptr) {
+            return std::nullopt;
+        }
+        const auto selected = cameraResultTable_->selectionModel()->selectedRows();
+        if (selected.empty()) {
+            return std::nullopt;
+        }
+        const int row = selected.front().row();
+        if (row < 0 || row >= static_cast<int>(cameraResultRows_.size())) {
+            return std::nullopt;
+        }
+        return cameraResultRows_[static_cast<size_t>(row)];
+    }
+
+    int64_t cameraActionFaceId(const CameraResultActionRow& row) const {
+        return row.hitFaceId > 0 ? row.hitFaceId : row.evidenceFaceId;
+    }
+
+    bool usefulCameraPersonName(const QString& value) const {
+        const auto text = value.trimmed();
+        return !text.isEmpty() && text != "--" && text != "unknown" && text != "no database";
+    }
+
+    void updateSelectedCameraResultPreview() {
+        const auto row = selectedCameraResultRow();
+        if (!row.has_value()) {
+            return;
+        }
+        const int64_t previewFaceId = cameraActionFaceId(*row);
+        if (previewFaceId <= 0) {
+            setCameraMatchPlaceholder("Match: selected row has no stored database face");
+            return;
+        }
+        QString status = QString("Selected: camera face #%1 | database face %2")
+                             .arg(row->faceIndex + 1)
+                             .arg(previewFaceId);
+        if (row->identityPersonId > 0 && usefulCameraPersonName(row->identityName)) {
+            status += QString(" | identity %1 (%2)").arg(row->identityName, row->decision);
+        }
+        if (row->hitFaceId > 0 && row->hitCosine > -1.5) {
+            status += QString(" | cosine %1").arg(row->hitCosine, 0, 'f', 4);
+        }
+        updateCameraMatchPreview(previewFaceId, status);
+        if (cameraAssignPersonEdit_ != nullptr && cameraAssignPersonEdit_->text().trimmed().isEmpty()) {
+            if (usefulCameraPersonName(row->identityName)) {
+                cameraAssignPersonEdit_->setText(row->identityName);
+            } else if (usefulCameraPersonName(row->hitPersonName)) {
+                cameraAssignPersonEdit_->setText(row->hitPersonName);
+            }
+        }
+    }
+
+    void confirmSelectedCameraIdentity() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto row = selectedCameraResultRow();
+            if (!row.has_value()) {
+                throw std::runtime_error("Select a camera result row first.");
+            }
+            const int64_t faceId = cameraActionFaceId(*row);
+            if (faceId <= 0) {
+                throw std::runtime_error("Selected camera result has no stored database face.");
+            }
+            if (row->identityPersonId <= 0 || row->decision == "unknown" || row->decision == "no database") {
+                throw std::runtime_error("Selected camera result has no confirmable identity suggestion.");
+            }
+            database_->assignFaceToPerson(faceId, row->identityPersonId);
+            database_->updateFaceReview(faceId, "reviewed", false, "Confirmed native Camera identity suggestion.");
+            database_->rebuildIdentityProfiles();
+            reloadAll();
+            const QString confirmedName = usefulCameraPersonName(row->identityActionName) ? row->identityActionName : row->identityName;
+            statusBar()->showMessage(QString("Confirmed camera match face %1 as %2").arg(faceId).arg(confirmedName));
+            updateSelectedCameraResultPreview();
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void assignSelectedCameraMatch() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto row = selectedCameraResultRow();
+            if (!row.has_value()) {
+                throw std::runtime_error("Select a camera result row first.");
+            }
+            const int64_t faceId = cameraActionFaceId(*row);
+            if (faceId <= 0) {
+                throw std::runtime_error("Selected camera result has no stored database face.");
+            }
+            const auto personName = cameraAssignPersonEdit_ == nullptr ? QString() : cameraAssignPersonEdit_->text().trimmed();
+            if (personName.isEmpty()) {
+                throw std::runtime_error("Enter a person name for the selected camera match.");
+            }
+            assignFaceToPersonName(faceId, personName);
+            database_->rebuildIdentityProfiles();
+            reloadAll();
+            statusBar()->showMessage(QString("Assigned camera match face %1 to %2").arg(faceId).arg(personName));
+            updateSelectedCameraResultPreview();
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void markSelectedCameraMatchReviewed() {
+        if (!database_) {
+            return;
+        }
+        try {
+            const auto row = selectedCameraResultRow();
+            if (!row.has_value()) {
+                throw std::runtime_error("Select a camera result row first.");
+            }
+            const int64_t faceId = cameraActionFaceId(*row);
+            if (faceId <= 0) {
+                throw std::runtime_error("Selected camera result has no stored database face.");
+            }
+            const auto face = database_->loadFace(faceId);
+            database_->updateFaceReview(
+                faceId,
+                "reviewed",
+                false,
+                face.has_value() ? face->notes : std::string("Reviewed from native Camera result."));
+            reloadAll();
+            statusBar()->showMessage(QString("Marked camera match face %1 reviewed").arg(faceId));
+            updateSelectedCameraResultPreview();
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
     QString smoothedCameraName(int faceIndex, const QString& name) {
         auto& history = cameraVotesByFace_[faceIndex];
         history.push_back(name);
@@ -3984,6 +4152,10 @@ private:
             camera_.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
             camera_.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
             cameraVotesByFace_.clear();
+            cameraResultRows_.clear();
+            if (cameraResultTable_ != nullptr) {
+                cameraResultTable_->setRowCount(0);
+            }
             latestCameraFaces_.clear();
             latestCameraMatchedFaceIndexes_.clear();
             latestCameraFacesAt_ = {};
@@ -4014,6 +4186,10 @@ private:
         }
         lastCameraFrame_.release();
         cameraVotesByFace_.clear();
+        cameraResultRows_.clear();
+        if (cameraResultTable_ != nullptr) {
+            cameraResultTable_->setRowCount(0);
+        }
         latestCameraFaces_.clear();
         latestCameraMatchedFaceIndexes_.clear();
         latestCameraFacesAt_ = {};
@@ -4087,6 +4263,7 @@ private:
             if (faces.empty()) {
                 cameraIdentityLabel_->setText("Identity: no face");
                 cameraResultTable_->setRowCount(0);
+                cameraResultRows_.clear();
                 cameraVotesByFace_.clear();
                 latestCameraFaces_.clear();
                 latestCameraMatchedFaceIndexes_.clear();
@@ -4109,11 +4286,14 @@ private:
             double bestHitCosine = -2.0;
             bool bestPreviewFromIdentity = false;
 
+            cameraResultRows_.clear();
             cameraResultTable_->setRowCount(0);
             const auto addRow = [&](int faceIndex,
                                     const QString& identityName,
+                                    const QString& identityActionName,
                                     const QString& decision,
                                     double confidence,
+                                    int64_t identityPersonId,
                                     int64_t evidenceFaceId,
                                     const fsc::core::SearchHit* hit) {
                 const int row = cameraResultTable_->rowCount();
@@ -4135,14 +4315,29 @@ private:
                         cameraResultTable_->setItem(row, column, item("--"));
                     }
                 }
+                CameraResultActionRow actionRow;
+                actionRow.faceIndex = faceIndex;
+                actionRow.identityPersonId = identityPersonId;
+                actionRow.identityName = identityName;
+                actionRow.identityActionName = identityActionName;
+                actionRow.decision = decision;
+                actionRow.evidenceFaceId = evidenceFaceId;
+                if (hit != nullptr) {
+                    actionRow.hitFaceId = hit->record.id;
+                    actionRow.hitPersonName = qs(hit->record.personName);
+                    actionRow.hitCosine = hit->cosine;
+                }
+                cameraResultRows_.push_back(actionRow);
             };
 
             for (int faceIndex = 0; faceIndex < static_cast<int>(faces.size()); ++faceIndex) {
                 const auto& face = faces[static_cast<size_t>(faceIndex)];
                 QString identityName = "--";
+                QString identityActionName = "--";
                 QString decision = database_ ? "unknown" : "no database";
                 double confidence = -1.0;
                 int64_t evidenceFaceId = 0;
+                int64_t identityPersonId = 0;
 
                 if (database_) {
                     const auto identity = fsc::core::identifyPerson(cameraIdentityProfiles_, face.embedding, selectedIdentityMode(), 5);
@@ -4152,8 +4347,10 @@ private:
                         const auto& candidate = identity.candidates.front();
                         rawIdentityName = qs(candidate.profile.personName);
                         identityName = rawIdentityName;
+                        identityActionName = rawIdentityName;
                         confidence = candidate.confidence;
                         evidenceFaceId = candidate.evidenceFaceId;
+                        identityPersonId = candidate.profile.personId;
                         if (identity.decision != "unknown") {
                             const auto stableIdentityName = smoothedCameraName(faceIndex, rawIdentityName);
                             if (!stableIdentityName.isEmpty()) {
@@ -4199,10 +4396,10 @@ private:
                                          .arg(hits.front().similarityPercent(), 0, 'f', 1);
                     }
                     for (const auto& hit : hits) {
-                        addRow(faceIndex, identityName, decision, confidence, evidenceFaceId, &hit);
+                        addRow(faceIndex, identityName, identityActionName, decision, confidence, identityPersonId, evidenceFaceId, &hit);
                     }
                 } else {
-                    addRow(faceIndex, identityName, decision, confidence, evidenceFaceId, nullptr);
+                    addRow(faceIndex, identityName, identityActionName, decision, confidence, identityPersonId, evidenceFaceId, nullptr);
                 }
             }
             for (auto it = cameraVotesByFace_.begin(); it != cameraVotesByFace_.end();) {
@@ -4880,6 +5077,7 @@ private:
     QLabel* cameraMatchStatusLabel_ = nullptr;
     QLabel* cameraIdentityLabel_ = nullptr;
     QTableWidget* cameraResultTable_ = nullptr;
+    QLineEdit* cameraAssignPersonEdit_ = nullptr;
     QTimer* cameraFrameTimer_ = nullptr;
     QTimer* cameraIdentifyTimer_ = nullptr;
     QLineEdit* compareImageAEdit_ = nullptr;
@@ -4926,6 +5124,7 @@ private:
     QTableWidget* importLog_ = nullptr;
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
+    std::vector<CameraResultActionRow> cameraResultRows_;
     std::map<int, std::deque<QString>> cameraVotesByFace_;
     std::vector<fsc::vision::AnalyzedFace> latestCameraFaces_;
     std::set<int> latestCameraMatchedFaceIndexes_;
@@ -5142,6 +5341,21 @@ int main(int argc, char** argv) {
             database.rebuildIdentityProfiles();
             const auto assigned = database.loadFace(assignFaceId);
             return assigned.has_value() && assigned->personName == personName ? 0 : 1;
+        } catch (...) {
+            return 1;
+        }
+    }
+    if (argc >= 5 && std::string(argv[1]) == "--camera-action-smoke") {
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const std::string personName = argv[4];
+            const auto personId = database.upsertPerson(personName);
+            database.assignFaceToPerson(faceId, personId);
+            database.updateFaceReview(faceId, "reviewed", false, "native camera action smoke");
+            database.rebuildIdentityProfiles();
+            const auto face = database.loadFace(faceId);
+            return face.has_value() && face->personName == personName && face->reviewState == "reviewed" && !face->ignored ? 0 : 1;
         } catch (...) {
             return 1;
         }
