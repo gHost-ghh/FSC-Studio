@@ -2,11 +2,15 @@
 #include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
+#ifdef FSC_ENABLE_ONNX
+#include "fsc/legacy/LegacyDtb.hpp"
+#endif
 #include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -35,7 +39,9 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> build-mesh <face_id> [face_landmarker.task]\n"
         << "  fsc_native_probe <database.fscdb> repair-invalid-meshes [face_landmarker.task]\n"
         << "  fsc_native_probe <database.fscdb> import-image <model_root> <image_path> [threshold] [person_id]\n"
-        << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n";
+        << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n"
+        << "  fsc_native_probe <output.fscdb> inspect-legacy-dtb <source.dtb>\n"
+        << "  fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml] [limit]\n";
 }
 
 IdentityMode parseMode(const std::string& value) {
@@ -157,6 +163,42 @@ int main(int argc, char** argv) {
     try {
         const std::filesystem::path databasePath = argv[1];
         const std::string command = argv[2];
+#ifdef FSC_ENABLE_ONNX
+        if (command == "inspect-legacy-dtb") {
+            if (argc < 4) {
+                printUsage();
+                return 2;
+            }
+            const auto rows = fsc::legacy::loadLegacyDtbImages(argv[3]);
+            std::cout << "rows=" << rows.size() << "\n";
+            for (size_t index = 0; index < rows.size(); ++index) {
+                const auto& row = rows[index];
+                std::cout << (index + 1) << "\t" << row.fileName << "\t"
+                          << row.image.width << 'x' << row.image.height << "\n";
+            }
+            return 0;
+        }
+        if (command == "convert-legacy-dtb") {
+            if (argc < 5) {
+                printUsage();
+                return 2;
+            }
+            fsc::legacy::LegacyConversionOptions options;
+            options.models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(argv[4]);
+            options.runtimeMode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Auto;
+            options.limit = argc >= 7 ? std::max(0, std::atoi(argv[6])) : 0;
+            options.progress = [](const std::string& message, int current, int total) {
+                std::cout << '[' << current << '/' << total << "] " << message << "\n";
+            };
+            const auto summary = fsc::legacy::convertLegacyDtb(argv[3], databasePath, options);
+            std::cout << "output=" << summary.outputPath.string() << "\n";
+            std::cout << "image_directory=" << summary.imageDirectory.string() << "\n";
+            std::cout << "saved=" << summary.facesSaved << "\n";
+            std::cout << "skipped=" << summary.skippedRows << "\n";
+            std::cout << "total=" << summary.rowsTotal << "\n";
+            return 0;
+        }
+#endif
         if (command == "create-db") {
             const bool replace = argc < 4 || std::string(argv[3]) != "no-replace";
             Database::createEmpty(databasePath, replace);

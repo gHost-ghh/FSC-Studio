@@ -3,6 +3,9 @@
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
+#ifdef FSC_ENABLE_ONNX
+#include "fsc/legacy/LegacyDtb.hpp"
+#endif
 #include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/mesh/MediaPipeTopology.hpp"
 #include "fsc/vision/Image.hpp"
@@ -280,6 +283,7 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "生成稠密网格"}, {"Save Metadata", "保存元数据"},
             {"Ignore in search", "在搜索中忽略"}, {"Append tags", "追加标签"},
             {"Apply to Selection", "应用到选中项"}, {"Selected", "选中"}, {"Batch", "批量"}, {"Activity", "活动"},
+            {"Legacy", "旧版"}, {"Convert Legacy DTB", "转换旧 DTB"},
         }},
         {"ja", {
             {"Database", "データベース"}, {"Language", "言語"}, {"Identity Mode", "識別モード"},
@@ -295,6 +299,7 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "高密度メッシュを生成"}, {"Save Metadata", "メタデータを保存"},
             {"Ignore in search", "検索で無視"}, {"Append tags", "タグを追加"},
             {"Apply to Selection", "選択項目に適用"}, {"Selected", "選択"}, {"Batch", "一括"}, {"Activity", "操作履歴"},
+            {"Legacy", "旧形式"}, {"Convert Legacy DTB", "旧DTB変換"},
         }},
         {"ko", {
             {"Database", "데이터베이스"}, {"Language", "언어"}, {"Identity Mode", "식별 모드"},
@@ -310,6 +315,7 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "고밀도 메시 생성"}, {"Save Metadata", "메타데이터 저장"},
             {"Ignore in search", "검색에서 무시"}, {"Append tags", "태그 추가"},
             {"Apply to Selection", "선택 항목에 적용"}, {"Selected", "선택"}, {"Batch", "일괄"}, {"Activity", "작업 기록"},
+            {"Legacy", "이전 형식"}, {"Convert Legacy DTB", "이전 DTB 변환"},
         }},
     };
     return translations;
@@ -2873,6 +2879,23 @@ private:
         maintenanceLayout->addWidget(vacuumButton, 0, 3);
         maintenanceLayout->addWidget(runtimeMaintenanceLog_, 1, 0, 1, 4);
         layout->addWidget(maintenanceBox);
+
+        auto* legacyBox = new QGroupBox("Legacy", page);
+        auto* legacyLayout = new QVBoxLayout(legacyBox);
+        auto* legacyInfo = new QLabel(
+            "Convert a trusted legacy .dtb database by re-analyzing its embedded RGB images. "
+            "The converted database keeps local preview files and does not require Python at runtime.",
+            legacyBox);
+        legacyInfo->setWordWrap(true);
+        runtimeLegacyConvertButton_ = new QPushButton("Convert Legacy DTB", legacyBox);
+        runtimeLegacyProgressBar_ = new QProgressBar(legacyBox);
+        runtimeLegacyProgressBar_->setRange(0, 1);
+        runtimeLegacyProgressBar_->setValue(0);
+        runtimeLegacyProgressBar_->setTextVisible(true);
+        legacyLayout->addWidget(legacyInfo);
+        legacyLayout->addWidget(runtimeLegacyConvertButton_, 0, Qt::AlignLeft);
+        legacyLayout->addWidget(runtimeLegacyProgressBar_);
+        layout->addWidget(legacyBox);
         layout->addStretch(1);
         addMainTab(page, "Runtime");
 
@@ -2882,6 +2905,7 @@ private:
         connect(backupButton, &QPushButton::clicked, this, [this] { runRuntimeBackup(); });
         connect(checkpointButton, &QPushButton::clicked, this, [this] { runRuntimeCheckpoint(); });
         connect(vacuumButton, &QPushButton::clicked, this, [this] { runRuntimeVacuum(); });
+        connect(runtimeLegacyConvertButton_, &QPushButton::clicked, this, [this] { runRuntimeLegacyConversion(); });
         connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] {
             resetCameraEngine();
             refreshRuntimeInfo();
@@ -2891,7 +2915,11 @@ private:
     }
 
     void chooseDatabase() {
-        const auto path = QFileDialog::getOpenFileName(this, "Open FSC database", {}, "FSC Database (*.fscdb);;SQLite Database (*.sqlite *.db);;All Files (*)");
+        const auto path = QFileDialog::getOpenFileName(
+            this,
+            "Open or convert database",
+            {},
+            "FSC Database (*.fscdb);;Legacy dlib database (*.dtb);;SQLite Database (*.sqlite *.db);;All Files (*)");
         if (!path.isEmpty()) {
             openDatabase(path);
         }
@@ -2911,6 +2939,11 @@ private:
     }
 
     void openDatabase(const QString& path) {
+        if (QFileInfo(path).suffix().compare("dtb", Qt::CaseInsensitive) == 0) {
+            selectMainTab("Runtime");
+            runRuntimeLegacyConversion(path);
+            return;
+        }
         try {
             database_ = std::make_unique<fsc::core::Database>(pathFrom(path));
             databasePathEdit_->setText(path);
@@ -3991,6 +4024,75 @@ private:
         } catch (const std::exception& ex) {
             showError(ex);
         }
+    }
+
+    void runRuntimeLegacyConversion(QString source = {}) {
+#ifdef FSC_ENABLE_ONNX
+        if (source.isEmpty()) {
+            source = QFileDialog::getOpenFileName(
+                this,
+                "Select legacy database",
+                {},
+                "Legacy dlib database (*.dtb);;All Files (*)");
+        }
+        if (source.isEmpty()) {
+            return;
+        }
+        const auto sourcePath = pathFrom(source);
+        const auto defaultOutput = sourcePath.parent_path() /
+            (sourcePath.stem().string() + "_insightface.fscdb");
+        const auto output = QFileDialog::getSaveFileName(
+            this,
+            "Save converted database",
+            qs(defaultOutput.string()),
+            "FSC Database (*.fscdb);;All Files (*)");
+        if (output.isEmpty()) {
+            return;
+        }
+
+        if (runtimeLegacyConvertButton_ != nullptr) {
+            runtimeLegacyConvertButton_->setEnabled(false);
+        }
+        if (runtimeLegacyProgressBar_ != nullptr) {
+            runtimeLegacyProgressBar_->setRange(0, 1);
+            runtimeLegacyProgressBar_->setValue(0);
+        }
+        try {
+            fsc::legacy::LegacyConversionOptions options;
+            options.models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(defaultModelRoot()));
+            options.runtimeMode = selectedRuntimeMode();
+            options.progress = [this](const std::string& message, int current, int total) {
+                if (runtimeLegacyProgressBar_ != nullptr) {
+                    runtimeLegacyProgressBar_->setRange(0, std::max(1, total));
+                    runtimeLegacyProgressBar_->setValue(current);
+                }
+                if (runtimeMaintenanceLog_ != nullptr &&
+                    (total <= 50 || current == total || current % 10 == 0 || message.find("skipped") != std::string::npos)) {
+                    runtimeMaintenanceLog_->append(QString("[%1/%2] %3").arg(current).arg(total).arg(qs(message)));
+                }
+                statusBar()->showMessage(QString("Converting legacy DTB: %1/%2").arg(current).arg(total));
+                QApplication::processEvents();
+            };
+            const auto summary = fsc::legacy::convertLegacyDtb(sourcePath, pathFrom(output), options);
+            if (runtimeMaintenanceLog_ != nullptr) {
+                runtimeMaintenanceLog_->append(
+                    QString("Converted legacy DTB: saved %1, skipped %2, total %3\n%4")
+                        .arg(summary.facesSaved)
+                        .arg(summary.skippedRows)
+                        .arg(summary.rowsTotal)
+                        .arg(qs(summary.outputPath.string())));
+            }
+            openDatabase(qs(summary.outputPath.string()));
+            statusBar()->showMessage("Legacy DTB conversion complete");
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+        if (runtimeLegacyConvertButton_ != nullptr) {
+            runtimeLegacyConvertButton_->setEnabled(true);
+        }
+#else
+        showError(std::runtime_error("This build does not include ONNX Runtime, so legacy DTB conversion is unavailable."));
+#endif
     }
 
     void applyReviewState(const std::string& state, bool ignored, const std::string& notes = {}) {
@@ -6020,6 +6122,8 @@ private:
     QLabel* runtimeDatabasePathLabel_ = nullptr;
     QLabel* runtimeDatabaseStatsLabel_ = nullptr;
     QTextEdit* runtimeMaintenanceLog_ = nullptr;
+    QPushButton* runtimeLegacyConvertButton_ = nullptr;
+    QProgressBar* runtimeLegacyProgressBar_ = nullptr;
     QLineEdit* modelRootEdit_ = nullptr;
     QLineEdit* importImageEdit_ = nullptr;
     QTableWidget* importLog_ = nullptr;
@@ -6380,9 +6484,16 @@ int main(int argc, char** argv) {
             return 3;
         }
         languageSelector->setCurrentIndex(languageIndex);
+        bool legacyActionPresent = false;
+        for (auto* button : window.findChildren<QPushButton*>()) {
+            if (translationKey(button->text()) == "Convert Legacy DTB") {
+                legacyActionPresent = true;
+                break;
+            }
+        }
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
-                list->item(0)->text() == translatedText("Overview", language)) {
+                list->item(0)->text() == translatedText("Overview", language) && legacyActionPresent) {
                 return 0;
             }
         }

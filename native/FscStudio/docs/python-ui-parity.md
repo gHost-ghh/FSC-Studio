@@ -75,6 +75,7 @@ workflows, and user experience before the migration can be considered complete.
 
 - Runtime provider display and model status.
 - Maintenance actions: integrity check, backup, checkpoint, vacuum, and operation log.
+- Trusted legacy `.dtb` conversion with progress, an output `.fscdb`, and retained local preview images.
 
 ## Current Native Gaps
 
@@ -86,6 +87,7 @@ workflows, and user experience before the migration can be considered complete.
 - Native Review now has queue filter/limit controls, Python-style reason/duplicate columns, selected-face preview with focus toggle, metadata editing for person/tags/review/ignored/notes, automatic AI suggestion, confirm AI person, and reject AI suggestion.
 - Native Clusters now includes known people, member tags, max-face/min-quality/unassigned/ignored filters, selected-member preview, and batch cluster assignment.
 - Native Runtime now includes current database stats and maintenance actions for integrity check, backup, WAL checkpoint, VACUUM, and operation logging.
+- Native Runtime now matches the Python legacy conversion entry point: opening a `.dtb` routes to `Convert Legacy DTB`, while the restricted native pickle reader extracts embedded RGB images without embedding Python. It re-analyzes the images through native ONNX and writes a sibling preview directory for the converted database.
 - Native Camera now includes threshold/top-k/interval/process-size controls, current database status, live boxes, best-match preview, per-face identity smoothing, an identity-plus-similar-hit table, and selected-result actions for confirming identity, assigning a matched face, and marking a match reviewed.
 - Dense Mesh uses the exact 478-point MediaPipe tessellation in native Points or Textured modes. Textured mode uses depth-tested image sampling, darkens only back-facing triangle surfaces, supports drag/zoom/reset, and overlays the cached 68-point landmarks on the dense surface only when enabled. Generation directly calls the MediaPipe native C Task API with the same `face_landmarker.task`, thresholds, coordinate conversion, and face-selection logic as the Python application. Invalid old caches (including former synthetic 760-point meshes) are rejected and can be repaired with `fsc_native_probe <db> repair-invalid-meshes <face_landmarker.task>`; source images on which MediaPipe detects no mesh remain uncached rather than receiving fabricated geometry.
-- Final installer should be MSI/WiX or QtIFW style; the current package includes portable files plus install/uninstall scripts.
+- Native Inno Setup installer now packages the Qt runtime, ONNX Runtime, MediaPipe runtime, and models without Python or user data. It runs a Windows-platform Qt smoke test before producing Setup; formal release signing remains a distribution task, not a Python-parity gap.

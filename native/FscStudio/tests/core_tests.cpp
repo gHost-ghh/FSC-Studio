@@ -5,13 +5,21 @@
 #include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/FaceGeometry.hpp"
 #include "fsc/vision/ModelPaths.hpp"
+#ifdef FSC_ENABLE_ONNX
+#include "fsc/legacy/LegacyDtb.hpp"
+#endif
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <string_view>
+#include <vector>
 
 using namespace fsc::core;
 
@@ -174,6 +182,115 @@ void databasePersonActionsRoundTrip() {
     std::filesystem::remove(path.string() + "-shm");
 }
 
+#ifdef FSC_ENABLE_ONNX
+void appendByte(std::vector<std::uint8_t>& output, std::uint8_t value) {
+    output.push_back(value);
+}
+
+void appendShortUnicode(std::vector<std::uint8_t>& output, std::string_view text) {
+    assert(text.size() <= 255);
+    appendByte(output, 0x8c);
+    appendByte(output, static_cast<std::uint8_t>(text.size()));
+    output.insert(output.end(), text.begin(), text.end());
+}
+
+void appendShortBytes(std::vector<std::uint8_t>& output, const std::vector<std::uint8_t>& bytes) {
+    assert(bytes.size() <= 255);
+    appendByte(output, 'C');
+    appendByte(output, static_cast<std::uint8_t>(bytes.size()));
+    output.insert(output.end(), bytes.begin(), bytes.end());
+}
+
+void appendGlobal(std::vector<std::uint8_t>& output, std::string_view module, std::string_view name) {
+    appendByte(output, 'c');
+    output.insert(output.end(), module.begin(), module.end());
+    appendByte(output, '\n');
+    output.insert(output.end(), name.begin(), name.end());
+    appendByte(output, '\n');
+}
+
+void appendBinInt(std::vector<std::uint8_t>& output, int32_t value) {
+    appendByte(output, 'J');
+    const auto raw = static_cast<uint32_t>(value);
+    for (int offset = 0; offset < 4; ++offset) {
+        appendByte(output, static_cast<std::uint8_t>((raw >> (offset * 8U)) & 0xffU));
+    }
+}
+
+void appendBinFloat(std::vector<std::uint8_t>& output, double value) {
+    appendByte(output, 'G');
+    const auto raw = std::bit_cast<uint64_t>(value);
+    for (int offset = 7; offset >= 0; --offset) {
+        appendByte(output, static_cast<std::uint8_t>((raw >> (offset * 8U)) & 0xffU));
+    }
+}
+
+std::vector<std::uint8_t> trustedLegacyDtbFixture() {
+    std::vector<std::uint8_t> output;
+    appendByte(output, 0x80); appendByte(output, 4); // PROTO 4
+    appendByte(output, ']');                         // root list
+    appendByte(output, '(');                         // row tuple mark
+    appendByte(output, 'N');                         // legacy 68-point placeholder
+    appendGlobal(output, "_dlib_pybind11", "vector");
+    appendByte(output, ')'); appendByte(output, 0x81); // EMPTY_TUPLE, NEWOBJ
+    appendShortBytes(output, {0x81, 0x01, 0x07});
+    appendByte(output, 0x85); appendByte(output, 'b'); // TUPLE1, BUILD
+    appendBinFloat(output, 1.0);
+
+    appendGlobal(output, "numpy.core.multiarray", "_reconstruct");
+    appendGlobal(output, "numpy", "ndarray");
+    appendByte(output, 'K'); appendByte(output, 0);
+    appendByte(output, 0x85);
+    appendShortBytes(output, {'b'});
+    appendByte(output, 0x87); appendByte(output, 'R');
+
+    appendByte(output, '(');                         // ndarray state mark
+    appendByte(output, 'K'); appendByte(output, 1);   // version
+    appendByte(output, 'K'); appendByte(output, 2);
+    appendByte(output, 'K'); appendByte(output, 3);
+    appendByte(output, 'K'); appendByte(output, 3);
+    appendByte(output, 0x87);                         // shape tuple
+    appendGlobal(output, "numpy", "dtype");
+    appendShortUnicode(output, "u1");
+    appendByte(output, 0x89); appendByte(output, 0x88); appendByte(output, 0x87); appendByte(output, 'R');
+    appendByte(output, '(');                          // dtype state mark
+    appendByte(output, 'K'); appendByte(output, 3);
+    appendShortUnicode(output, "|");
+    appendByte(output, 'N'); appendByte(output, 'N'); appendByte(output, 'N');
+    appendBinInt(output, -1); appendBinInt(output, -1);
+    appendByte(output, 'K'); appendByte(output, 0);
+    appendByte(output, 't'); appendByte(output, 'b'); // dtype BUILD
+    appendByte(output, 0x89);                         // C order
+    std::vector<std::uint8_t> image(18);
+    for (std::uint8_t index = 0; index < image.size(); ++index) image[index] = index;
+    appendShortBytes(output, image);
+    appendByte(output, 't'); appendByte(output, 'b'); // ndarray BUILD
+    appendShortUnicode(output, "legacy_face.jpg");
+    appendByte(output, 't'); appendByte(output, 'a'); // row tuple, append
+    appendByte(output, '.');
+    return output;
+}
+
+void legacyDtbReaderLoadsTrustedEmbeddedImage() {
+    const auto path = std::filesystem::temp_directory_path() /
+        ("fsc_legacy_fixture_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".dtb");
+    const auto payload = trustedLegacyDtbFixture();
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+    }
+    const auto rows = fsc::legacy::loadLegacyDtbImages(path);
+    assert(rows.size() == 1);
+    assert(rows.front().fileName == "legacy_face.jpg");
+    assert(rows.front().image.width == 3);
+    assert(rows.front().image.height == 2);
+    assert(rows.front().image.pixels.size() == 18);
+    assert(rows.front().image.pixels.front() == 0);
+    assert(rows.front().image.pixels.back() == 17);
+    std::filesystem::remove(path);
+}
+#endif
+
 } // namespace
 
 int main() {
@@ -185,6 +302,9 @@ int main() {
     modelPathResolutionUsesBuffaloRoot();
     mediaPipeMeshValidationRejectsSyntheticFallbacks();
     databasePersonActionsRoundTrip();
+#ifdef FSC_ENABLE_ONNX
+    legacyDtbReaderLoadsTrustedEmbeddedImage();
+#endif
     std::cout << "fsc_core_tests passed\n";
     return 0;
 }

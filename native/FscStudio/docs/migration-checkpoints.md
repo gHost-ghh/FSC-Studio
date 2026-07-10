@@ -116,7 +116,7 @@ Current DirectML shell:
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
-Status: expanded Qt desktop shell and Python-free portable package verified; full page parity and installer pending.
+Status: expanded Qt desktop shell and Python-free Inno Setup installer verified; the remaining migration work is tracked as a page-by-page functional and UX parity audit.
 
 Acceptance:
 
@@ -142,6 +142,7 @@ Current Qt shell:
 - Camera result rows now support selected-match actions: confirm the identity suggestion onto a stored match, manually assign the stored match to a person, or mark the stored match reviewed without changing live frame processing.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Runtime tab now shows current database stats and provides native SQLite maintenance actions: integrity check, database backup, WAL checkpoint, VACUUM, and operation log.
+- Runtime now also converts trusted legacy `.dtb` files without Python: it parses only the known FSC tuple/NumPy-image format, re-extracts embeddings with native ONNX, writes `<output>_legacy_images` PPM previews, and opens the converted v8 database. `fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml] [limit]` provides a reproducible non-UI path.
 - Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.

@@ -39,6 +39,7 @@ continuing that prototype.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Clusters supports max-face/min-quality/unassigned/ignored filters, shows known people and member tags, previews selected members, and can batch-assign a selected cluster.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
+- Runtime can also convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
 Track that explicitly in `docs/python-ui-parity.md`.
@@ -180,6 +181,12 @@ and the local InsightFace model directory. The Camera flavor also includes the
 OpenCV runtime DLLs copied beside the executable. The DirectML flavor uses the
 DirectML-enabled ONNX Runtime NuGet package. It intentionally does not include
 Python, user databases, or personal photos.
+
+Legacy `.dtb` conversion is available from **Runtime > Convert Legacy DTB** or
+by choosing a `.dtb` file from a native database-open control. The converter
+never executes pickle globals; it accepts only the old FSC row shape and NumPy
+RGB payload, then writes `<output>_legacy_images` beside the new `.fscdb` so
+converted faces remain previewable without the original files.
 
 The package also includes `Install-FSCStudioNative.ps1` /
 `Install-FSCStudioNative.bat` and `Uninstall-FSCStudioNative.ps1`. By default the
