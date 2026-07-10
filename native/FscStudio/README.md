@@ -29,7 +29,7 @@ continuing that prototype.
 - CLI probes for database/search/identity/import and model-path parity checks.
 - Qt Widgets desktop shell with the Python page order: Overview, Library, People, Search, Camera, Review, Clusters, Compare, and Runtime. Dense Mesh remains a selected-face visual tab inside Library, alongside Image and 3D Landmarks.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
-- Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, and an optional 68-point landmark overlay in Textured mode.
+- Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, an optional 68-point landmark overlay in Textured mode, and local eyelid/iris triangulation so the 468--477 MediaPipe iris points retain their textured eyeballs.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
@@ -137,8 +137,9 @@ To create the standard x64 Windows installer, install Inno Setup 6 and run:
 .\scripts\build-installer.ps1 -AppVersion 0.1.0
 ```
 
-The command stages the DirectML Camera package, verifies its Qt, ONNX Runtime,
-and MediaPipe files, then writes `out\installer\FSC-Studio-Setup-x64.exe`. The
+The command stages the DirectML Camera package, verifies its Qt Windows platform
+plugin by starting a no-window UI smoke test, checks ONNX Runtime and MediaPipe
+files, then writes `out\installer\FSC-Studio-Setup-x64.exe`. The
 installer contains no Python runtime and does not install, copy, or remove a
 user database or any original photos.
 

@@ -30,6 +30,23 @@ foreach ($entry in @("qt.conf", "platforms\qwindows.dll", "imageformats\qjpeg.dl
     }
 }
 
+$runtimeSmokeInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$runtimeSmokeInfo.FileName = Join-Path $packageFull "FscStudioQt.exe"
+$runtimeSmokeInfo.Arguments = "--ui-language-smoke en"
+$runtimeSmokeInfo.WorkingDirectory = $packageFull
+$runtimeSmokeInfo.UseShellExecute = $false
+$runtimeSmokeInfo.CreateNoWindow = $true
+$runtimeSmokeInfo.Environment["QT_QPA_PLATFORM"] = "windows"
+$runtimeSmokeInfo.Environment.Remove("QT_PLUGIN_PATH") | Out-Null
+$runtimeSmoke = [System.Diagnostics.Process]::Start($runtimeSmokeInfo)
+if (-not $runtimeSmoke.WaitForExit(15000)) {
+    $runtimeSmoke.Kill($true)
+    throw "Qt Windows platform runtime smoke timed out."
+}
+if ($runtimeSmoke.ExitCode -ne 0) {
+    throw "Qt Windows platform runtime smoke failed with exit code $($runtimeSmoke.ExitCode)."
+}
+
 $isccCandidates = @(
     @(
         (Get-Command iscc.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),

@@ -91,7 +91,7 @@ Acceptance:
 Current Dense Mesh shell:
 
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
-- Qt Dense Mesh panels render only validated cached dense mesh data, with native Points/Textured modes, image texture sampling, per-pixel depth buffering, back-facing triangle darkening, drag/zoom/reset, and an optional 68-point landmark overlay in Textured mode.
+- Qt Dense Mesh panels render only validated cached dense mesh data, with native Points/Textured modes, image texture sampling, per-pixel depth buffering, back-facing triangle darkening, drag/zoom/reset, and an optional 68-point landmark overlay in Textured mode. The Textured path augments the base 852-triangle topology with local eyelid/iris Delaunay triangles, so MediaPipe iris points 468--477 render their original eyeball texture.
 - Qt Dense Mesh tabs generate and cache a validated 478-point MediaPipe mesh from the original source image, never from the 68-point landmark cache.
 - `fsc_native_probe <database.fscdb> build-mesh <face_id> <face_landmarker.task>` writes the MediaPipe `face_mesh3d_json` without Python. `repair-invalid-meshes` removes/rebuilds old non-478-point caches.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
@@ -169,7 +169,7 @@ Current portable package:
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release.zip`.
 - `cmake --preset msvc-vs-qt-camera-dml-release`, `cmake --build --preset msvc-vs-qt-camera-dml-release`, and `ctest --preset msvc-vs-qt-camera-dml-release`: passed.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release.zip`.
-- Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
+- Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindows.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`; installer creation runs a Windows-platform UI smoke test before compiling the setup executable.
 - The legacy portable package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the standard release path is the Inno Setup installer, which installs `FSC Studio` without Python.
 - It does not include Python runtime, user databases, or personal image data.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.

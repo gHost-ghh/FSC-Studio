@@ -13,6 +13,7 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QDoubleSpinBox>
@@ -65,6 +66,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -116,6 +118,16 @@ QString defaultModelRoot() {
         return packaged;
     }
     return "D:\\FSC\\model\\insightface\\models";
+}
+
+void registerDeployedQtPluginPath(const char* executablePath) {
+    const QFileInfo executable(QString::fromLocal8Bit(executablePath));
+    const QString appDirectory = executable.absolutePath();
+    if (QDir(appDirectory).exists("platforms")) {
+        // qt.conf normally covers this, but keeping the application directory in
+        // the global library paths also protects a copied portable installation.
+        QCoreApplication::addLibraryPath(appDirectory);
+    }
 }
 
 QTableWidgetItem* item(const QString& value) {
@@ -764,6 +776,7 @@ public:
         points_ = std::move(points);
         overlayPoints_ = std::move(overlayPoints);
         message_ = std::move(message);
+        rebuildTextureTriangles();
         update();
     }
 
@@ -787,6 +800,7 @@ public:
     void setMessage(QString message) {
         points_.clear();
         overlayPoints_.clear();
+        textureTriangles_.clear();
         message_ = std::move(message);
         update();
     }
@@ -974,6 +988,250 @@ private:
         return length > 1e-8 && normal.z / length > 0.10;
     }
 
+    using TextureTriangle = std::array<std::uint16_t, 3>;
+
+    struct DelaunayVertex {
+        QPointF point;
+        int meshIndex = -1;
+    };
+
+    struct DelaunayTriangle {
+        int a = -1;
+        int b = -1;
+        int c = -1;
+    };
+
+    static std::array<std::uint16_t, 3> canonicalTriangle(TextureTriangle triangle) {
+        std::sort(triangle.begin(), triangle.end());
+        return triangle;
+    }
+
+    static double orientation(const QPointF& a, const QPointF& b, const QPointF& c) {
+        return (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x());
+    }
+
+    static bool pointInCircumcircle(
+        const QPointF& point,
+        const QPointF& a,
+        const QPointF& b,
+        const QPointF& c) {
+        const double ax = a.x() - point.x();
+        const double ay = a.y() - point.y();
+        const double bx = b.x() - point.x();
+        const double by = b.y() - point.y();
+        const double cx = c.x() - point.x();
+        const double cy = c.y() - point.y();
+        const double determinant =
+            (ax * ax + ay * ay) * (bx * cy - cx * by) -
+            (bx * bx + by * by) * (ax * cy - cx * ay) +
+            (cx * cx + cy * cy) * (ax * by - bx * ay);
+        const double winding = orientation(a, b, c);
+        if (std::abs(winding) <= 1e-9) {
+            return false;
+        }
+        return winding > 0.0 ? determinant > 1e-7 : determinant < -1e-7;
+    }
+
+    bool hasUsableMeshIndex(int index) const {
+        return index >= 0 && index < static_cast<int>(points_.size()) && valid(points_[index]);
+    }
+
+    TextureTriangle orientTextureTriangle(TextureTriangle triangle) const {
+        if (!hasUsableMeshIndex(triangle[0]) || !hasUsableMeshIndex(triangle[1]) || !hasUsableMeshIndex(triangle[2])) {
+            return triangle;
+        }
+        const auto& a = points_[triangle[0]];
+        const auto& b = points_[triangle[1]];
+        const auto& c = points_[triangle[2]];
+        const Vec3 u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        const Vec3 v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        const double normalZ = u.x * v.y - u.y * v.x;
+        // The base MediaPipe topology faces the viewer with a negative Z normal
+        // in this renderer. Keep generated eye triangles on the same side.
+        if (normalZ > 0.0) {
+            std::swap(triangle[1], triangle[2]);
+        }
+        return triangle;
+    }
+
+    std::vector<TextureTriangle> localDelaunayTriangles(const std::vector<int>& indexes) const {
+        std::vector<DelaunayVertex> vertices;
+        vertices.reserve(indexes.size() + 3);
+        for (const int index : indexes) {
+            if (!hasUsableMeshIndex(index)) {
+                continue;
+            }
+            const QPointF source(points_[index][0], points_[index][1]);
+            bool duplicate = false;
+            for (const auto& existing : vertices) {
+                const double dx = existing.point.x() - source.x();
+                const double dy = existing.point.y() - source.y();
+                if (dx * dx + dy * dy < 1e-6) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                vertices.push_back({source, index});
+            }
+        }
+        if (vertices.size() < 3) {
+            return {};
+        }
+
+        double minX = vertices.front().point.x();
+        double maxX = minX;
+        double minY = vertices.front().point.y();
+        double maxY = minY;
+        for (const auto& vertex : vertices) {
+            minX = std::min(minX, vertex.point.x());
+            maxX = std::max(maxX, vertex.point.x());
+            minY = std::min(minY, vertex.point.y());
+            maxY = std::max(maxY, vertex.point.y());
+        }
+        const double span = std::max(maxX - minX, maxY - minY);
+        if (span < 2.0) {
+            return {};
+        }
+
+        const double centerX = (minX + maxX) * 0.5;
+        const double centerY = (minY + maxY) * 0.5;
+        const int realVertexCount = static_cast<int>(vertices.size());
+        const double extent = span * 32.0;
+        vertices.push_back({QPointF(centerX - extent, centerY - extent), -1});
+        vertices.push_back({QPointF(centerX, centerY + extent), -1});
+        vertices.push_back({QPointF(centerX + extent, centerY - extent), -1});
+
+        std::vector<DelaunayTriangle> triangles{{realVertexCount, realVertexCount + 1, realVertexCount + 2}};
+        for (int pointIndex = 0; pointIndex < realVertexCount; ++pointIndex) {
+            std::vector<int> invalid;
+            std::map<std::pair<int, int>, int> edgeCounts;
+            for (int triangleIndex = 0; triangleIndex < static_cast<int>(triangles.size()); ++triangleIndex) {
+                const auto& triangle = triangles[triangleIndex];
+                if (!pointInCircumcircle(
+                        vertices[pointIndex].point,
+                        vertices[triangle.a].point,
+                        vertices[triangle.b].point,
+                        vertices[triangle.c].point)) {
+                    continue;
+                }
+                invalid.push_back(triangleIndex);
+                for (const auto [start, end] : {
+                         std::pair{triangle.a, triangle.b},
+                         std::pair{triangle.b, triangle.c},
+                         std::pair{triangle.c, triangle.a},
+                     }) {
+                    edgeCounts[{std::min(start, end), std::max(start, end)}] += 1;
+                }
+            }
+            if (invalid.empty()) {
+                continue;
+            }
+            std::sort(invalid.rbegin(), invalid.rend());
+            for (const int triangleIndex : invalid) {
+                triangles.erase(triangles.begin() + triangleIndex);
+            }
+            for (const auto& [edge, count] : edgeCounts) {
+                if (count == 1) {
+                    triangles.push_back({edge.first, edge.second, pointIndex});
+                }
+            }
+        }
+
+        std::vector<TextureTriangle> output;
+        output.reserve(triangles.size());
+        for (const auto& triangle : triangles) {
+            if (triangle.a >= realVertexCount || triangle.b >= realVertexCount || triangle.c >= realVertexCount) {
+                continue;
+            }
+            const TextureTriangle mapped{
+                static_cast<std::uint16_t>(vertices[triangle.a].meshIndex),
+                static_cast<std::uint16_t>(vertices[triangle.b].meshIndex),
+                static_cast<std::uint16_t>(vertices[triangle.c].meshIndex),
+            };
+            const QPointF& a = vertices[triangle.a].point;
+            const QPointF& b = vertices[triangle.b].point;
+            const QPointF& c = vertices[triangle.c].point;
+            if (std::abs(orientation(a, b, c)) * 0.5 >= 0.25) {
+                output.push_back(orientTextureTriangle(mapped));
+            }
+        }
+        return output;
+    }
+
+    void appendEyeRegionTriangles(
+        const std::array<int, 16>& eyeLoop,
+        const std::array<int, 5>& irisIndexes,
+        std::set<TextureTriangle>& seen) {
+        std::vector<int> indexes;
+        indexes.reserve(eyeLoop.size() + irisIndexes.size());
+        for (const int index : eyeLoop) {
+            if (hasUsableMeshIndex(index)) {
+                indexes.push_back(index);
+            }
+        }
+        for (const int index : irisIndexes) {
+            if (hasUsableMeshIndex(index)) {
+                indexes.push_back(index);
+            }
+        }
+        if (indexes.size() < 6) {
+            return;
+        }
+        const auto append = [this, &seen, thisTriangles = &textureTriangles_](TextureTriangle triangle) {
+            if (!hasUsableMeshIndex(triangle[0]) || !hasUsableMeshIndex(triangle[1]) || !hasUsableMeshIndex(triangle[2]) ||
+                triangle[0] == triangle[1] || triangle[1] == triangle[2] || triangle[0] == triangle[2]) {
+                return;
+            }
+            const QPointF a(points_[triangle[0]][0], points_[triangle[0]][1]);
+            const QPointF b(points_[triangle[1]][0], points_[triangle[1]][1]);
+            const QPointF c(points_[triangle[2]][0], points_[triangle[2]][1]);
+            if (std::abs(orientation(a, b, c)) * 0.5 < 0.25) {
+                return;
+            }
+            triangle = orientTextureTriangle(triangle);
+            if (seen.insert(canonicalTriangle(triangle)).second) {
+                thisTriangles->push_back(triangle);
+            }
+        };
+
+        if (std::all_of(irisIndexes.begin(), irisIndexes.end(), [this](int index) { return hasUsableMeshIndex(index); })) {
+            for (size_t position = 1; position < irisIndexes.size(); ++position) {
+                const size_t next = position == irisIndexes.size() - 1 ? 1 : position + 1;
+                append({
+                    static_cast<std::uint16_t>(irisIndexes[0]),
+                    static_cast<std::uint16_t>(irisIndexes[position]),
+                    static_cast<std::uint16_t>(irisIndexes[next]),
+                });
+            }
+        }
+        for (const auto& triangle : localDelaunayTriangles(indexes)) {
+            append(triangle);
+        }
+    }
+
+    void rebuildTextureTriangles() {
+        textureTriangles_.clear();
+        if (points_.size() < fsc::mesh::kMediaPipeFaceMeshPointCount) {
+            return;
+        }
+        textureTriangles_.reserve(fsc::mesh::kMediaPipeFaceMeshTriangles.size() + 64);
+        std::set<TextureTriangle> seen;
+        for (const auto& triangle : fsc::mesh::kMediaPipeFaceMeshTriangles) {
+            const TextureTriangle copied{triangle[0], triangle[1], triangle[2]};
+            textureTriangles_.push_back(copied);
+            seen.insert(canonicalTriangle(copied));
+        }
+        appendEyeRegionTriangles(
+            {33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246},
+            {468, 469, 470, 471, 472},
+            seen);
+        appendEyeRegionTriangles(
+            {263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466},
+            {473, 474, 475, 476, 477},
+            seen);
+    }
+
     bool renderTexturedMesh(const std::vector<Projected>& projected, const Bounds&, QPainter& painter) const {
         const int canvasWidth = std::max(1, width());
         const int canvasHeight = std::max(1, height());
@@ -981,7 +1239,7 @@ private:
         canvas.fill(QColor(17, 24, 39));
         std::vector<float> zBuffer(static_cast<size_t>(canvasWidth) * canvasHeight, std::numeric_limits<float>::infinity());
         bool rendered = false;
-        for (const auto& triangle : fsc::mesh::kMediaPipeFaceMeshTriangles) {
+        for (const auto& triangle : textureTriangles_) {
             const int ia = triangle[0]; const int ib = triangle[1]; const int ic = triangle[2];
             if (ic >= static_cast<int>(points_.size()) || !valid(points_[ia]) || !valid(points_[ib]) || !valid(points_[ic])) {
                 continue;
@@ -1117,6 +1375,7 @@ private:
 
     std::vector<std::vector<double>> points_;
     std::vector<std::vector<double>> overlayPoints_;
+    std::vector<TextureTriangle> textureTriangles_;
     QImage texture_;
     QString message_;
     RenderMode renderMode_ = RenderMode::Points;
@@ -5788,6 +6047,9 @@ private:
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc > 0 && argv[0] != nullptr) {
+        registerDeployedQtPluginPath(argv[0]);
+    }
     if (argc >= 3 && std::string(argv[1]) == "--smoke") {
         try {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
