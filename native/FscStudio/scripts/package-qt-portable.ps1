@@ -105,9 +105,9 @@ $ErrorActionPreference = "Stop"
 $source = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $InstallDir) {
     if ($AllUsers) {
-        $InstallDir = Join-Path $env:ProgramFiles "FSC Studio Native"
+        $InstallDir = Join-Path $env:ProgramFiles "FSC Studio"
     } else {
-        $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\FSC Studio Native"
+        $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\FSC Studio"
     }
 }
 
@@ -126,17 +126,17 @@ if (-not $NoShortcut) {
     } else {
         Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
     }
-    $shortcutPath = Join-Path $startMenuRoot "FSC Studio Native.lnk"
+    $shortcutPath = Join-Path $startMenuRoot "FSC Studio.lnk"
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = Join-Path $InstallDir "FscStudioQt.exe"
     $shortcut.WorkingDirectory = $InstallDir
-    $shortcut.Description = "FSC Studio Native"
+    $shortcut.Description = "FSC Studio"
     $shortcut.Save()
     Write-Host "Shortcut: $shortcutPath"
 }
 
-Write-Host "Installed FSC Studio Native to $InstallDir"
+Write-Host "Installed FSC Studio to $InstallDir"
 '@
 Set-Content -LiteralPath (Join-Path $outputFull "Install-FSCStudioNative.ps1") -Encoding UTF8 -Value $installScript
 Set-Content -LiteralPath (Join-Path $outputFull "Install-FSCStudioNative.bat") -Encoding ASCII -Value "@echo off`r`npowershell -ExecutionPolicy Bypass -File ""%~dp0Install-FSCStudioNative.ps1"" %*`r`npause`r`n"
@@ -150,9 +150,9 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $InstallDir) {
     if ($AllUsers) {
-        $InstallDir = Join-Path $env:ProgramFiles "FSC Studio Native"
+        $InstallDir = Join-Path $env:ProgramFiles "FSC Studio"
     } else {
-        $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\FSC Studio Native"
+        $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\FSC Studio"
     }
 }
 $startMenuRoot = if ($AllUsers) {
@@ -160,19 +160,19 @@ $startMenuRoot = if ($AllUsers) {
 } else {
     Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 }
-$shortcutPath = Join-Path $startMenuRoot "FSC Studio Native.lnk"
+$shortcutPath = Join-Path $startMenuRoot "FSC Studio.lnk"
 if (Test-Path $shortcutPath) {
     Remove-Item -LiteralPath $shortcutPath -Force
 }
 if (Test-Path $InstallDir) {
     Remove-Item -LiteralPath $InstallDir -Recurse -Force
 }
-Write-Host "Removed FSC Studio Native from $InstallDir"
+Write-Host "Removed FSC Studio from $InstallDir"
 '@
 Set-Content -LiteralPath (Join-Path $outputFull "Uninstall-FSCStudioNative.ps1") -Encoding UTF8 -Value $uninstallScript
 
 $manifest = [ordered]@{
-    app = "FSC Studio Native"
+    app = "FSC Studio"
     configuration = $Configuration
     camera = [bool]$Camera
     directml = [bool]$DirectML

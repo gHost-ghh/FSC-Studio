@@ -27,7 +27,7 @@ continuing that prototype.
 - Native SCRFD detection, ArcFace embeddings, 2D/3D landmarks, and face quality scoring.
 - Windows Imaging Component loading for JPEG/PNG/BMP plus existing PPM support.
 - CLI probes for database/search/identity/import and model-path parity checks.
-- Minimal Qt Widgets desktop shell with Python-style left navigation for Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime; the People page can add people, assign faces, and train identity profiles, and Library owns image import plus selected-face Image / 3D Landmarks / Dense Mesh visual tabs.
+- Qt Widgets desktop shell with the Python page order: Overview, Library, People, Search, Camera, Review, Clusters, Compare, and Runtime. Dense Mesh remains a selected-face visual tab inside Library, alongside Image and 3D Landmarks.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
 - Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, and an optional 68-point landmark overlay in Textured mode.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
@@ -110,6 +110,7 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render.png
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render_side.png 1.1 -0.15
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --ui-language-smoke zh
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 
@@ -128,6 +129,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1
 .\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb
 .\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke .\out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
+
+To create the standard x64 Windows installer, install Inno Setup 6 and run:
+
+```powershell
+.\scripts\build-installer.ps1 -AppVersion 0.1.0
+```
+
+The command stages the DirectML Camera package, verifies its Qt, ONNX Runtime,
+and MediaPipe files, then writes `out\installer\FSC-Studio-Setup-x64.exe`. The
+installer contains no Python runtime and does not install, copy, or remove a
+user database or any original photos.
 
 For the release baseline:
 

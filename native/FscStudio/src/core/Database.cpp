@@ -787,7 +787,7 @@ void Database::createEmpty(std::filesystem::path path, bool replace) {
         writeMetadata(db, "metric", "cosine_normed_embedding");
         writeMetadata(db, "created_at", utcNowText());
         writeMetadata(db, "model_name", "buffalo_l");
-        writeMetadata(db, "application", "FSC Studio Native");
+        writeMetadata(db, "application", "FSC Studio");
         sqlite3_close(db);
     } catch (...) {
         sqlite3_close(db);

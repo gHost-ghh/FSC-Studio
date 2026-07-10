@@ -126,7 +126,7 @@ Acceptance:
 Current Qt shell:
 
 - Builds with preset `msvc-vs-qt-debug` after vcpkg installs the `qt-app` feature.
-- Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime pages backed by native `FscCore` / `FscVision`.
+- Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, and Runtime pages backed by native `FscCore` / `FscVision`; Dense Mesh is part of the selected-face Library workflow as in Python.
 - Uses the Python app's left navigation order with lower-left language and identity-mode controls.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, import images or folders from the Library page through native ONNX, and export the filtered Library table to CSV.
 - Library has right-side Image / 3D Landmarks / Dense Mesh visual tabs for the selected face. Image overlays cached bbox / 2D landmarks and toggles full-image versus face-focused viewing; Dense Mesh uses only validated MediaPipe caches and explicitly asks the user to generate or repair missing/invalid data.
@@ -170,7 +170,7 @@ Current portable package:
 - `cmake --preset msvc-vs-qt-camera-dml-release`, `cmake --build --preset msvc-vs-qt-camera-dml-release`, and `ctest --preset msvc-vs-qt-camera-dml-release`: passed.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release.zip`.
 - Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindowsd.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`.
-- Package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the installer supports `%LOCALAPPDATA%\Programs\FSC Studio Native` by default plus custom `-InstallDir`.
+- The legacy portable package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the standard release path is the Inno Setup installer, which installs `FSC Studio` without Python.
 - It does not include Python runtime, user databases, or personal image data.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.

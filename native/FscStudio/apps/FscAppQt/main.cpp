@@ -175,7 +175,7 @@ int writeFacesCsv(const std::vector<fsc::core::FaceRecord>& records, const std::
     return static_cast<int>(records.size());
 }
 
-QString translatedText(const QString& key, const QString& language) {
+QString legacyTranslatedText(const QString& key, const QString& language) {
     if (language == "en") {
         return key;
     }
@@ -247,6 +247,85 @@ QString translatedText(const QString& key, const QString& language) {
     }
     const auto valueIt = languageIt->second.find(key.toStdString());
     return valueIt == languageIt->second.end() ? key : QString::fromUtf8(valueIt->second);
+}
+
+using TranslationEntries = std::map<std::string, QString>;
+using TranslationTable = std::map<std::string, TranslationEntries>;
+
+const TranslationTable& uiTranslations() {
+    static const TranslationTable translations = {
+        {"zh", {
+            {"Database", "数据库"}, {"Language", "语言"}, {"Identity Mode", "识别模式"},
+            {"Strict", "严格"}, {"Balanced", "均衡"}, {"Broad", "宽松"},
+            {"Overview", "概览"}, {"Library", "人脸库"}, {"People", "人物"}, {"Search", "搜索"},
+            {"Camera", "摄像头"}, {"Review", "复核"}, {"Clusters", "聚类"}, {"Compare", "比对"},
+            {"Runtime", "运行环境"}, {"Ready", "就绪"}, {"Browse", "浏览"}, {"Import Image", "导入图片"},
+            {"Import Folder", "导入文件夹"}, {"Export CSV", "导出 CSV"}, {"Reload", "重新加载"},
+            {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
+            {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
+            {"Image", "图像"}, {"3D Landmarks", "3D 特征点"}, {"Points", "点云"}, {"Textured", "贴图"},
+            {"Focus on Face", "聚焦于人脸"}, {"Full Image", "查看完整图像"},
+            {"Generate Dense Mesh", "生成稠密网格"}, {"Save Metadata", "保存元数据"},
+            {"Ignore in search", "在搜索中忽略"}, {"Append tags", "追加标签"},
+            {"Apply to Selection", "应用到选中项"}, {"Selected", "选中"}, {"Batch", "批量"}, {"Activity", "活动"},
+        }},
+        {"ja", {
+            {"Database", "データベース"}, {"Language", "言語"}, {"Identity Mode", "識別モード"},
+            {"Strict", "厳格"}, {"Balanced", "標準"}, {"Broad", "広め"},
+            {"Overview", "概要"}, {"Library", "顔ライブラリ"}, {"People", "人物"}, {"Search", "検索"},
+            {"Camera", "カメラ"}, {"Review", "レビュー"}, {"Clusters", "クラスタ"}, {"Compare", "比較"},
+            {"Runtime", "実行環境"}, {"Ready", "準備完了"}, {"Browse", "参照"}, {"Import Image", "画像を追加"},
+            {"Import Folder", "フォルダーを追加"}, {"Export CSV", "CSVを書き出す"}, {"Reload", "再読み込み"},
+            {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
+            {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
+            {"Image", "画像"}, {"3D Landmarks", "3D ランドマーク"}, {"Points", "点"}, {"Textured", "テクスチャ"},
+            {"Focus on Face", "顔にフォーカス"}, {"Full Image", "全体画像"},
+            {"Generate Dense Mesh", "高密度メッシュを生成"}, {"Save Metadata", "メタデータを保存"},
+            {"Ignore in search", "検索で無視"}, {"Append tags", "タグを追加"},
+            {"Apply to Selection", "選択項目に適用"}, {"Selected", "選択"}, {"Batch", "一括"}, {"Activity", "操作履歴"},
+        }},
+        {"ko", {
+            {"Database", "데이터베이스"}, {"Language", "언어"}, {"Identity Mode", "식별 모드"},
+            {"Strict", "엄격"}, {"Balanced", "균형"}, {"Broad", "넓게"},
+            {"Overview", "개요"}, {"Library", "얼굴 라이브러리"}, {"People", "인물"}, {"Search", "검색"},
+            {"Camera", "카메라"}, {"Review", "검토"}, {"Clusters", "클러스터"}, {"Compare", "비교"},
+            {"Runtime", "실행 환경"}, {"Ready", "준비됨"}, {"Browse", "찾아보기"}, {"Import Image", "이미지 가져오기"},
+            {"Import Folder", "폴더 가져오기"}, {"Export CSV", "CSV 내보내기"}, {"Reload", "새로 고침"},
+            {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
+            {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
+            {"Image", "이미지"}, {"3D Landmarks", "3D 랜드마크"}, {"Points", "점"}, {"Textured", "텍스처"},
+            {"Focus on Face", "얼굴에 초점"}, {"Full Image", "전체 이미지"},
+            {"Generate Dense Mesh", "고밀도 메시 생성"}, {"Save Metadata", "메타데이터 저장"},
+            {"Ignore in search", "검색에서 무시"}, {"Append tags", "태그 추가"},
+            {"Apply to Selection", "선택 항목에 적용"}, {"Selected", "선택"}, {"Batch", "일괄"}, {"Activity", "작업 기록"},
+        }},
+    };
+    return translations;
+}
+
+QString translationKey(const QString& text) {
+    for (const auto& [language, entries] : uiTranslations()) {
+        (void)language;
+        for (const auto& [key, value] : entries) {
+            if (text == value) {
+                return QString::fromUtf8(key.c_str());
+            }
+        }
+    }
+    return text;
+}
+
+QString translatedText(const QString& text, const QString& language) {
+    const QString key = translationKey(text);
+    if (language == "en") {
+        return key;
+    }
+    const auto languageIt = uiTranslations().find(language.toStdString());
+    if (languageIt == uiTranslations().end()) {
+        return key;
+    }
+    const auto valueIt = languageIt->second.find(key.toStdString());
+    return valueIt == languageIt->second.end() ? key : valueIt->second;
 }
 
 void fitTable(QTableWidget* table) {
@@ -1206,7 +1285,7 @@ class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr)
         : QMainWindow(parent) {
-        setWindowTitle("FSC Studio Native");
+        setWindowTitle("FSC Studio");
         resize(1180, 760);
         buildUi();
     }
@@ -1245,8 +1324,52 @@ private:
         }
     }
 
+    void applyTranslatedStaticText() {
+        const auto translateText = [this](auto* widget) {
+            const QString current = widget->text();
+            if (!current.isEmpty()) {
+                widget->setText(trUi(current));
+            }
+        };
+        for (auto* widget : findChildren<QLabel*>()) {
+            translateText(widget);
+        }
+        for (auto* widget : findChildren<QPushButton*>()) {
+            translateText(widget);
+        }
+        for (auto* widget : findChildren<QCheckBox*>()) {
+            translateText(widget);
+        }
+        for (auto* widget : findChildren<QGroupBox*>()) {
+            const QString current = widget->title();
+            if (!current.isEmpty()) {
+                widget->setTitle(trUi(current));
+            }
+        }
+        for (auto* widget : findChildren<QTabWidget*>()) {
+            for (int index = 0; index < widget->count(); ++index) {
+                widget->setTabText(index, trUi(widget->tabText(index)));
+            }
+        }
+        for (auto* widget : findChildren<QComboBox*>()) {
+            if (widget == languageCombo_) {
+                continue;
+            }
+            for (int index = 0; index < widget->count(); ++index) {
+                widget->setItemText(index, trUi(widget->itemText(index)));
+            }
+        }
+        for (auto* table : findChildren<QTableWidget*>()) {
+            for (int index = 0; index < table->columnCount(); ++index) {
+                if (auto* header = table->horizontalHeaderItem(index)) {
+                    header->setText(trUi(header->text()));
+                }
+            }
+        }
+    }
+
     void applyLanguage() {
-        setWindowTitle(trUi("FSC Studio Native"));
+        setWindowTitle(trUi("FSC Studio"));
         if (databaseLabel_ != nullptr) {
             databaseLabel_->setText(trUi("Database"));
         }
@@ -1275,6 +1398,7 @@ private:
                 tabs_->setTabText(index, trUi(tabKeys_[static_cast<size_t>(index)]));
             }
         }
+        applyTranslatedStaticText();
         statusBar()->showMessage(trUi("Ready"));
     }
 
@@ -1379,7 +1503,6 @@ private:
         buildReviewTab();
         buildClustersTab();
         buildCompareTab();
-        buildDenseMeshTab();
         buildRuntimeTab();
 
         setCentralWidget(root);
@@ -1635,9 +1758,6 @@ private:
                 }
                 if (assignFaceSpin_ != nullptr) {
                     assignFaceSpin_->setValue(faceId);
-                }
-                if (meshFaceIdSpin_ != nullptr) {
-                    meshFaceIdSpin_->setValue(faceId);
                 }
                 libraryFocusOnFace_ = false;
                 loadLibraryMetadata(faceId);
@@ -2365,43 +2485,6 @@ private:
         connect(assignClusterButton, &QPushButton::clicked, this, [this] { assignSelectedCluster(); });
     }
 
-    void buildDenseMeshTab() {
-        auto* page = new QWidget(tabs_);
-        auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
-
-        auto* controls = new QWidget(page);
-        auto* controlsLayout = new QHBoxLayout(controls);
-        controlsLayout->setContentsMargins(0, 0, 0, 0);
-        meshFaceIdSpin_ = new QSpinBox(controls);
-        meshFaceIdSpin_->setRange(1, 999999999);
-        meshFaceIdSpin_->setPrefix("Face ");
-        meshOverlayCheck_ = new QCheckBox("3D Landmarks", controls);
-        meshOverlayCheck_->setChecked(true);
-        meshModeCombo_ = new QComboBox(controls);
-        meshModeCombo_->addItem("Points", "points");
-        meshModeCombo_->addItem("Textured", "textured");
-        auto* loadButton = new QPushButton("Load 3D Data", controls);
-        auto* generateButton = new QPushButton("Generate Dense Mesh", controls);
-        meshStatusLabel_ = new QLabel("Select a face", controls);
-        controlsLayout->addWidget(meshFaceIdSpin_);
-        controlsLayout->addWidget(meshOverlayCheck_);
-        controlsLayout->addWidget(meshModeCombo_);
-        controlsLayout->addWidget(loadButton);
-        controlsLayout->addWidget(generateButton);
-        controlsLayout->addWidget(meshStatusLabel_, 1);
-        layout->addWidget(controls);
-
-        meshView_ = new TexturedMeshWidget(page);
-        layout->addWidget(meshView_, 1);
-        addMainTab(page, "Dense Mesh");
-
-        connect(loadButton, &QPushButton::clicked, this, [this] { loadDenseMeshFace(); });
-        connect(generateButton, &QPushButton::clicked, this, [this] { generateNativeMeshForSelectedFace(); });
-        connect(meshOverlayCheck_, &QCheckBox::toggled, this, [this] { loadDenseMeshFace(); });
-        connect(meshModeCombo_, &QComboBox::currentIndexChanged, this, [this] { loadDenseMeshFace(); });
-    }
-
     void buildRuntimeTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
@@ -3043,9 +3126,6 @@ private:
             const auto mesh = buildMediaPipeMeshForFace(*face);
             database_->updateFaceMesh3d(libraryPreviewFaceId_, mesh);
             updateLibrary3dPreview(libraryPreviewFaceId_);
-            if (meshFaceIdSpin_ != nullptr && meshFaceIdSpin_->value() == libraryPreviewFaceId_) {
-                loadDenseMeshFace();
-            }
             statusBar()->showMessage(QString("Generated MediaPipe dense mesh for face %1 (%2 points)").arg(libraryPreviewFaceId_).arg(mesh.size()));
         } catch (const std::exception& ex) {
             showError(ex);
@@ -3351,9 +3431,6 @@ private:
         if (faceIdSpin_ != nullptr) {
             faceIdSpin_->setValue(static_cast<int>(record.id));
         }
-        if (meshFaceIdSpin_ != nullptr) {
-            meshFaceIdSpin_->setValue(static_cast<int>(record.id));
-        }
         if (reviewPersonEdit_ != nullptr) {
             reviewPersonEdit_->setText(qs(record.personName));
         }
@@ -3534,72 +3611,6 @@ private:
         }
         try {
             appendMaintenanceResult(database_->vacuum());
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-    }
-
-    void loadDenseMeshFace() {
-        if (meshView_ == nullptr) {
-            return;
-        }
-        if (!database_) {
-            meshStatusLabel_->setText("Open a database first");
-            meshView_->setMessage("No database");
-            return;
-        }
-        try {
-            const auto face = database_->loadFace(meshFaceIdSpin_->value());
-            if (!face.has_value()) {
-                throw std::runtime_error("Face id not found.");
-            }
-            const bool hasDenseMesh = fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d);
-            const bool hasLandmarks = !face->landmarks3d.empty();
-            if (!hasDenseMesh) {
-                const QString detail = face->faceMesh3d.empty()
-                    ? "No cached MediaPipe dense mesh. Generate Mesh to analyze the source image."
-                    : QString("Cached mesh is incompatible (%1 points; expected 478). Generate Mesh to repair it.")
-                          .arg(face->faceMesh3d.size());
-                meshStatusLabel_->setText(detail);
-                meshView_->setMessage(detail);
-                return;
-            }
-            std::vector<std::vector<double>> points = face->faceMesh3d;
-            const bool textured = meshModeCombo_ != nullptr && meshModeCombo_->currentData().toString() == "textured";
-            std::vector<std::vector<double>> overlay;
-            if (textured && hasDenseMesh && hasLandmarks && meshOverlayCheck_->isChecked()) {
-                overlay = face->landmarks3d;
-            }
-            const QString source = "cached MediaPipe dense mesh";
-            meshStatusLabel_->setText(QString("Face %1: %2 point(s) from %3")
-                                          .arg(face->id)
-                                          .arg(points.size())
-                                          .arg(source));
-            meshView_->setTextureImage(loadPreviewImage(pathFrom(qs(face->sourcePath))));
-            meshView_->setRenderMode(textured ? TexturedMeshWidget::RenderMode::Textured : TexturedMeshWidget::RenderMode::Points);
-            meshView_->setData(
-                std::move(points),
-                std::move(overlay),
-                QString("Face %1").arg(face->id));
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-    }
-
-    void generateNativeMeshForSelectedFace() {
-        if (!database_) {
-            return;
-        }
-        try {
-            const int faceId = meshFaceIdSpin_->value();
-            const auto face = database_->loadFace(faceId);
-            if (!face.has_value()) {
-                throw std::runtime_error("Face id not found.");
-            }
-            const auto mesh = buildMediaPipeMeshForFace(*face);
-            database_->updateFaceMesh3d(faceId, mesh);
-            loadDenseMeshFace();
-            statusBar()->showMessage(QString("Generated MediaPipe dense mesh for face %1 (%2 points)").arg(faceId).arg(mesh.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -5627,11 +5638,6 @@ private:
     QLineEdit* clusterTagsEdit_ = nullptr;
     QCheckBox* clusterMarkReviewedCheck_ = nullptr;
     QLabel* clusterSummaryLabel_ = nullptr;
-    QSpinBox* meshFaceIdSpin_ = nullptr;
-    QCheckBox* meshOverlayCheck_ = nullptr;
-    QComboBox* meshModeCombo_ = nullptr;
-    QLabel* meshStatusLabel_ = nullptr;
-    TexturedMeshWidget* meshView_ = nullptr;
     QComboBox* runtimeModeCombo_ = nullptr;
     QLabel* runtimeBuildLabel_ = nullptr;
     QLabel* runtimeProviderLabel_ = nullptr;
@@ -5975,6 +5981,35 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+
+    if (argc >= 2 && std::string(argv[1]) == "--ui-language-smoke") {
+        const QString language = argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString("zh");
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        QComboBox* languageSelector = nullptr;
+        for (auto* combo : window.findChildren<QComboBox*>()) {
+            if (combo->findData("en") >= 0 && combo->findData("zh") >= 0 &&
+                combo->findData("ja") >= 0 && combo->findData("ko") >= 0) {
+                languageSelector = combo;
+                break;
+            }
+        }
+        if (languageSelector == nullptr) {
+            return 2;
+        }
+        const int languageIndex = languageSelector->findData(language);
+        if (languageIndex < 0) {
+            return 3;
+        }
+        languageSelector->setCurrentIndex(languageIndex);
+        for (auto* list : window.findChildren<QListWidget*>()) {
+            if (list->count() == 9 && list->item(0) != nullptr &&
+                list->item(0)->text() == translatedText("Overview", language)) {
+                return 0;
+            }
+        }
+        return 4;
+    }
 
     if (argc >= 5 && std::string(argv[1]) == "--mesh-render-smoke") {
         QApplication renderApp(argc, argv);
