@@ -15,6 +15,7 @@
           "features": [
             "widgets",
             "gui",
+            "concurrent",
             "sql",
             "jpeg",
             "png"

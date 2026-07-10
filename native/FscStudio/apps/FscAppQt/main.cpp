@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -58,6 +59,7 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
+#include <QtConcurrent/QtConcurrentRun>
 
 #ifdef FSC_ENABLE_OPENCV
 #include <opencv2/core.hpp>
@@ -278,8 +280,10 @@ const TranslationTable& uiTranslations() {
             {"Import Folder", "导入文件夹"}, {"Export CSV", "导出 CSV"}, {"Reload", "重新加载"},
             {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
+            {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
+            {"Select Image", "选择图像"}, {"Top K", "返回数量"}, {"Threshold", "阈值"},
             {"Image", "图像"}, {"3D Landmarks", "3D 特征点"}, {"Points", "点云"}, {"Textured", "贴图"},
-            {"Focus on Face", "聚焦于人脸"}, {"Full Image", "查看完整图像"},
+            {"Focus on Face", "聚焦于人脸"}, {"Full Image", "查看完整图像"}, {"View Full Image", "查看完整图像"},
             {"Generate Dense Mesh", "生成稠密网格"}, {"Save Metadata", "保存元数据"},
             {"Ignore in search", "在搜索中忽略"}, {"Append tags", "追加标签"},
             {"Apply to Selection", "应用到选中项"}, {"Selected", "选中"}, {"Batch", "批量"}, {"Activity", "活动"},
@@ -294,8 +298,10 @@ const TranslationTable& uiTranslations() {
             {"Import Folder", "フォルダーを追加"}, {"Export CSV", "CSVを書き出す"}, {"Reload", "再読み込み"},
             {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
+            {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
+            {"Select Image", "画像選択"}, {"Top K", "件数"}, {"Threshold", "しきい値"},
             {"Image", "画像"}, {"3D Landmarks", "3D ランドマーク"}, {"Points", "点"}, {"Textured", "テクスチャ"},
-            {"Focus on Face", "顔にフォーカス"}, {"Full Image", "全体画像"},
+            {"Focus on Face", "顔にフォーカス"}, {"Full Image", "全体画像"}, {"View Full Image", "全体画像"},
             {"Generate Dense Mesh", "高密度メッシュを生成"}, {"Save Metadata", "メタデータを保存"},
             {"Ignore in search", "検索で無視"}, {"Append tags", "タグを追加"},
             {"Apply to Selection", "選択項目に適用"}, {"Selected", "選択"}, {"Batch", "一括"}, {"Activity", "操作履歴"},
@@ -310,8 +316,10 @@ const TranslationTable& uiTranslations() {
             {"Import Folder", "폴더 가져오기"}, {"Export CSV", "CSV 내보내기"}, {"Reload", "새로 고침"},
             {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
+            {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
+            {"Select Image", "이미지 선택"}, {"Top K", "결과 수"}, {"Threshold", "임계값"},
             {"Image", "이미지"}, {"3D Landmarks", "3D 랜드마크"}, {"Points", "점"}, {"Textured", "텍스처"},
-            {"Focus on Face", "얼굴에 초점"}, {"Full Image", "전체 이미지"},
+            {"Focus on Face", "얼굴에 초점"}, {"Full Image", "전체 이미지"}, {"View Full Image", "전체 이미지"},
             {"Generate Dense Mesh", "고밀도 메시 생성"}, {"Save Metadata", "메타데이터 저장"},
             {"Ignore in search", "검색에서 무시"}, {"Append tags", "태그 추가"},
             {"Apply to Selection", "선택 항목에 적용"}, {"Selected", "선택"}, {"Batch", "일괄"}, {"Activity", "작업 기록"},
@@ -1396,17 +1404,20 @@ public:
     explicit FaceSelectionPreview(QWidget* parent = nullptr)
         : QLabel(parent) {
         setAlignment(Qt::AlignCenter);
-        setMinimumSize(320, 260);
+        setMinimumSize(180, 180);
         setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
         setText("Select image");
         setMouseTracking(true);
     }
 
     void setImagePath(QString path) {
+        const bool changed = imagePath_ != path;
         imagePath_ = std::move(path);
-        selectedIndex_ = 0;
-        focusOnFace_ = false;
-        faces_.clear();
+        if (changed) {
+            selectedIndex_ = 0;
+            focusOnFace_ = false;
+            faces_.clear();
+        }
         refreshPixmap();
     }
 
@@ -1559,6 +1570,31 @@ public:
         openDatabase(path);
     }
 
+#ifdef FSC_ENABLE_ONNX
+    void startSearchQuerySmoke(const QString& modelRoot, const QString& imagePath, const QString& runtimeMode) {
+        searchQuerySmokeMode_ = true;
+        if (modelRootEdit_ != nullptr) {
+            modelRootEdit_->setText(modelRoot);
+        }
+        if (runtimeModeCombo_ != nullptr) {
+            const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
+            runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
+        }
+        if (searchImageEdit_ != nullptr) {
+            searchImageEdit_->setText(imagePath);
+        }
+        analyzeSearchImage();
+    }
+
+    [[nodiscard]] bool searchQuerySmokeFinished() const noexcept {
+        return !searchQueryAnalysisActive_;
+    }
+
+    [[nodiscard]] int searchQuerySmokeFaceCount() const noexcept {
+        return static_cast<int>(searchQueryFaces_.size());
+    }
+#endif
+
 private:
     struct CameraResultActionRow {
         int faceIndex = -1;
@@ -1570,6 +1606,13 @@ private:
         int64_t hitFaceId = 0;
         QString hitPersonName;
         double hitCosine = -2.0;
+    };
+
+    struct SearchQueryAnalysisResult {
+        int generation = 0;
+        QString imagePath;
+        std::vector<fsc::vision::AnalyzedFace> faces;
+        QString error;
     };
 
     QString trUi(const QString& key) const {
@@ -1609,6 +1652,9 @@ private:
             translateText(widget);
         }
         for (auto* widget : findChildren<QPushButton*>()) {
+            translateText(widget);
+        }
+        for (auto* widget : findChildren<QToolButton*>()) {
             translateText(widget);
         }
         for (auto* widget : findChildren<QCheckBox*>()) {
@@ -2095,9 +2141,6 @@ private:
             }
             const int faceId = idItem->text().toInt();
             if (faceId > 0) {
-                if (faceIdSpin_ != nullptr) {
-                    faceIdSpin_->setValue(faceId);
-                }
                 if (assignFaceSpin_ != nullptr) {
                     assignFaceSpin_->setValue(faceId);
                 }
@@ -2370,135 +2413,156 @@ private:
         auto* layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
 
-        auto* imageControls = new QWidget(page);
-        auto* imageLayout = new QHBoxLayout(imageControls);
-        imageLayout->setContentsMargins(0, 0, 0, 0);
-        searchImageEdit_ = new QLineEdit(imageControls);
-        searchImageEdit_->setPlaceholderText("Query image");
-        auto* browseImageButton = new QPushButton("Browse", imageControls);
-        auto* analyzeImageButton = new QPushButton("Analyze Query", imageControls);
-        searchFaceCombo_ = new QComboBox(imageControls);
-        searchFaceCombo_->setMinimumWidth(180);
-        imageLayout->addWidget(searchImageEdit_, 1);
-        imageLayout->addWidget(browseImageButton);
-        imageLayout->addWidget(analyzeImageButton);
-        imageLayout->addWidget(searchFaceCombo_);
-        layout->addWidget(imageControls);
+        auto* title = new QLabel("Search", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
 
-        auto* controls = new QWidget(page);
-        auto* controlsLayout = new QHBoxLayout(controls);
-        controlsLayout->setContentsMargins(0, 0, 0, 0);
-        faceIdSpin_ = new QSpinBox(controls);
-        faceIdSpin_->setRange(1, 999999999);
-        faceIdSpin_->setPrefix("Face ");
-        topKSpin_ = new QSpinBox(controls);
+        auto* queryBox = new QGroupBox("Query", page);
+        auto* queryLayout = new QGridLayout(queryBox);
+        searchDatabasePathEdit_ = new QLineEdit(queryBox);
+        searchDatabasePathEdit_->setObjectName("SearchDatabasePath");
+        searchDatabasePathEdit_->setReadOnly(true);
+        auto* openDatabaseButton = new QPushButton("Open Database", queryBox);
+        openDatabaseButton->setObjectName("SearchOpenDatabase");
+        auto* useLibraryDatabaseButton = new QPushButton("Use Library DB", queryBox);
+        useLibraryDatabaseButton->setObjectName("SearchUseLibraryDatabase");
+
+        searchImageEdit_ = new QLineEdit(queryBox);
+        searchImageEdit_->setObjectName("SearchQueryImagePath");
+        searchImageEdit_->setReadOnly(true);
+        auto* selectImageButton = new QPushButton("Select Image", queryBox);
+        selectImageButton->setObjectName("SearchSelectImage");
+        auto* searchButton = new QPushButton("Search", queryBox);
+        searchButton->setObjectName("SearchRun");
+
+        topKSpin_ = new QSpinBox(queryBox);
         topKSpin_->setRange(1, 500);
         topKSpin_->setValue(30);
-        topKSpin_->setPrefix("Top ");
-        searchThresholdSpin_ = new QDoubleSpinBox(controls);
+        searchThresholdSpin_ = new QDoubleSpinBox(queryBox);
         searchThresholdSpin_->setRange(-1.0, 1.0);
         searchThresholdSpin_->setDecimals(3);
         searchThresholdSpin_->setSingleStep(0.010);
         searchThresholdSpin_->setValue(-1.0);
-        searchThresholdSpin_->setPrefix("Threshold ");
-        searchMinQualitySpin_ = new QDoubleSpinBox(controls);
+        searchMinQualitySpin_ = new QDoubleSpinBox(queryBox);
         searchMinQualitySpin_->setRange(0.0, 1.0);
         searchMinQualitySpin_->setDecimals(3);
         searchMinQualitySpin_->setSingleStep(0.050);
         searchMinQualitySpin_->setValue(0.0);
-        searchMinQualitySpin_->setPrefix("Min quality ");
-        searchIncludeIgnoredCheck_ = new QCheckBox("Include ignored", controls);
-        auto* searchButton = new QPushButton("Search", controls);
-        auto* identifyButton = new QPushButton("Identify", controls);
-        identityLabel_ = new QLabel("Identity: -", controls);
-        controlsLayout->addWidget(faceIdSpin_);
-        controlsLayout->addWidget(topKSpin_);
-        controlsLayout->addWidget(searchThresholdSpin_);
-        controlsLayout->addWidget(searchMinQualitySpin_);
-        controlsLayout->addWidget(searchIncludeIgnoredCheck_);
-        controlsLayout->addWidget(searchButton);
-        controlsLayout->addWidget(identifyButton);
-        controlsLayout->addWidget(identityLabel_, 1);
-        layout->addWidget(controls);
-
-        auto* filterControls = new QWidget(page);
-        auto* filterLayout = new QHBoxLayout(filterControls);
-        filterLayout->setContentsMargins(0, 0, 0, 0);
-        searchPersonFilterCombo_ = new QComboBox(filterControls);
+        searchPersonFilterCombo_ = new QComboBox(queryBox);
         searchPersonFilterCombo_->setMinimumWidth(180);
-        searchTagFilterCombo_ = new QComboBox(filterControls);
+        searchTagFilterCombo_ = new QComboBox(queryBox);
         searchTagFilterCombo_->setMinimumWidth(160);
-        filterLayout->addWidget(new QLabel("Person", filterControls));
-        filterLayout->addWidget(searchPersonFilterCombo_);
-        filterLayout->addWidget(new QLabel("Tag", filterControls));
-        filterLayout->addWidget(searchTagFilterCombo_);
-        filterLayout->addStretch(1);
-        layout->addWidget(filterControls);
+        searchIncludeIgnoredCheck_ = new QCheckBox("Include ignored", queryBox);
 
-        auto* splitter = new QSplitter(Qt::Horizontal, page);
-        auto* leftPanel = new QWidget(splitter);
-        auto* leftLayout = new QVBoxLayout(leftPanel);
-        leftLayout->setContentsMargins(0, 0, 0, 0);
-        searchIdentityTable_ = new QTableWidget(leftPanel);
+        queryLayout->addWidget(new QLabel("Database", queryBox), 0, 0);
+        queryLayout->addWidget(searchDatabasePathEdit_, 0, 1, 1, 3);
+        queryLayout->addWidget(openDatabaseButton, 0, 4);
+        queryLayout->addWidget(useLibraryDatabaseButton, 0, 5);
+        queryLayout->addWidget(new QLabel("Image", queryBox), 1, 0);
+        queryLayout->addWidget(searchImageEdit_, 1, 1, 1, 3);
+        queryLayout->addWidget(selectImageButton, 1, 4);
+        queryLayout->addWidget(searchButton, 1, 5);
+        queryLayout->addWidget(new QLabel("Top K", queryBox), 2, 0);
+        queryLayout->addWidget(topKSpin_, 2, 1);
+        queryLayout->addWidget(new QLabel("Threshold", queryBox), 2, 2);
+        queryLayout->addWidget(searchThresholdSpin_, 2, 3);
+        queryLayout->addWidget(new QLabel("Min quality", queryBox), 2, 4);
+        queryLayout->addWidget(searchMinQualitySpin_, 2, 5);
+        queryLayout->addWidget(new QLabel("Person", queryBox), 3, 0);
+        queryLayout->addWidget(searchPersonFilterCombo_, 3, 1);
+        queryLayout->addWidget(new QLabel("Tag", queryBox), 3, 2);
+        queryLayout->addWidget(searchTagFilterCombo_, 3, 3);
+        queryLayout->addWidget(searchIncludeIgnoredCheck_, 3, 4, 1, 2);
+        layout->addWidget(queryBox);
+
+        auto* body = new QWidget(page);
+        auto* bodyLayout = new QHBoxLayout(body);
+        bodyLayout->setContentsMargins(0, 0, 0, 0);
+        bodyLayout->setSpacing(12);
+
+        auto* previewPanel = new QWidget(body);
+        previewPanel->setMinimumWidth(300);
+        previewPanel->setMaximumWidth(430);
+        auto* previewLayout = new QVBoxLayout(previewPanel);
+        previewLayout->setContentsMargins(0, 0, 0, 0);
+        previewLayout->setSpacing(8);
+        searchQueryFocusButton_ = new QToolButton(previewPanel);
+        searchQueryFocusButton_->setObjectName("SearchQueryFocus");
+        searchQueryFocusButton_->setText("Focus on Face");
+        searchQueryFocusButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        searchQueryFocusButton_->setMaximumSize(118, 24);
+        searchQueryFocusButton_->setEnabled(false);
+        searchQueryPreview_ = new FaceSelectionPreview(previewPanel);
+        searchQueryPreview_->setObjectName("SearchQueryPreview");
+        searchFaceList_ = new QListWidget(previewPanel);
+        searchFaceList_->setObjectName("SearchQueryFaceList");
+        searchFaceList_->setMinimumHeight(68);
+        searchFaceList_->setMaximumHeight(96);
+        searchFaceList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        searchResultFocusButton_ = new QToolButton(previewPanel);
+        searchResultFocusButton_->setObjectName("SearchResultFocus");
+        searchResultFocusButton_->setText("Focus on Face");
+        searchResultFocusButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        searchResultFocusButton_->setMaximumSize(118, 24);
+        searchResultFocusButton_->setEnabled(false);
+        searchResultPreviewLabel_ = new QLabel("Result", previewPanel);
+        searchResultPreviewLabel_->setObjectName("SearchResultPreview");
+        searchResultPreviewLabel_->setAlignment(Qt::AlignCenter);
+        searchResultPreviewLabel_->setMinimumSize(180, 180);
+        searchResultPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        previewLayout->addWidget(searchQueryFocusButton_, 0, Qt::AlignLeft);
+        previewLayout->addWidget(searchQueryPreview_, 1);
+        previewLayout->addWidget(searchFaceList_);
+        previewLayout->addWidget(searchResultFocusButton_, 0, Qt::AlignLeft);
+        previewLayout->addWidget(searchResultPreviewLabel_, 1);
+        bodyLayout->addWidget(previewPanel, 0);
+
+        auto* resultsPanel = new QWidget(body);
+        auto* resultsLayout = new QVBoxLayout(resultsPanel);
+        resultsLayout->setContentsMargins(0, 0, 0, 0);
+        resultsLayout->setSpacing(8);
+        identityLabel_ = new QLabel("Identity: not searched", resultsPanel);
+        identityLabel_->setWordWrap(true);
+        searchIdentityTable_ = new QTableWidget(resultsPanel);
         searchIdentityTable_->setColumnCount(6);
         searchIdentityTable_->setHorizontalHeaderLabels({"Rank", "Person", "Decision", "Score", "Confidence", "Evidence"});
         fitTable(searchIdentityTable_);
-        searchIdentityTable_->setMaximumHeight(130);
-        leftLayout->addWidget(searchIdentityTable_);
-        searchTable_ = new QTableWidget(leftPanel);
+        searchIdentityTable_->setMaximumHeight(120);
+        searchTable_ = new QTableWidget(resultsPanel);
         searchTable_->setColumnCount(8);
-        searchTable_->setHorizontalHeaderLabels({"Rank", "ID", "File", "Person", "Tags", "Cosine", "Similarity", "Quality"});
+        searchTable_->setHorizontalHeaderLabels({"Rank", "ID", "Name", "Person", "Tags", "Cosine", "Similarity", "Quality"});
         fitTable(searchTable_);
-        leftLayout->addWidget(searchTable_, 1);
-
-        auto* actionRow = new QWidget(leftPanel);
-        auto* actionLayout = new QHBoxLayout(actionRow);
-        actionLayout->setContentsMargins(0, 0, 0, 0);
-        searchAssignPersonEdit_ = new QLineEdit(actionRow);
-        searchAssignPersonEdit_->setPlaceholderText("Person for selected result");
-        auto* assignResultButton = new QPushButton("Assign Result", actionRow);
-        auto* confirmIdentityButton = new QPushButton("Confirm Identity", actionRow);
-        actionLayout->addWidget(searchAssignPersonEdit_, 1);
-        actionLayout->addWidget(assignResultButton);
-        actionLayout->addWidget(confirmIdentityButton);
-        leftLayout->addWidget(actionRow);
-
-        auto* previewPanel = new QWidget(splitter);
-        auto* previewLayout = new QVBoxLayout(previewPanel);
-        previewLayout->setContentsMargins(8, 0, 0, 0);
-        searchPreviewLabel_ = new QLabel("Select or analyze a query image", previewPanel);
-        searchPreviewLabel_->setAlignment(Qt::AlignCenter);
-        searchPreviewLabel_->setMinimumWidth(320);
-        searchPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        searchResultPreviewLabel_ = new QLabel("Result preview", previewPanel);
-        searchResultPreviewLabel_->setAlignment(Qt::AlignCenter);
-        searchResultPreviewLabel_->setMinimumWidth(320);
-        searchResultPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        previewLayout->addWidget(searchPreviewLabel_, 1);
-        previewLayout->addWidget(searchResultPreviewLabel_, 1);
-        splitter->addWidget(leftPanel);
-        splitter->addWidget(previewPanel);
-        splitter->setStretchFactor(0, 3);
-        splitter->setStretchFactor(1, 2);
-        layout->addWidget(splitter, 1);
+        resultsLayout->addWidget(identityLabel_);
+        resultsLayout->addWidget(searchIdentityTable_);
+        resultsLayout->addWidget(searchTable_, 1);
+        bodyLayout->addWidget(resultsPanel, 1);
+        layout->addWidget(body, 1);
 
         searchPreviewTimer_ = new QTimer(this);
         searchPreviewTimer_->setInterval(70);
         addMainTab(page, "Search");
-        connect(browseImageButton, &QPushButton::clicked, this, [this] { chooseImage(searchImageEdit_); });
-        connect(analyzeImageButton, &QPushButton::clicked, this, [this] { analyzeSearchImage(); });
-        connect(searchFaceCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        connect(openDatabaseButton, &QPushButton::clicked, this, [this] { chooseDatabase(); });
+        connect(useLibraryDatabaseButton, &QPushButton::clicked, this, [this] { syncSearchDatabasePath(); });
+        connect(selectImageButton, &QPushButton::clicked, this, [this] { selectSearchQueryImage(); });
+        connect(searchFaceList_, &QListWidget::currentRowChanged, this, [this](int index) {
+            if (index < 0) {
+                return;
+            }
             searchQueryFaceIndex_ = index;
             updateSearchQueryPreview();
         });
+        searchQueryPreview_->faceClicked = [this](int index) {
+            if (searchFaceList_ != nullptr && index >= 0 && index < searchFaceList_->count()) {
+                searchFaceList_->setCurrentRow(index);
+            }
+        };
+        connect(searchQueryFocusButton_, &QToolButton::clicked, this, [this] { toggleSearchQueryFocus(); });
+        connect(searchResultFocusButton_, &QToolButton::clicked, this, [this] { toggleSearchResultFocus(); });
         connect(searchButton, &QPushButton::clicked, this, [this] { runSearch(); });
-        connect(identifyButton, &QPushButton::clicked, this, [this] { runIdentify(); });
         connect(searchTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedSearchResultPreview(); });
         connect(searchIdentityTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedSearchIdentityPreview(); });
-        connect(assignResultButton, &QPushButton::clicked, this, [this] { assignSelectedSearchResult(); });
-        connect(confirmIdentityButton, &QPushButton::clicked, this, [this] { confirmSearchIdentity(); });
         connect(searchPreviewTimer_, &QTimer::timeout, this, [this] { advanceSearchProgress(); });
-        refreshSearchFilterOptions();
+        syncSearchDatabasePath();
     }
 
     void buildCameraTab() {
@@ -2953,6 +3017,7 @@ private:
             database_.reset();
             cameraIdentityProfiles_.clear();
             refreshCameraDatabaseLabel();
+            syncSearchDatabasePath();
             showError(ex);
         }
     }
@@ -2967,7 +3032,7 @@ private:
         loadPeople();
         loadReview();
         cameraIdentityProfiles_ = database_->loadIdentityProfiles();
-        refreshSearchFilterOptions();
+        syncSearchDatabasePath();
         refreshRuntimeDatabaseInfo();
         refreshCameraDatabaseLabel();
     }
@@ -3838,9 +3903,6 @@ private:
         }
         const auto& record = reviewRows_[static_cast<size_t>(row)];
         currentReviewFaceId_ = record.id;
-        if (faceIdSpin_ != nullptr) {
-            faceIdSpin_->setValue(static_cast<int>(record.id));
-        }
         if (reviewPersonEdit_ != nullptr) {
             reviewPersonEdit_->setText(qs(record.personName));
         }
@@ -4406,108 +4468,180 @@ private:
         searchTagFilterCombo_->blockSignals(false);
     }
 
+    void syncSearchDatabasePath() {
+        if (searchDatabasePathEdit_ == nullptr) {
+            return;
+        }
+        searchDatabasePathEdit_->setText(
+            database_ ? QString::fromStdWString(database_->path().wstring()) : QString());
+        refreshSearchFilterOptions();
+    }
+
+    void selectSearchQueryImage() {
+        const auto path = QFileDialog::getOpenFileName(
+            this,
+            "Select query image",
+            {},
+            "Images (*.jpg *.jpeg *.png *.bmp *.webp *.tif *.tiff *.ppm);;All Files (*)");
+        if (path.isEmpty()) {
+            return;
+        }
+        searchImageEdit_->setText(path);
+        analyzeSearchImage();
+    }
+
     void analyzeSearchImage() {
 #ifdef FSC_ENABLE_ONNX
-        try {
-            if (searchImageEdit_ == nullptr || searchImageEdit_->text().trimmed().isEmpty()) {
-                throw std::runtime_error("Select a query image first.");
-            }
-            const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
-            const auto imagePath = pathFrom(searchImageEdit_->text());
-            const auto image = fsc::vision::loadImageRgb(imagePath);
-            searchQueryFaces_ = engine.analyze(image, 0.50f, 10);
-            if (searchQueryFaces_.empty()) {
-                throw std::runtime_error("No face detected in the query image.");
-            }
-            searchHits_.clear();
-            lastSearchIdentityResult_ = {};
-            currentSearchDatabaseFaceId_ = 0;
-            if (searchTable_ != nullptr) {
-                searchTable_->setRowCount(0);
-            }
-            if (searchIdentityTable_ != nullptr) {
-                searchIdentityTable_->setRowCount(0);
-            }
-            if (searchResultPreviewLabel_ != nullptr) {
-                searchResultPreviewLabel_->setText("Result preview");
-                searchResultPreviewLabel_->setPixmap(QPixmap());
-            }
-            if (identityLabel_ != nullptr) {
-                identityLabel_->setText("Identity: not searched");
-            }
-            searchFaceCombo_->blockSignals(true);
-            searchFaceCombo_->clear();
-            for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
-                const auto& face = searchQueryFaces_[static_cast<size_t>(index)];
-                searchFaceCombo_->addItem(
-                    QString("Face %1 | det %2 | q %3")
-                        .arg(index + 1)
-                        .arg(face.detection.score, 0, 'f', 3)
-                        .arg(face.qualityScore, 0, 'f', 3));
-            }
-            searchFaceCombo_->setCurrentIndex(0);
-            searchFaceCombo_->blockSignals(false);
-            searchQueryFaceIndex_ = 0;
-            updateSearchQueryPreview();
-            statusBar()->showMessage(QString("Analyzed query image: %1 face(s)").arg(searchQueryFaces_.size()));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        if (searchImageEdit_ == nullptr || searchImageEdit_->text().trimmed().isEmpty()) {
+            showError(std::runtime_error("Select a query image first."));
+            return;
         }
+        const QString imagePathText = searchImageEdit_->text();
+        const auto imagePath = pathFrom(imagePathText);
+        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto runtimeMode = selectedRuntimeMode();
+        const int generation = ++searchQueryGeneration_;
+        searchQueryAnalysisActive_ = true;
+
+        resetSearchProgress();
+        searchQueryFaces_.clear();
+        searchQueryFaceIndex_ = 0;
+        searchHits_.clear();
+        lastSearchIdentityResult_ = {};
+        searchResultPreviewFaceId_ = 0;
+        searchResultFocusOnFace_ = false;
+        if (searchFaceList_ != nullptr) {
+            searchFaceList_->clear();
+        }
+        if (searchQueryPreview_ != nullptr) {
+            searchQueryPreview_->setImagePath(imagePathText);
+            searchQueryPreview_->setFaces({}, 0);
+        }
+        if (searchQueryFocusButton_ != nullptr) {
+            searchQueryFocusButton_->setText(trUi("Focus on Face"));
+            searchQueryFocusButton_->setEnabled(false);
+        }
+        if (searchResultFocusButton_ != nullptr) {
+            searchResultFocusButton_->setText(trUi("Focus on Face"));
+            searchResultFocusButton_->setEnabled(false);
+        }
+        if (searchTable_ != nullptr) {
+            searchTable_->setRowCount(0);
+        }
+        if (searchIdentityTable_ != nullptr) {
+            searchIdentityTable_->setRowCount(0);
+        }
+        if (searchResultPreviewLabel_ != nullptr) {
+            searchResultPreviewLabel_->setText("Result");
+            searchResultPreviewLabel_->setPixmap(QPixmap());
+        }
+        if (identityLabel_ != nullptr) {
+            identityLabel_->setText("Identity: not searched");
+        }
+        statusBar()->showMessage("Detecting query faces...");
+
+        auto* watcher = new QFutureWatcher<SearchQueryAnalysisResult>(this);
+        connect(watcher, &QFutureWatcher<SearchQueryAnalysisResult>::finished, this, [this, watcher] {
+            const auto result = watcher->result();
+            watcher->deleteLater();
+            finishSearchImageAnalysis(result);
+        });
+        watcher->setFuture(QtConcurrent::run([generation, imagePathText, imagePath, modelRoot, runtimeMode] {
+            SearchQueryAnalysisResult result;
+            result.generation = generation;
+            result.imagePath = imagePathText;
+            try {
+                fsc::vision::InsightFaceEngine engine(
+                    fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot),
+                    runtimeMode);
+                result.faces = engine.analyze(fsc::vision::loadImageRgb(imagePath), 0.50f, 10);
+                if (result.faces.empty()) {
+                    result.error = "No face detected in the query image.";
+                }
+            } catch (const std::exception& ex) {
+                result.error = QString::fromUtf8(ex.what());
+            }
+            return result;
+        }));
 #else
         QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
 #endif
     }
 
-    void updateSearchQueryPreview() {
-        if (searchPreviewLabel_ == nullptr) {
+    void finishSearchImageAnalysis(const SearchQueryAnalysisResult& result) {
+        if (result.generation != searchQueryGeneration_ || searchImageEdit_ == nullptr ||
+            result.imagePath != searchImageEdit_->text()) {
             return;
         }
-        QImage image = loadPreviewImage(searchImageEdit_ == nullptr ? QString() : searchImageEdit_->text());
-        if (image.isNull()) {
-            searchPreviewLabel_->setText("Query image unavailable");
-            searchPreviewLabel_->setPixmap(QPixmap());
-            return;
-        }
-        QPixmap pixmap = QPixmap::fromImage(image).scaled(
-            searchPreviewLabel_->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation);
-        if (!pixmap.isNull()) {
-            QPainter painter(&pixmap);
-            painter.setRenderHint(QPainter::Antialiasing, true);
-            const double sx = static_cast<double>(pixmap.width()) / static_cast<double>(std::max(1, image.width()));
-            const double sy = static_cast<double>(pixmap.height()) / static_cast<double>(std::max(1, image.height()));
-            for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
-                const auto& box = searchQueryFaces_[static_cast<size_t>(index)].detection.box;
-                const QRectF rect(
-                    box.x1 * sx,
-                    box.y1 * sy,
-                    (box.x2 - box.x1) * sx,
-                    (box.y2 - box.y1) * sy);
-                painter.setPen(QPen(index == searchQueryFaceIndex_ ? QColor(0, 230, 70) : QColor(20, 180, 235), 2.0));
-                painter.setBrush(Qt::NoBrush);
-                painter.drawRect(rect);
+        searchQueryAnalysisActive_ = false;
+        if (!result.error.isEmpty()) {
+            statusBar()->showMessage(result.error);
+            if (!searchQuerySmokeMode_) {
+                showError(std::runtime_error(result.error.toUtf8().constData()));
             }
+            return;
         }
-        searchPreviewLabel_->setPixmap(pixmap);
+        searchQueryFaces_ = result.faces;
+        if (searchFaceList_ != nullptr) {
+            searchFaceList_->blockSignals(true);
+            searchFaceList_->clear();
+            for (int index = 0; index < static_cast<int>(searchQueryFaces_.size()); ++index) {
+                const auto& face = searchQueryFaces_[static_cast<size_t>(index)];
+                searchFaceList_->addItem(
+                    QString("Face %1: det %2, quality %3")
+                        .arg(index + 1)
+                        .arg(face.detection.score, 0, 'f', 3)
+                        .arg(face.qualityScore, 0, 'f', 3));
+            }
+            searchFaceList_->blockSignals(false);
+            searchFaceList_->setCurrentRow(0);
+        }
+        searchQueryFaceIndex_ = 0;
+        updateSearchQueryPreview();
+        statusBar()->showMessage(
+            QString("Detected %1 face(s). Select a face, then search.").arg(searchQueryFaces_.size()));
     }
 
-    std::vector<float> currentSearchEmbedding(int64_t* databaseFaceId = nullptr) const {
-        if (databaseFaceId != nullptr) {
-            *databaseFaceId = 0;
+    void updateSearchQueryPreview() {
+        if (searchQueryPreview_ == nullptr) {
+            return;
         }
+        if (searchImageEdit_ != nullptr) {
+            searchQueryPreview_->setImagePath(searchImageEdit_->text());
+        }
+        searchQueryPreview_->setFaces(searchQueryFaces_, searchQueryFaceIndex_);
+        if (searchQueryFocusButton_ != nullptr) {
+            searchQueryFocusButton_->setText(searchQueryPreview_->focusOnFace() ? trUi("View Full Image") : trUi("Focus on Face"));
+            searchQueryFocusButton_->setEnabled(!searchQueryFaces_.empty());
+        }
+    }
+
+    void toggleSearchQueryFocus() {
+        if (searchQueryPreview_ == nullptr || searchQueryFaces_.empty()) {
+            return;
+        }
+        searchQueryPreview_->setFocusOnFace(!searchQueryPreview_->focusOnFace());
+        if (searchQueryFocusButton_ != nullptr) {
+            searchQueryFocusButton_->setText(searchQueryPreview_->focusOnFace() ? trUi("View Full Image") : trUi("Focus on Face"));
+        }
+    }
+
+    void toggleSearchResultFocus() {
+        if (searchResultPreviewFaceId_ <= 0) {
+            return;
+        }
+        searchResultFocusOnFace_ = !searchResultFocusOnFace_;
+        if (searchResultFocusButton_ != nullptr) {
+            searchResultFocusButton_->setText(searchResultFocusOnFace_ ? trUi("View Full Image") : trUi("Focus on Face"));
+        }
+        updateSearchResultPreviewForFace(searchResultPreviewFaceId_);
+    }
+
+    std::vector<float> currentSearchEmbedding() const {
         if (!searchQueryFaces_.empty() && searchQueryFaceIndex_ >= 0 && searchQueryFaceIndex_ < static_cast<int>(searchQueryFaces_.size())) {
             return searchQueryFaces_[static_cast<size_t>(searchQueryFaceIndex_)].embedding;
         }
-        const auto query = database_->loadFace(faceIdSpin_->value());
-        if (!query.has_value()) {
-            throw std::runtime_error("Face id not found.");
-        }
-        if (databaseFaceId != nullptr) {
-            *databaseFaceId = query->id;
-        }
-        return query->embedding;
+        throw std::runtime_error("Select a query image and wait for face detection first.");
     }
 
     void runSearch() {
@@ -4516,9 +4650,7 @@ private:
         }
         try {
             resetSearchProgress();
-            int64_t databaseFaceId = 0;
-            const auto embedding = currentSearchEmbedding(&databaseFaceId);
-            currentSearchDatabaseFaceId_ = databaseFaceId;
+            const auto embedding = currentSearchEmbedding();
             const bool includeIgnored = searchIncludeIgnoredCheck_ != nullptr && searchIncludeIgnoredCheck_->isChecked();
             const double minQuality = searchMinQualitySpin_ != nullptr ? searchMinQualitySpin_->value() : 0.0;
             const QString personFilter = searchPersonFilterCombo_ != nullptr ? searchPersonFilterCombo_->currentData().toString() : QString();
@@ -4562,7 +4694,13 @@ private:
                 searchResultPreviewLabel_->setText("Comparing database faces...");
                 searchResultPreviewLabel_->setPixmap(QPixmap());
             }
-            beginSearchProgress(std::move(records), embedding, databaseFaceId);
+            searchResultPreviewFaceId_ = 0;
+            searchResultFocusOnFace_ = false;
+            if (searchResultFocusButton_ != nullptr) {
+                searchResultFocusButton_->setText(trUi("Focus on Face"));
+                searchResultFocusButton_->setEnabled(false);
+            }
+            beginSearchProgress(std::move(records), embedding);
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -4580,12 +4718,11 @@ private:
         searchProgressPreviewLastMs_ = -1;
     }
 
-    void beginSearchProgress(std::vector<fsc::core::FaceRecord> records, const std::vector<float>& embedding, int64_t databaseFaceId) {
+    void beginSearchProgress(std::vector<fsc::core::FaceRecord> records, const std::vector<float>& embedding) {
         searchProgressRecords_ = std::move(records);
         searchProgressQuery_ = fsc::core::normalize(embedding);
         searchProgressTopK_ = topKSpin_ != nullptr ? topKSpin_->value() : 30;
         searchProgressThreshold_ = searchThresholdSpin_ != nullptr ? searchThresholdSpin_->value() : -1.0;
-        searchProgressDatabaseFaceId_ = databaseFaceId;
         searchProgressCursor_ = 0;
         searchProgressHits_.clear();
         searchProgressPreviewLastMs_ = -1;
@@ -4663,11 +4800,6 @@ private:
             searchProgressHits_.resize(static_cast<size_t>(searchProgressTopK_));
         }
         searchHits_ = std::move(searchProgressHits_);
-        searchHits_.erase(
-            std::remove_if(searchHits_.begin(), searchHits_.end(), [this](const auto& hit) {
-                return searchProgressDatabaseFaceId_ > 0 && hit.record.id == searchProgressDatabaseFaceId_;
-            }),
-            searchHits_.end());
         const auto completedQuery = searchProgressQuery_;
         searchProgressRecords_.clear();
         searchProgressQuery_.clear();
@@ -4697,26 +4829,15 @@ private:
                                          .arg(searchHits_.size())
                                          .arg(searchHits_.front().record.id));
         } else {
+            searchResultPreviewFaceId_ = 0;
             if (searchResultPreviewLabel_ != nullptr) {
                 searchResultPreviewLabel_->setText("No results");
                 searchResultPreviewLabel_->setPixmap(QPixmap());
             }
+            if (searchResultFocusButton_ != nullptr) {
+                searchResultFocusButton_->setEnabled(false);
+            }
             statusBar()->showMessage("Search complete: 0 result(s)");
-        }
-    }
-
-    void runIdentify() {
-        if (!database_) {
-            return;
-        }
-        try {
-            int64_t databaseFaceId = 0;
-            const auto embedding = currentSearchEmbedding(&databaseFaceId);
-            currentSearchDatabaseFaceId_ = databaseFaceId;
-            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), embedding, selectedIdentityMode(), 5);
-            populateSearchIdentityResult(result);
-        } catch (const std::exception& ex) {
-            showError(ex);
         }
     }
 
@@ -4760,12 +4881,26 @@ private:
             if (!face.has_value()) {
                 searchResultPreviewLabel_->setText("Face not found");
                 searchResultPreviewLabel_->setPixmap(QPixmap());
+                searchResultPreviewFaceId_ = 0;
+                if (searchResultFocusButton_ != nullptr) {
+                    searchResultFocusButton_->setEnabled(false);
+                }
                 return;
             }
-            setDatabaseFacePreview(searchResultPreviewLabel_, *face, "Result preview");
+            searchResultPreviewFaceId_ = faceId;
+            setDatabaseFacePreview(searchResultPreviewLabel_, *face, "Result preview", searchResultFocusOnFace_);
+            if (searchResultFocusButton_ != nullptr) {
+                searchResultFocusButton_->setText(
+                    searchResultFocusOnFace_ ? trUi("View Full Image") : trUi("Focus on Face"));
+                searchResultFocusButton_->setEnabled(true);
+            }
         } catch (const std::exception& ex) {
             searchResultPreviewLabel_->setText(ex.what());
             searchResultPreviewLabel_->setPixmap(QPixmap());
+            searchResultPreviewFaceId_ = 0;
+            if (searchResultFocusButton_ != nullptr) {
+                searchResultFocusButton_->setEnabled(false);
+            }
         }
     }
 
@@ -4804,58 +4939,6 @@ private:
         const auto faceId = lastSearchIdentityResult_.candidates[static_cast<size_t>(row)].evidenceFaceId;
         if (faceId > 0) {
             updateSearchResultPreviewForFace(faceId);
-        }
-    }
-
-    void assignSelectedSearchResult() {
-        if (!database_ || searchTable_ == nullptr || searchAssignPersonEdit_ == nullptr) {
-            return;
-        }
-        try {
-            const auto selected = searchTable_->selectionModel() == nullptr ? QModelIndexList{} : searchTable_->selectionModel()->selectedRows();
-            if (selected.empty()) {
-                throw std::runtime_error("Select a search result first.");
-            }
-            const int row = selected.front().row();
-            if (row < 0 || row >= static_cast<int>(searchHits_.size())) {
-                throw std::runtime_error("Selected search row is out of range.");
-            }
-            const auto personName = searchAssignPersonEdit_->text().trimmed();
-            if (personName.isEmpty()) {
-                throw std::runtime_error("Enter a person name for the selected result.");
-            }
-            const auto faceId = searchHits_[static_cast<size_t>(row)].record.id;
-            assignFaceToPersonName(faceId, personName);
-            database_->rebuildIdentityProfiles();
-            reloadAll();
-            statusBar()->showMessage(QString("Assigned search result face %1 to %2").arg(faceId).arg(personName));
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-    }
-
-    void confirmSearchIdentity() {
-        if (!database_) {
-            return;
-        }
-        try {
-            if (currentSearchDatabaseFaceId_ <= 0) {
-                throw std::runtime_error("Identity confirmation is available only when searching from a stored face id.");
-            }
-            if (lastSearchIdentityResult_.candidates.empty()) {
-                throw std::runtime_error("Run Identify or Search before confirming identity.");
-            }
-            const auto& candidate = lastSearchIdentityResult_.candidates.front();
-            if (candidate.profile.personId <= 0 || lastSearchIdentityResult_.decision == "unknown") {
-                throw std::runtime_error("No confirmable identity suggestion is available.");
-            }
-            database_->assignFaceToPerson(currentSearchDatabaseFaceId_, candidate.profile.personId);
-            database_->updateFaceReview(currentSearchDatabaseFaceId_, "reviewed", false, "Confirmed native Search identity suggestion.");
-            database_->rebuildIdentityProfiles();
-            reloadAll();
-            statusBar()->showMessage(QString("Confirmed face %1 as %2").arg(currentSearchDatabaseFaceId_).arg(qs(candidate.profile.personName)));
-        } catch (const std::exception& ex) {
-            showError(ex);
         }
     }
 
@@ -6040,7 +6123,6 @@ private:
     std::vector<fsc::core::FaceRecord> reviewRows_;
     int64_t currentReviewFaceId_ = 0;
     bool reviewFocusOnFace_ = false;
-    QSpinBox* faceIdSpin_ = nullptr;
     QSpinBox* topKSpin_ = nullptr;
     QDoubleSpinBox* searchThresholdSpin_ = nullptr;
     QDoubleSpinBox* searchMinQualitySpin_ = nullptr;
@@ -6050,11 +6132,13 @@ private:
     QLabel* identityLabel_ = nullptr;
     QTableWidget* searchIdentityTable_ = nullptr;
     QTableWidget* searchTable_ = nullptr;
+    QLineEdit* searchDatabasePathEdit_ = nullptr;
     QLineEdit* searchImageEdit_ = nullptr;
-    QComboBox* searchFaceCombo_ = nullptr;
-    QLabel* searchPreviewLabel_ = nullptr;
+    QListWidget* searchFaceList_ = nullptr;
+    FaceSelectionPreview* searchQueryPreview_ = nullptr;
+    QToolButton* searchQueryFocusButton_ = nullptr;
     QLabel* searchResultPreviewLabel_ = nullptr;
-    QLineEdit* searchAssignPersonEdit_ = nullptr;
+    QToolButton* searchResultFocusButton_ = nullptr;
     QTimer* searchPreviewTimer_ = nullptr;
     std::vector<fsc::vision::AnalyzedFace> searchQueryFaces_;
     std::vector<fsc::core::SearchHit> searchHits_;
@@ -6063,14 +6147,17 @@ private:
     std::vector<float> searchProgressQuery_;
     QElapsedTimer searchProgressClock_;
     fsc::core::IdentityResult lastSearchIdentityResult_;
-    int64_t currentSearchDatabaseFaceId_ = 0;
-    int64_t searchProgressDatabaseFaceId_ = 0;
+    int64_t searchResultPreviewFaceId_ = 0;
     int searchQueryFaceIndex_ = 0;
+    int searchQueryGeneration_ = 0;
     int searchProgressTopK_ = 30;
     double searchProgressThreshold_ = -1.0;
     size_t searchProgressCursor_ = 0;
     qint64 searchProgressPreviewLastMs_ = -1;
     bool searchProgressActive_ = false;
+    bool searchResultFocusOnFace_ = false;
+    bool searchQueryAnalysisActive_ = false;
+    bool searchQuerySmokeMode_ = false;
     QSpinBox* cameraIndexSpin_ = nullptr;
     QDoubleSpinBox* cameraThresholdSpin_ = nullptr;
     QSpinBox* cameraTopKSpin_ = nullptr;
@@ -6464,6 +6551,33 @@ int main(int argc, char** argv) {
     }
 #endif
 
+#ifdef FSC_ENABLE_ONNX
+    if (argc >= 4 && std::string(argv[1]) == "--search-query-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        const QString runtimeMode = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString("cpu");
+        window.startSearchQuerySmoke(
+            QString::fromLocal8Bit(argv[2]),
+            QString::fromLocal8Bit(argv[3]),
+            runtimeMode);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (window.searchQuerySmokeFinished()) {
+                outcome = window.searchQuerySmokeFaceCount() > 0 ? 0 : 4;
+                uiApp.quit();
+            }
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+#endif
+
     if (argc >= 2 && std::string(argv[1]) == "--ui-language-smoke") {
         const QString language = argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString("zh");
         QApplication uiApp(argc, argv);
@@ -6491,9 +6605,19 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+        const bool searchControlsPresent =
+            window.findChild<QLineEdit*>("SearchDatabasePath") != nullptr &&
+            window.findChild<QPushButton*>("SearchOpenDatabase") != nullptr &&
+            window.findChild<QPushButton*>("SearchUseLibraryDatabase") != nullptr &&
+            window.findChild<QPushButton*>("SearchSelectImage") != nullptr &&
+            window.findChild<QWidget*>("SearchQueryPreview") != nullptr &&
+            window.findChild<QListWidget*>("SearchQueryFaceList") != nullptr &&
+            window.findChild<QToolButton*>("SearchQueryFocus") != nullptr &&
+            window.findChild<QToolButton*>("SearchResultFocus") != nullptr;
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
-                list->item(0)->text() == translatedText("Overview", language) && legacyActionPresent) {
+                list->item(0)->text() == translatedText("Overview", language) &&
+                legacyActionPresent && searchControlsPresent) {
                 return 0;
             }
         }
