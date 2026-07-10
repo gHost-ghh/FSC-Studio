@@ -34,6 +34,7 @@ public:
     [[nodiscard]] std::optional<FaceRecord> loadFacePreview(int64_t faceId) const;
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<std::string> loadTags() const;
+    [[nodiscard]] std::vector<TagSummary> loadTagSummaries(int limit = 0) const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;
     [[nodiscard]] bool imageHashExists(const std::string& imageHash) const;
     [[nodiscard]] MaintenanceResult checkIntegrity() const;

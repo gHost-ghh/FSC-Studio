@@ -126,6 +126,19 @@ void databasePersonActionsRoundTrip() {
         record.qualityScore = 0.8;
         record.imageHash = "person-action-smoke";
         const auto faceId = database.insertFace(record);
+        record.fileName = "person-test-duplicate.jpg";
+        record.sourcePath = "person-test-duplicate.jpg";
+        const auto duplicateFaceId = database.insertFace(record);
+        database.setFaceTags(faceId, "alpha, beta");
+        database.setFaceTags(duplicateFaceId, "alpha");
+
+        const auto stats = database.statistics();
+        assert(stats.faceCount == 2);
+        assert(stats.tagCount == 2);
+        assert(stats.duplicateImageGroupCount == 1);
+        const auto tags = database.loadTagSummaries();
+        assert(tags.size() == 2);
+        assert(tags.front().name == "alpha" && tags.front().faceCount == 2);
 
         const auto sourceId = database.upsertPerson("Source", "source notes");
         const auto targetId = database.upsertPerson("Target", "target notes");

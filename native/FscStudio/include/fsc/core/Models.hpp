@@ -12,6 +12,7 @@ struct DatabaseStatistics {
     int64_t tagCount = 0;
     int64_t reviewCount = 0;
     int64_t ignoredCount = 0;
+    int64_t duplicateImageGroupCount = 0;
     double averageQuality = 0.0;
     std::string formatVersion;
     std::string metric;
@@ -80,6 +81,11 @@ struct PersonSummary {
     double identityAcceptThreshold = 0.0;
     std::string identityScoringModelVersion;
     std::string identityHealth;
+};
+
+struct TagSummary {
+    std::string name;
+    int64_t faceCount = 0;
 };
 
 struct SearchHit {

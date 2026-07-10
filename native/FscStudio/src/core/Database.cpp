@@ -877,6 +877,17 @@ DatabaseStatistics Database::statistics() const {
         }
     }
     {
+        Statement statement(
+            db_,
+            "SELECT COUNT(*) FROM ("
+            "SELECT image_hash FROM faces WHERE COALESCE(image_hash, '') != '' "
+            "GROUP BY image_hash HAVING COUNT(*) > 1"
+            ")");
+        if (sqlite3_step(statement.get()) == SQLITE_ROW) {
+            stats.duplicateImageGroupCount = sqlite3_column_int64(statement.get(), 0);
+        }
+    }
+    {
         Statement statement(db_, "SELECT COALESCE(AVG(quality_score), 0.0) FROM faces");
         if (sqlite3_step(statement.get()) == SQLITE_ROW) {
             stats.averageQuality = sqlite3_column_double(statement.get(), 0);
@@ -1081,6 +1092,22 @@ std::vector<std::string> Database::loadTags() const {
     std::vector<std::string> tags;
     while (sqlite3_step(statement.get()) == SQLITE_ROW) {
         tags.push_back(textColumn(statement.get(), 0));
+    }
+    return tags;
+}
+
+std::vector<TagSummary> Database::loadTagSummaries(int limit) const {
+    Statement statement(
+        db_,
+        "SELECT t.name, COUNT(ft.face_id) "
+        "FROM tags t LEFT JOIN face_tags ft ON ft.tag_id = t.id "
+        "GROUP BY t.id, t.name "
+        "ORDER BY COUNT(ft.face_id) DESC, t.name COLLATE NOCASE "
+        "LIMIT CASE WHEN ?1 > 0 THEN ?1 ELSE -1 END");
+    sqlite3_bind_int(statement.get(), 1, limit);
+    std::vector<TagSummary> tags;
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        tags.push_back({textColumn(statement.get(), 0), sqlite3_column_int64(statement.get(), 1)});
     }
     return tags;
 }

@@ -1324,6 +1324,15 @@ private:
         }
     }
 
+    void selectMainTab(const QString& key) {
+        for (int index = 0; index < static_cast<int>(tabKeys_.size()); ++index) {
+            if (tabKeys_[static_cast<size_t>(index)] == key && sidebar_ != nullptr) {
+                sidebar_->setCurrentRow(index);
+                return;
+            }
+        }
+    }
+
     void applyTranslatedStaticText() {
         const auto translateText = [this](auto* widget) {
             const QString current = widget->text();
@@ -1519,22 +1528,90 @@ private:
 
     void buildOverviewTab() {
         auto* page = new QWidget(tabs_);
-        auto* layout = new QFormLayout(page);
-        formatLabel_ = new QLabel("-");
-        modelLabel_ = new QLabel("-");
-        metricLabel_ = new QLabel("-");
-        facesLabel_ = new QLabel("-");
-        peopleLabel_ = new QLabel("-");
-        reviewLabel_ = new QLabel("-");
-        qualityLabel_ = new QLabel("-");
-        layout->addRow("Format", formatLabel_);
-        layout->addRow("Model", modelLabel_);
-        layout->addRow("Metric", metricLabel_);
-        layout->addRow("Faces", facesLabel_);
-        layout->addRow("People", peopleLabel_);
-        layout->addRow("Review Queue", reviewLabel_);
-        layout->addRow("Average Quality", qualityLabel_);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        auto* workspace = new QGroupBox("Workspace", page);
+        auto* workspaceLayout = new QGridLayout(workspace);
+        overviewDatabasePathEdit_ = new QLineEdit(workspace);
+        overviewDatabasePathEdit_->setReadOnly(true);
+        overviewDatabasePathEdit_->setPlaceholderText("No database loaded");
+        auto* newButton = new QPushButton("New Database", workspace);
+        auto* openButton = new QPushButton("Open Database", workspace);
+        auto* importButton = new QPushButton("Import Image", workspace);
+        auto* folderButton = new QPushButton("Import Folder", workspace);
+        auto* refreshButton = new QPushButton("Refresh", workspace);
+        workspaceLayout->addWidget(new QLabel("Database", workspace), 0, 0);
+        workspaceLayout->addWidget(overviewDatabasePathEdit_, 0, 1, 1, 5);
+        workspaceLayout->addWidget(newButton, 1, 0);
+        workspaceLayout->addWidget(openButton, 1, 1);
+        workspaceLayout->addWidget(importButton, 1, 2);
+        workspaceLayout->addWidget(folderButton, 1, 3);
+        workspaceLayout->addWidget(refreshButton, 1, 4);
+        layout->addWidget(workspace);
+
+        auto* upper = new QHBoxLayout();
+        auto* metricsBox = new QGroupBox("Database Metrics", page);
+        auto* metricsLayout = new QVBoxLayout(metricsBox);
+        overviewMetricsTable_ = new QTableWidget(0, 2, metricsBox);
+        overviewMetricsTable_->setHorizontalHeaderLabels({"Metric", "Value"});
+        fitTable(overviewMetricsTable_);
+        metricsLayout->addWidget(overviewMetricsTable_);
+        upper->addWidget(metricsBox, 1);
+
+        auto* attentionBox = new QGroupBox("Attention", page);
+        auto* attentionLayout = new QVBoxLayout(attentionBox);
+        overviewAttentionTable_ = new QTableWidget(0, 2, attentionBox);
+        overviewAttentionTable_->setHorizontalHeaderLabels({"Queue", "Count"});
+        fitTable(overviewAttentionTable_);
+        attentionLayout->addWidget(overviewAttentionTable_);
+        auto* attentionActions = new QHBoxLayout();
+        auto* reviewButton = new QPushButton("Review Queue", attentionBox);
+        auto* peopleButton = new QPushButton("People", attentionBox);
+        auto* searchButton = new QPushButton("Search", attentionBox);
+        auto* clustersButton = new QPushButton("Clusters", attentionBox);
+        attentionActions->addWidget(reviewButton);
+        attentionActions->addWidget(peopleButton);
+        attentionActions->addWidget(searchButton);
+        attentionActions->addWidget(clustersButton);
+        attentionLayout->addLayout(attentionActions);
+        upper->addWidget(attentionBox, 1);
+        layout->addLayout(upper, 1);
+
+        auto* lower = new QHBoxLayout();
+        auto* peopleBox = new QGroupBox("Top People", page);
+        auto* peopleLayout = new QVBoxLayout(peopleBox);
+        overviewPeopleTable_ = new QTableWidget(0, 3, peopleBox);
+        overviewPeopleTable_->setHorizontalHeaderLabels({"Person", "Faces", "Review"});
+        fitTable(overviewPeopleTable_);
+        peopleLayout->addWidget(overviewPeopleTable_);
+        lower->addWidget(peopleBox, 1);
+
+        auto* tagsBox = new QGroupBox("Top Tags", page);
+        auto* tagsLayout = new QVBoxLayout(tagsBox);
+        overviewTagsTable_ = new QTableWidget(0, 2, tagsBox);
+        overviewTagsTable_->setHorizontalHeaderLabels({"Tag", "Faces"});
+        fitTable(overviewTagsTable_);
+        tagsLayout->addWidget(overviewTagsTable_);
+        lower->addWidget(tagsBox, 1);
+        layout->addLayout(lower, 1);
         addMainTab(page, "Overview");
+
+        connect(newButton, &QPushButton::clicked, this, [this] { createDatabase(); });
+        connect(openButton, &QPushButton::clicked, this, [this] { chooseDatabase(); });
+        connect(importButton, &QPushButton::clicked, this, [this] {
+            chooseImage(importImageEdit_);
+            if (importImageEdit_ != nullptr && !importImageEdit_->text().isEmpty()) {
+                importImage();
+            }
+        });
+        connect(folderButton, &QPushButton::clicked, this, [this] { importFolder(); });
+        connect(refreshButton, &QPushButton::clicked, this, [this] { reloadAll(); });
+        connect(reviewButton, &QPushButton::clicked, this, [this] { selectMainTab("Review"); });
+        connect(peopleButton, &QPushButton::clicked, this, [this] { selectMainTab("People"); });
+        connect(searchButton, &QPushButton::clicked, this, [this] { selectMainTab("Search"); });
+        connect(clustersButton, &QPushButton::clicked, this, [this] { selectMainTab("Clusters"); });
     }
 
     void buildLibraryTab() {
@@ -2605,13 +2682,54 @@ private:
 
     void loadOverview() {
         const auto stats = database_->statistics();
-        formatLabel_->setText(qs(stats.formatVersion));
-        modelLabel_->setText(qs(stats.modelName));
-        metricLabel_->setText(qs(stats.metric));
-        facesLabel_->setText(QString::number(stats.faceCount));
-        peopleLabel_->setText(QString::number(stats.peopleCount));
-        reviewLabel_->setText(QString::number(stats.reviewCount));
-        qualityLabel_->setText(QString::number(stats.averageQuality, 'f', 4));
+        if (overviewDatabasePathEdit_ != nullptr) {
+            overviewDatabasePathEdit_->setText(qs(database_->path().string()));
+        }
+        const auto setRows = [](QTableWidget* table, const std::vector<std::pair<QString, QString>>& rows) {
+            if (table == nullptr) {
+                return;
+            }
+            table->setRowCount(static_cast<int>(rows.size()));
+            for (int index = 0; index < static_cast<int>(rows.size()); ++index) {
+                table->setItem(index, 0, item(rows[static_cast<size_t>(index)].first));
+                table->setItem(index, 1, item(rows[static_cast<size_t>(index)].second));
+            }
+        };
+        setRows(overviewMetricsTable_, {
+            {"Faces", QString::number(stats.faceCount)},
+            {"People", QString::number(stats.peopleCount)},
+            {"Tags", QString::number(stats.tagCount)},
+            {"Average Quality", QString::number(stats.averageQuality, 'f', 3)},
+            {"Model", qs(stats.modelName)},
+            {"Format", QString("v%1").arg(qs(stats.formatVersion))},
+            {"Metric", qs(stats.metric)},
+        });
+        setRows(overviewAttentionTable_, {
+            {"Needs review", QString::number(stats.reviewCount)},
+            {"Ignored", QString::number(stats.ignoredCount)},
+            {"Duplicate image groups", QString::number(stats.duplicateImageGroupCount)},
+        });
+
+        if (overviewPeopleTable_ != nullptr) {
+            const auto people = database_->loadPeople();
+            const int rowCount = std::min(10, static_cast<int>(people.size()));
+            overviewPeopleTable_->setRowCount(rowCount);
+            for (int row = 0; row < rowCount; ++row) {
+                const auto& person = people[static_cast<size_t>(row)];
+                overviewPeopleTable_->setItem(row, 0, item(qs(person.name)));
+                overviewPeopleTable_->setItem(row, 1, item(QString::number(person.faceCount)));
+                overviewPeopleTable_->setItem(row, 2, item(QString::number(person.reviewCount)));
+            }
+        }
+        if (overviewTagsTable_ != nullptr) {
+            const auto tags = database_->loadTagSummaries(12);
+            overviewTagsTable_->setRowCount(static_cast<int>(tags.size()));
+            for (int row = 0; row < static_cast<int>(tags.size()); ++row) {
+                const auto& tag = tags[static_cast<size_t>(row)];
+                overviewTagsTable_->setItem(row, 0, item(qs(tag.name)));
+                overviewTagsTable_->setItem(row, 1, item(QString::number(tag.faceCount)));
+            }
+        }
     }
 
     void loadLibrary() {
@@ -5489,13 +5607,11 @@ private:
     QLineEdit* databasePathEdit_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     std::vector<QString> tabKeys_;
-    QLabel* formatLabel_ = nullptr;
-    QLabel* modelLabel_ = nullptr;
-    QLabel* metricLabel_ = nullptr;
-    QLabel* facesLabel_ = nullptr;
-    QLabel* peopleLabel_ = nullptr;
-    QLabel* reviewLabel_ = nullptr;
-    QLabel* qualityLabel_ = nullptr;
+    QLineEdit* overviewDatabasePathEdit_ = nullptr;
+    QTableWidget* overviewMetricsTable_ = nullptr;
+    QTableWidget* overviewAttentionTable_ = nullptr;
+    QTableWidget* overviewPeopleTable_ = nullptr;
+    QTableWidget* overviewTagsTable_ = nullptr;
     QTableWidget* libraryTable_ = nullptr;
     QLabel* libraryPreviewLabel_ = nullptr;
     QTabWidget* libraryVisualTabs_ = nullptr;
@@ -6009,6 +6125,28 @@ int main(int argc, char** argv) {
             }
         }
         return 4;
+    }
+
+    if (argc >= 3 && std::string(argv[1]) == "--overview-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        try {
+            window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
+        } catch (...) {
+            return 2;
+        }
+        const auto hasRows = [&window](const QString& firstHeader, const QString& secondHeader) {
+            for (auto* table : window.findChildren<QTableWidget*>()) {
+                if (table->columnCount() >= 2 && table->rowCount() > 0 &&
+                    table->horizontalHeaderItem(0) != nullptr && table->horizontalHeaderItem(1) != nullptr &&
+                    table->horizontalHeaderItem(0)->text() == firstHeader &&
+                    table->horizontalHeaderItem(1)->text() == secondHeader) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        return hasRows("Metric", "Value") && hasRows("Queue", "Count") ? 0 : 3;
     }
 
     if (argc >= 5 && std::string(argv[1]) == "--mesh-render-smoke") {
