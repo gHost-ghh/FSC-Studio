@@ -149,8 +149,40 @@ add_test(NAME fsc_core_tests COMMAND fsc_core_tests)
 
 if(FSC_BUILD_QT_APP)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
+    function(fsc_copy_qt_runtime target_name)
+        foreach(plugin_target IN ITEMS Qt6::QWindowsIntegrationPlugin Qt6::QMinimalIntegrationPlugin)
+            if(TARGET ${plugin_target})
+                add_custom_command(TARGET ${target_name} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target_name}>/platforms"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:${plugin_target}>"
+                        "$<TARGET_FILE_DIR:${target_name}>/platforms"
+                    COMMENT "Copying Qt platform plugin ${plugin_target} next to ${target_name}"
+                )
+            endif()
+        endforeach()
+        foreach(plugin_target IN ITEMS Qt6::QJpegPlugin Qt6::QPngPlugin Qt6::QGifPlugin Qt6::QICOPlugin)
+            if(TARGET ${plugin_target})
+                add_custom_command(TARGET ${target_name} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target_name}>/imageformats"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:${plugin_target}>"
+                        "$<TARGET_FILE_DIR:${target_name}>/imageformats"
+                    COMMENT "Copying Qt image format plugin ${plugin_target} next to ${target_name}"
+                )
+            endif()
+        endforeach()
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/apps/FscAppQt/qt.conf"
+                "$<TARGET_FILE_DIR:${target_name}>/qt.conf"
+            COMMENT "Copying Qt runtime configuration next to ${target_name}"
+        )
+    endfunction()
+
     add_executable(FscStudioQt WIN32 apps/FscAppQt/main.cpp)
     target_link_libraries(FscStudioQt PRIVATE FscCore FscVision FscMesh Qt6::Widgets)
+    fsc_copy_qt_runtime(FscStudioQt)
     fsc_copy_mediapipe_runtime(FscStudioQt)
     if(FSC_ENABLE_ONNX)
         fsc_copy_onnx_runtime(FscStudioQt)

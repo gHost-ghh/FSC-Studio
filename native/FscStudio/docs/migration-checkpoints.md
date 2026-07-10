@@ -80,7 +80,7 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: cached 3D data display, MediaPipe-native 478-point Dense Mesh generation, and native Camera capture are implemented.
+Status: cached 3D data display, native Points/Textured Dense Mesh rendering, MediaPipe-native 478-point Dense Mesh generation, and native Camera capture are implemented.
 
 Acceptance:
 
@@ -91,10 +91,11 @@ Acceptance:
 Current Dense Mesh shell:
 
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
-- Qt Dense Mesh tab renders cached dense mesh or falls back to 3D landmarks in a native draggable point-cloud preview.
+- Qt Dense Mesh panels render only validated cached dense mesh data, with native Points/Textured modes, image texture sampling, per-pixel depth buffering, back-facing triangle darkening, drag/zoom/reset, and an optional 68-point landmark overlay in Textured mode.
 - Qt Dense Mesh tabs generate and cache a validated 478-point MediaPipe mesh from the original source image, never from the 68-point landmark cache.
 - `fsc_native_probe <database.fscdb> build-mesh <face_id> <face_landmarker.task>` writes the MediaPipe `face_mesh3d_json` without Python. `repair-invalid-meshes` removes/rebuilds old non-478-point caches.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
+- `FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 out\probe\mesh_render.png [yaw pitch]`: renders a nonblank textured mesh screenshot without opening a user window; optional angles exercise back-surface darkening.
 
 Current Camera shell:
 

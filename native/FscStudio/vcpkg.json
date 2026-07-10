@@ -15,7 +15,9 @@
           "features": [
             "widgets",
             "gui",
-            "sql"
+            "sql",
+            "jpeg",
+            "png"
           ]
         }
       ]

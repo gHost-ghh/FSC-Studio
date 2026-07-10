@@ -29,8 +29,9 @@ continuing that prototype.
 - CLI probes for database/search/identity/import and model-path parity checks.
 - Minimal Qt Widgets desktop shell with Python-style left navigation for Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime; the People page can add people, assign faces, and train identity profiles, and Library owns image import plus selected-face Image / 3D Landmarks / Dense Mesh visual tabs.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
-- Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
+- Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, and an optional 68-point landmark overlay in Textured mode.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
+- Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 - Search now has threshold/min-quality/include-ignored/person/tag controls, an identity candidate table, a throttled progressive result preview while filtered database faces are compared, and native result/identity assignment actions. It ends on the best match rather than cycling completed results.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
@@ -107,6 +108,8 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --cluster-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render.png
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render_side.png 1.1 -0.15
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 

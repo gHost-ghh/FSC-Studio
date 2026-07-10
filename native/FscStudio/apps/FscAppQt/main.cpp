@@ -4,6 +4,7 @@
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
 #include "fsc/mesh/FaceMesh.hpp"
+#include "fsc/mesh/MediaPipeTopology.hpp"
 #include "fsc/vision/Image.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 #include "fsc/vision/ModelPaths.hpp"
@@ -51,6 +52,7 @@
 #include <QToolButton>
 #include <QVariant>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QWidget>
 
 #ifdef FSC_ENABLE_OPENCV
@@ -85,6 +87,27 @@ QString qs(const std::string& value) {
 
 std::filesystem::path pathFrom(const QString& value) {
     return std::filesystem::path(value.toStdWString());
+}
+
+QImage previewImageFromRgb(const fsc::vision::RgbImage& image) {
+    if (image.width <= 0 || image.height <= 0 ||
+        image.pixels.size() != static_cast<size_t>(image.width) * static_cast<size_t>(image.height) * 3U) {
+        return {};
+    }
+    QImage view(image.pixels.data(), image.width, image.height, image.width * 3, QImage::Format_RGB888);
+    return view.copy();
+}
+
+QImage loadPreviewImage(const std::filesystem::path& path) {
+    try {
+        return previewImageFromRgb(fsc::vision::loadImageRgb(path));
+    } catch (...) {
+        return QImage(QString::fromStdWString(path.wstring()));
+    }
+}
+
+QImage loadPreviewImage(const QString& path) {
+    return loadPreviewImage(pathFrom(path));
 }
 
 QString defaultModelRoot() {
@@ -647,6 +670,383 @@ private:
     QPointF lastMouse_;
 };
 
+class TexturedMeshWidget final : public QWidget {
+public:
+    enum class RenderMode { Points, Textured };
+
+    explicit TexturedMeshWidget(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setMinimumSize(420, 320);
+        setMouseTracking(true);
+        setMessage("Select a face");
+    }
+
+    void setData(std::vector<std::vector<double>> points, std::vector<std::vector<double>> overlayPoints, QString message) {
+        points_ = std::move(points);
+        overlayPoints_ = std::move(overlayPoints);
+        message_ = std::move(message);
+        update();
+    }
+
+    void setTextureImage(const QImage& image) {
+        texture_ = image.isNull() ? QImage{} : image.convertToFormat(QImage::Format_ARGB32);
+        update();
+    }
+
+    void setRenderMode(RenderMode mode) {
+        renderMode_ = mode;
+        update();
+    }
+
+    void setView(double yaw, double pitch, double zoom = 1.0) {
+        yaw_ = yaw;
+        pitch_ = std::clamp(pitch, -1.5707, 1.5707);
+        zoom_ = std::clamp(zoom, 0.5, 3.0);
+        update();
+    }
+
+    void setMessage(QString message) {
+        points_.clear();
+        overlayPoints_.clear();
+        message_ = std::move(message);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(17, 24, 39));
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        if (points_.size() < 3) {
+            painter.setPen(QColor(203, 213, 225));
+            painter.drawText(rect(), Qt::AlignCenter, message_);
+            return;
+        }
+
+        const Bounds bounds = computeBounds();
+        const auto projected = projectRows(points_, bounds);
+        bool textured = false;
+        if (renderMode_ == RenderMode::Textured && !texture_.isNull() && points_.size() >= fsc::mesh::kMediaPipeFaceMeshPointCount) {
+            textured = renderTexturedMesh(projected, bounds, painter);
+        }
+        if (textured) {
+            drawOverlayLandmarks(painter, bounds);
+            painter.setPen(QColor(219, 234, 254));
+            painter.drawText(QPoint(14, 24), "textured face mesh");
+        } else {
+            drawPointMesh(painter, projected);
+            painter.setPen(QColor(219, 234, 254));
+            painter.drawText(QPoint(14, 24), message_.isEmpty() ? QString("3D mesh points") : message_);
+        }
+        painter.setPen(QColor(148, 163, 184));
+        painter.drawText(QPoint(14, 46), "drag to rotate");
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            lastMouse_ = event->position();
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if ((event->buttons() & Qt::LeftButton) && !lastMouse_.isNull()) {
+            const QPointF delta = event->position() - lastMouse_;
+            yaw_ -= delta.x() * 0.01;
+            pitch_ += delta.y() * 0.01;
+            pitch_ = std::clamp(pitch_, -1.5707, 1.5707);
+            lastMouse_ = event->position();
+            update();
+            event->accept();
+            return;
+        }
+        QWidget::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            lastMouse_ = {};
+            event->accept();
+            return;
+        }
+        QWidget::mouseReleaseEvent(event);
+    }
+
+    void wheelEvent(QWheelEvent* event) override {
+        const double steps = static_cast<double>(event->angleDelta().y()) / 120.0;
+        zoom_ = std::clamp(zoom_ * (1.0 + steps * 0.08), 0.5, 3.0);
+        update();
+        event->accept();
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            yaw_ = 0.0;
+            pitch_ = -0.15;
+            zoom_ = 1.0;
+            update();
+            event->accept();
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
+
+private:
+    struct Vec3 { double x = 0.0; double y = 0.0; double z = 0.0; };
+    struct Bounds { Vec3 center; double span = 1.0; };
+    struct Projected { QPointF screen; double depth = 0.0; Vec3 rotated; };
+
+    static constexpr std::array<std::pair<int, int>, 63> kLandmarkEdges{{
+        {0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {5, 6}, {6, 7}, {7, 8},
+        {8, 9}, {9, 10}, {10, 11}, {11, 12}, {12, 13}, {13, 14}, {14, 15}, {15, 16},
+        {17, 18}, {18, 19}, {19, 20}, {20, 21}, {22, 23}, {23, 24}, {24, 25}, {25, 26},
+        {27, 28}, {28, 29}, {29, 30}, {31, 32}, {32, 33}, {33, 34}, {34, 35},
+        {36, 37}, {37, 38}, {38, 39}, {39, 40}, {40, 41}, {41, 36},
+        {42, 43}, {43, 44}, {44, 45}, {45, 46}, {46, 47}, {47, 42},
+        {48, 49}, {49, 50}, {50, 51}, {51, 52}, {52, 53}, {53, 54}, {54, 55}, {55, 56},
+        {56, 57}, {57, 58}, {58, 59}, {59, 48}, {60, 61}, {61, 62}, {62, 63}, {63, 64},
+        {64, 65}, {65, 66}, {66, 67}, {67, 60},
+    }};
+
+    static bool valid(const std::vector<double>& point) {
+        return point.size() >= 3 && std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]);
+    }
+
+    static double signedArea(const QPointF& a, const QPointF& b, const QPointF& c) {
+        return (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x());
+    }
+
+    Bounds computeBounds() const {
+        Vec3 min{};
+        Vec3 max{};
+        bool first = true;
+        for (const auto& point : points_) {
+            if (!valid(point)) {
+                continue;
+            }
+            const Vec3 value{point[0], point[1], point[2]};
+            if (first) {
+                min = max = value;
+                first = false;
+            } else {
+                min.x = std::min(min.x, value.x); min.y = std::min(min.y, value.y); min.z = std::min(min.z, value.z);
+                max.x = std::max(max.x, value.x); max.y = std::max(max.y, value.y); max.z = std::max(max.z, value.z);
+            }
+        }
+        return {{(min.x + max.x) * 0.5, (min.y + max.y) * 0.5, (min.z + max.z) * 0.5},
+                std::max({max.x - min.x, max.y - min.y, max.z - min.z, 1.0})};
+    }
+
+    Projected project(const Vec3& source, const Bounds& bounds) const {
+        const double x = (source.x - bounds.center.x) / bounds.span;
+        const double y = (source.y - bounds.center.y) / bounds.span;
+        const double z = (source.z - bounds.center.z) / bounds.span;
+        const double cosYaw = std::cos(yaw_);
+        const double sinYaw = std::sin(yaw_);
+        const double cosPitch = std::cos(pitch_);
+        const double sinPitch = std::sin(pitch_);
+        const double xYaw = x * cosYaw + z * sinYaw;
+        const double zYaw = -x * sinYaw + z * cosYaw;
+        const double yPitch = y * cosPitch - zYaw * sinPitch;
+        const double zPitch = y * sinPitch + zYaw * cosPitch;
+        const double scale = std::min(width(), height()) * 0.72 * zoom_;
+        return {{width() * 0.5 + xYaw * scale, height() * 0.5 + yPitch * scale}, zPitch, {xYaw, yPitch, zPitch}};
+    }
+
+    std::vector<Projected> projectRows(const std::vector<std::vector<double>>& rows, const Bounds& bounds) const {
+        std::vector<Projected> projected;
+        projected.reserve(rows.size());
+        for (const auto& point : rows) {
+            projected.push_back(valid(point) ? project({point[0], point[1], point[2]}, bounds) : Projected{});
+        }
+        return projected;
+    }
+
+    static QRgb sampleTexture(const QImage& image, double x, double y) {
+        const double clampedX = std::clamp(x, 0.0, static_cast<double>(std::max(0, image.width() - 1)));
+        const double clampedY = std::clamp(y, 0.0, static_cast<double>(std::max(0, image.height() - 1)));
+        const int x0 = static_cast<int>(std::floor(clampedX));
+        const int y0 = static_cast<int>(std::floor(clampedY));
+        const int x1 = std::min(image.width() - 1, x0 + 1);
+        const int y1 = std::min(image.height() - 1, y0 + 1);
+        const double tx = clampedX - x0;
+        const double ty = clampedY - y0;
+        const auto blend = [tx, ty](int a, int b, int c, int d) {
+            const double top = a * (1.0 - tx) + b * tx;
+            const double bottom = c * (1.0 - tx) + d * tx;
+            return static_cast<int>(std::lround(top * (1.0 - ty) + bottom * ty));
+        };
+        const QRgb p00 = image.pixel(x0, y0);
+        const QRgb p10 = image.pixel(x1, y0);
+        const QRgb p01 = image.pixel(x0, y1);
+        const QRgb p11 = image.pixel(x1, y1);
+        return qRgb(blend(qRed(p00), qRed(p10), qRed(p01), qRed(p11)),
+                    blend(qGreen(p00), qGreen(p10), qGreen(p01), qGreen(p11)),
+                    blend(qBlue(p00), qBlue(p10), qBlue(p01), qBlue(p11)));
+    }
+
+    static bool backFacing(const Vec3& a, const Vec3& b, const Vec3& c) {
+        const Vec3 u{b.x - a.x, b.y - a.y, b.z - a.z};
+        const Vec3 v{c.x - a.x, c.y - a.y, c.z - a.z};
+        const Vec3 normal{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+        const double length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+        return length > 1e-8 && normal.z / length > 0.10;
+    }
+
+    bool renderTexturedMesh(const std::vector<Projected>& projected, const Bounds&, QPainter& painter) const {
+        const int canvasWidth = std::max(1, width());
+        const int canvasHeight = std::max(1, height());
+        QImage canvas(canvasWidth, canvasHeight, QImage::Format_ARGB32);
+        canvas.fill(QColor(17, 24, 39));
+        std::vector<float> zBuffer(static_cast<size_t>(canvasWidth) * canvasHeight, std::numeric_limits<float>::infinity());
+        bool rendered = false;
+        for (const auto& triangle : fsc::mesh::kMediaPipeFaceMeshTriangles) {
+            const int ia = triangle[0]; const int ib = triangle[1]; const int ic = triangle[2];
+            if (ic >= static_cast<int>(points_.size()) || !valid(points_[ia]) || !valid(points_[ib]) || !valid(points_[ic])) {
+                continue;
+            }
+            const auto& a = projected[ia]; const auto& b = projected[ib]; const auto& c = projected[ic];
+            const double area = signedArea(a.screen, b.screen, c.screen);
+            if (std::abs(area) < 0.5) {
+                continue;
+            }
+            const QPointF sourceA(points_[ia][0], points_[ia][1]);
+            const QPointF sourceB(points_[ib][0], points_[ib][1]);
+            const QPointF sourceC(points_[ic][0], points_[ic][1]);
+            if (std::abs(signedArea(sourceA, sourceB, sourceC)) < 0.5) {
+                continue;
+            }
+            const int minX = std::max(0, static_cast<int>(std::floor(std::min({a.screen.x(), b.screen.x(), c.screen.x()}))));
+            const int maxX = std::min(canvasWidth - 1, static_cast<int>(std::ceil(std::max({a.screen.x(), b.screen.x(), c.screen.x()}))));
+            const int minY = std::max(0, static_cast<int>(std::floor(std::min({a.screen.y(), b.screen.y(), c.screen.y()}))));
+            const int maxY = std::min(canvasHeight - 1, static_cast<int>(std::ceil(std::max({a.screen.y(), b.screen.y(), c.screen.y()}))));
+            if (maxX < minX || maxY < minY) {
+                continue;
+            }
+            const bool isBackFacing = backFacing(a.rotated, b.rotated, c.rotated);
+            const int shade = std::clamp(static_cast<int>(std::lround(30.0 + (a.depth + b.depth + c.depth) * 16.0 / 3.0)), 18, 42);
+            for (int y = minY; y <= maxY; ++y) {
+                auto* scanLine = reinterpret_cast<QRgb*>(canvas.scanLine(y));
+                for (int x = minX; x <= maxX; ++x) {
+                    const QPointF pixel(x + 0.5, y + 0.5);
+                    const double w0 = signedArea(pixel, b.screen, c.screen) / area;
+                    const double w1 = signedArea(pixel, c.screen, a.screen) / area;
+                    const double w2 = 1.0 - w0 - w1;
+                    if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) {
+                        continue;
+                    }
+                    const float depth = static_cast<float>(w0 * a.depth + w1 * b.depth + w2 * c.depth);
+                    const size_t pixelIndex = static_cast<size_t>(y) * canvasWidth + x;
+                    if (depth >= zBuffer[pixelIndex]) {
+                        continue;
+                    }
+                    zBuffer[pixelIndex] = depth;
+                    if (isBackFacing) {
+                        scanLine[x] = qRgb(shade / 2, shade / 2 + 2, shade);
+                    } else {
+                        const double sourceX = w0 * sourceA.x() + w1 * sourceB.x() + w2 * sourceC.x();
+                        const double sourceY = w0 * sourceA.y() + w1 * sourceB.y() + w2 * sourceC.y();
+                        scanLine[x] = sampleTexture(texture_, sourceX, sourceY);
+                    }
+                    rendered = true;
+                }
+            }
+        }
+        if (rendered) {
+            painter.drawImage(0, 0, canvas);
+        }
+        return rendered;
+    }
+
+    void drawPointMesh(QPainter& painter, const std::vector<Projected>& projected) const {
+        std::vector<int> order;
+        order.reserve(projected.size());
+        for (int index = 0; index < static_cast<int>(projected.size()); ++index) {
+            if (valid(points_[index])) order.push_back(index);
+        }
+        std::sort(order.begin(), order.end(), [&projected](int left, int right) { return projected[left].depth < projected[right].depth; });
+        double minDepth = 0.0; double maxDepth = 1.0;
+        if (!order.empty()) {
+            minDepth = projected[order.front()].depth;
+            maxDepth = projected[order.back()].depth;
+        }
+        const double span = std::max(1e-6, maxDepth - minDepth);
+        for (const int index : order) {
+            const double ratio = (projected[index].depth - minDepth) / span;
+            const double radius = 2.2 + 2.0 * ratio;
+            painter.setPen(QPen(QColor(15, 23, 42), 1));
+            painter.setBrush(QColor::fromHsvF(0.55, 0.30 + 0.35 * ratio, 0.82 + 0.15 * ratio));
+            painter.drawEllipse(projected[index].screen, radius, radius);
+        }
+    }
+
+    void drawOverlayLandmarks(QPainter& painter, const Bounds& bounds) const {
+        if (overlayPoints_.empty() || points_.size() < 3) {
+            return;
+        }
+        std::vector<Vec3> mapped;
+        mapped.reserve(overlayPoints_.size());
+        for (const auto& overlay : overlayPoints_) {
+            if (!valid(overlay)) {
+                mapped.push_back({});
+                continue;
+            }
+            std::array<std::pair<double, int>, 4> nearest{{
+                {std::numeric_limits<double>::infinity(), -1}, {std::numeric_limits<double>::infinity(), -1},
+                {std::numeric_limits<double>::infinity(), -1}, {std::numeric_limits<double>::infinity(), -1},
+            }};
+            for (int index = 0; index < static_cast<int>(points_.size()); ++index) {
+                if (!valid(points_[index])) continue;
+                const double dx = points_[index][0] - overlay[0];
+                const double dy = points_[index][1] - overlay[1];
+                const double distance = dx * dx + dy * dy;
+                if (distance < nearest.back().first) {
+                    nearest.back() = {distance, index};
+                    std::sort(nearest.begin(), nearest.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+                }
+            }
+            double weightTotal = 0.0;
+            double z = 0.0;
+            for (const auto& [distance, index] : nearest) {
+                if (index < 0) continue;
+                const double weight = 1.0 / (distance + 1e-3);
+                z += points_[index][2] * weight;
+                weightTotal += weight;
+            }
+            mapped.push_back({overlay[0], overlay[1], weightTotal > 0.0 ? z / weightTotal : overlay[2]});
+        }
+        std::vector<Projected> projected;
+        projected.reserve(mapped.size());
+        for (const auto& point : mapped) projected.push_back(project(point, bounds));
+        painter.setPen(QPen(QColor(251, 191, 36, 185), 1));
+        for (const auto& [start, end] : kLandmarkEdges) {
+            if (start < static_cast<int>(projected.size()) && end < static_cast<int>(projected.size())) {
+                painter.drawLine(projected[start].screen, projected[end].screen);
+            }
+        }
+        std::vector<int> order(projected.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&projected](int left, int right) { return projected[left].depth < projected[right].depth; });
+        for (const int index : order) {
+            painter.setPen(QPen(QColor(15, 23, 42, 190), 1));
+            painter.setBrush(QColor(34, 211, 238, 220));
+            painter.drawEllipse(projected[index].screen, 1.45, 1.45);
+        }
+    }
+
+    std::vector<std::vector<double>> points_;
+    std::vector<std::vector<double>> overlayPoints_;
+    QImage texture_;
+    QString message_;
+    RenderMode renderMode_ = RenderMode::Points;
+    double yaw_ = 0.0;
+    double pitch_ = -0.15;
+    double zoom_ = 1.0;
+    QPointF lastMouse_;
+};
+
 class FaceSelectionPreview final : public QLabel {
 public:
     explicit FaceSelectionPreview(QWidget* parent = nullptr)
@@ -726,7 +1126,7 @@ private:
             setText("Select image");
             return;
         }
-        QImage source(imagePath_);
+        QImage source = loadPreviewImage(imagePath_);
         if (source.isNull()) {
             clear();
             setText("Image unavailable");
@@ -1142,12 +1542,16 @@ private:
         denseControlsLayout->setContentsMargins(0, 0, 0, 0);
         libraryMeshOverlayCheck_ = new QCheckBox("3D Landmarks", denseControls);
         libraryMeshOverlayCheck_->setChecked(true);
-        auto* generateLibraryMeshButton = new QPushButton("Generate Native Mesh", denseControls);
+        libraryMeshModeCombo_ = new QComboBox(denseControls);
+        libraryMeshModeCombo_->addItem("Points", "points");
+        libraryMeshModeCombo_->addItem("Textured", "textured");
+        auto* generateLibraryMeshButton = new QPushButton("Generate Dense Mesh", denseControls);
         libraryMeshStatusLabel_ = new QLabel("Select a face", denseControls);
         denseControlsLayout->addWidget(libraryMeshOverlayCheck_);
+        denseControlsLayout->addWidget(libraryMeshModeCombo_);
         denseControlsLayout->addWidget(generateLibraryMeshButton);
         denseControlsLayout->addWidget(libraryMeshStatusLabel_, 1);
-        libraryDenseMeshView_ = new PointCloudWidget(denseTab);
+        libraryDenseMeshView_ = new TexturedMeshWidget(denseTab);
         denseLayout->addWidget(denseControls);
         denseLayout->addWidget(libraryDenseMeshView_, 1);
 
@@ -1261,6 +1665,11 @@ private:
             }
         });
         connect(libraryMeshOverlayCheck_, &QCheckBox::toggled, this, [this] {
+            if (libraryPreviewFaceId_ > 0) {
+                updateLibrary3dPreview(libraryPreviewFaceId_);
+            }
+        });
+        connect(libraryMeshModeCombo_, &QComboBox::currentIndexChanged, this, [this] {
             if (libraryPreviewFaceId_ > 0) {
                 updateLibrary3dPreview(libraryPreviewFaceId_);
             }
@@ -1969,23 +2378,28 @@ private:
         meshFaceIdSpin_->setPrefix("Face ");
         meshOverlayCheck_ = new QCheckBox("3D Landmarks", controls);
         meshOverlayCheck_->setChecked(true);
+        meshModeCombo_ = new QComboBox(controls);
+        meshModeCombo_->addItem("Points", "points");
+        meshModeCombo_->addItem("Textured", "textured");
         auto* loadButton = new QPushButton("Load 3D Data", controls);
-        auto* generateButton = new QPushButton("Generate Native Mesh", controls);
+        auto* generateButton = new QPushButton("Generate Dense Mesh", controls);
         meshStatusLabel_ = new QLabel("Select a face", controls);
         controlsLayout->addWidget(meshFaceIdSpin_);
         controlsLayout->addWidget(meshOverlayCheck_);
+        controlsLayout->addWidget(meshModeCombo_);
         controlsLayout->addWidget(loadButton);
         controlsLayout->addWidget(generateButton);
         controlsLayout->addWidget(meshStatusLabel_, 1);
         layout->addWidget(controls);
 
-        meshView_ = new PointCloudWidget(page);
+        meshView_ = new TexturedMeshWidget(page);
         layout->addWidget(meshView_, 1);
         addMainTab(page, "Dense Mesh");
 
         connect(loadButton, &QPushButton::clicked, this, [this] { loadDenseMeshFace(); });
         connect(generateButton, &QPushButton::clicked, this, [this] { generateNativeMeshForSelectedFace(); });
         connect(meshOverlayCheck_, &QCheckBox::toggled, this, [this] { loadDenseMeshFace(); });
+        connect(meshModeCombo_, &QComboBox::currentIndexChanged, this, [this] { loadDenseMeshFace(); });
     }
 
     void buildRuntimeTab() {
@@ -2378,7 +2792,7 @@ private:
         if (label == nullptr) {
             return;
         }
-        QImage image(qs(face.sourcePath));
+        QImage image = loadPreviewImage(pathFrom(qs(face.sourcePath)));
         if (image.isNull()) {
             label->setText(fallbackText);
             label->setPixmap(QPixmap());
@@ -2450,7 +2864,7 @@ private:
                 libraryPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
-            QImage image(qs(face->sourcePath));
+            QImage image = loadPreviewImage(pathFrom(qs(face->sourcePath)));
             if (image.isNull()) {
                 libraryPreviewLabel_->setText("Image unavailable");
                 libraryPreviewLabel_->setPixmap(QPixmap());
@@ -2571,8 +2985,9 @@ private:
             }
 
             std::vector<std::vector<double>> meshPoints = face->faceMesh3d;
+            const bool textured = libraryMeshModeCombo_ != nullptr && libraryMeshModeCombo_->currentData().toString() == "textured";
             std::vector<std::vector<double>> overlay;
-            if (hasLandmarks && libraryMeshOverlayCheck_ != nullptr && libraryMeshOverlayCheck_->isChecked()) {
+            if (textured && hasLandmarks && libraryMeshOverlayCheck_ != nullptr && libraryMeshOverlayCheck_->isChecked()) {
                 overlay = face->landmarks3d;
             }
             const QString source = "cached MediaPipe dense mesh";
@@ -2582,6 +2997,8 @@ private:
                                                      .arg(meshPoints.size())
                                                      .arg(source));
             }
+            libraryDenseMeshView_->setTextureImage(loadPreviewImage(pathFrom(qs(face->sourcePath))));
+            libraryDenseMeshView_->setRenderMode(textured ? TexturedMeshWidget::RenderMode::Textured : TexturedMeshWidget::RenderMode::Points);
             libraryDenseMeshView_->setData(
                 std::move(meshPoints),
                 std::move(overlay),
@@ -3148,8 +3565,9 @@ private:
                 return;
             }
             std::vector<std::vector<double>> points = face->faceMesh3d;
+            const bool textured = meshModeCombo_ != nullptr && meshModeCombo_->currentData().toString() == "textured";
             std::vector<std::vector<double>> overlay;
-            if (hasDenseMesh && hasLandmarks && meshOverlayCheck_->isChecked()) {
+            if (textured && hasDenseMesh && hasLandmarks && meshOverlayCheck_->isChecked()) {
                 overlay = face->landmarks3d;
             }
             const QString source = "cached MediaPipe dense mesh";
@@ -3157,6 +3575,8 @@ private:
                                           .arg(face->id)
                                           .arg(points.size())
                                           .arg(source));
+            meshView_->setTextureImage(loadPreviewImage(pathFrom(qs(face->sourcePath))));
+            meshView_->setRenderMode(textured ? TexturedMeshWidget::RenderMode::Textured : TexturedMeshWidget::RenderMode::Points);
             meshView_->setData(
                 std::move(points),
                 std::move(overlay),
@@ -3553,7 +3973,7 @@ private:
         if (searchPreviewLabel_ == nullptr) {
             return;
         }
-        QImage image(searchImageEdit_ == nullptr ? QString() : searchImageEdit_->text());
+        QImage image = loadPreviewImage(searchImageEdit_ == nullptr ? QString() : searchImageEdit_->text());
         if (image.isNull()) {
             searchPreviewLabel_->setText("Query image unavailable");
             searchPreviewLabel_->setPixmap(QPixmap());
@@ -4150,7 +4570,7 @@ private:
             setCameraMatchPlaceholder(status);
             return;
         }
-        QImage image(qs(face->sourcePath));
+        QImage image = loadPreviewImage(pathFrom(qs(face->sourcePath)));
         if (image.isNull()) {
             setCameraMatchPlaceholder(status + " | preview unavailable");
             return;
@@ -4866,8 +5286,7 @@ private:
         if (libraryVisualTabs_ != nullptr) {
             libraryVisualTabs_->setCurrentIndex(0);
         }
-        const QString displayPath = QString::fromStdWString(imagePath.wstring());
-        QImage image(displayPath);
+        QImage image = loadPreviewImage(imagePath);
         if (image.isNull()) {
             libraryPreviewLabel_->setText("Image preview unavailable");
             libraryPreviewLabel_->setPixmap(QPixmap());
@@ -5071,8 +5490,9 @@ private:
     QTabWidget* libraryVisualTabs_ = nullptr;
     QPushButton* libraryFocusButton_ = nullptr;
     PointCloudWidget* libraryLandmarksView_ = nullptr;
-    PointCloudWidget* libraryDenseMeshView_ = nullptr;
+    TexturedMeshWidget* libraryDenseMeshView_ = nullptr;
     QCheckBox* libraryMeshOverlayCheck_ = nullptr;
+    QComboBox* libraryMeshModeCombo_ = nullptr;
     QLabel* libraryMeshStatusLabel_ = nullptr;
     QLineEdit* libraryPersonEdit_ = nullptr;
     QLineEdit* libraryTagsEdit_ = nullptr;
@@ -5209,8 +5629,9 @@ private:
     QLabel* clusterSummaryLabel_ = nullptr;
     QSpinBox* meshFaceIdSpin_ = nullptr;
     QCheckBox* meshOverlayCheck_ = nullptr;
+    QComboBox* meshModeCombo_ = nullptr;
     QLabel* meshStatusLabel_ = nullptr;
-    PointCloudWidget* meshView_ = nullptr;
+    TexturedMeshWidget* meshView_ = nullptr;
     QComboBox* runtimeModeCombo_ = nullptr;
     QLabel* runtimeBuildLabel_ = nullptr;
     QLabel* runtimeProviderLabel_ = nullptr;
@@ -5554,6 +5975,57 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+
+    if (argc >= 5 && std::string(argv[1]) == "--mesh-render-smoke") {
+        QApplication renderApp(argc, argv);
+        try {
+            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            const auto faceId = std::strtoll(argv[3], nullptr, 10);
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value() || !fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d)) {
+                return 2;
+            }
+            const QImage source = loadPreviewImage(pathFrom(qs(face->sourcePath)));
+            if (source.isNull()) {
+                return 3;
+            }
+
+            TexturedMeshWidget preview;
+            preview.resize(640, 480);
+            preview.setData(face->faceMesh3d, face->landmarks3d, "native mesh render smoke");
+            preview.setTextureImage(source);
+            preview.setRenderMode(TexturedMeshWidget::RenderMode::Textured);
+            if (argc >= 7) {
+                preview.setView(std::strtod(argv[5], nullptr), std::strtod(argv[6], nullptr));
+            }
+
+            QImage rendered(preview.size(), QImage::Format_ARGB32);
+            rendered.fill(QColor(17, 24, 39));
+            QPainter painter(&rendered);
+            preview.render(&painter);
+            painter.end();
+
+            int changedPixels = 0;
+            for (int y = 0; y < rendered.height(); ++y) {
+                const auto* row = reinterpret_cast<const QRgb*>(rendered.constScanLine(y));
+                for (int x = 0; x < rendered.width(); ++x) {
+                    if (row[x] != qRgb(17, 24, 39)) {
+                        ++changedPixels;
+                    }
+                }
+            }
+            const auto outputPath = pathFrom(QString::fromLocal8Bit(argv[4]));
+            if (!outputPath.parent_path().empty()) {
+                std::filesystem::create_directories(outputPath.parent_path());
+            }
+            if (changedPixels <= (rendered.width() * rendered.height()) / 20) {
+                return 4;
+            }
+            return rendered.save(QString::fromStdWString(outputPath.wstring())) ? 0 : 5;
+        } catch (...) {
+            return 9;
+        }
+    }
 
     QApplication app(argc, argv);
     MainWindow window;

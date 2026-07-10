@@ -61,14 +61,11 @@ if (-not (Test-Path $exePath)) {
 
 $modelRootPath = Resolve-Path $ModelRoot
 $mediaPipeModelPath = Resolve-Path $MediaPipeModel
-$vcpkgInstalled = Join-Path $buildRoot "vcpkg_installed\x64-windows"
-$qtPluginRoot = Join-Path $vcpkgInstalled ("debug\Qt6\plugins")
-if ($Configuration -eq "Release") {
-    $qtPluginRoot = Join-Path $vcpkgInstalled "Qt6\plugins"
-}
-$platformPlugin = Join-Path $qtPluginRoot "platforms"
-if (-not (Test-Path $platformPlugin)) {
-    throw "Qt platform plugins were not found under $qtPluginRoot"
+$qtRuntimeEntries = @("qt.conf", "platforms", "imageformats")
+foreach ($entry in $qtRuntimeEntries) {
+    if (-not (Test-Path (Join-Path $binaryDir $entry))) {
+        throw "Qt runtime entry '$entry' was not staged beside FscStudioQt.exe. Reconfigure and rebuild the Qt preset first."
+    }
 }
 
 if (Test-Path $outputFull) {
@@ -83,11 +80,8 @@ Get-ChildItem -LiteralPath $binaryDir -Filter "*.dll" | ForEach-Object {
 if (-not (Test-Path (Join-Path $outputFull "libmediapipe.dll"))) {
     throw "libmediapipe.dll was not staged by the native build. Configure FSC_MEDIAPIPE_RUNTIME_PATH and rebuild before packaging."
 }
-
-$pluginsOut = Join-Path $outputFull "platforms"
-New-Item -ItemType Directory -Force -Path $pluginsOut | Out-Null
-Get-ChildItem -LiteralPath $platformPlugin -Filter "qwindows*.dll" | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $pluginsOut
+foreach ($entry in $qtRuntimeEntries) {
+    Copy-Item -LiteralPath (Join-Path $binaryDir $entry) -Destination $outputFull -Recurse -Force
 }
 
 $modelOut = Join-Path $outputFull "models\insightface\models"
