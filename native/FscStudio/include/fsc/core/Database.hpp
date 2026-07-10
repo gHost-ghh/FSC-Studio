@@ -31,6 +31,7 @@ public:
     [[nodiscard]] std::vector<FaceRecord> loadFaces(bool includeIgnored = true, int limit = 0) const;
     [[nodiscard]] std::vector<FaceRecord> loadFacesForPerson(int64_t personId, bool includeIgnored = true) const;
     [[nodiscard]] std::optional<FaceRecord> loadFace(int64_t faceId) const;
+    [[nodiscard]] std::optional<FaceRecord> loadFacePreview(int64_t faceId) const;
     [[nodiscard]] std::vector<PersonSummary> loadPeople() const;
     [[nodiscard]] std::vector<std::string> loadTags() const;
     [[nodiscard]] std::vector<IdentityProfile> loadIdentityProfiles() const;

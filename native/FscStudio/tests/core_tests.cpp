@@ -150,6 +150,11 @@ void databasePersonActionsRoundTrip() {
         const auto face = database.loadFace(faceId);
         assert(face.has_value());
         assert(face->personId == 0);
+        const auto preview = database.loadFacePreview(faceId);
+        assert(preview.has_value());
+        assert(preview->sourcePath == "person-test.jpg");
+        assert(preview->bbox.size() == 4);
+        assert(preview->embedding.empty());
     }
     std::filesystem::remove(path);
     std::filesystem::remove(path.string() + "-wal");

@@ -1013,6 +1013,25 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     return record;
 }
 
+std::optional<FaceRecord> Database::loadFacePreview(int64_t faceId) const {
+    const char* sql =
+        "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), "
+        "COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, '') "
+        "FROM faces f WHERE f.id = ?1";
+    Statement statement(db_, sql);
+    sqlite3_bind_int64(statement.get(), 1, faceId);
+    if (sqlite3_step(statement.get()) != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    FaceRecord record;
+    record.id = sqlite3_column_int64(statement.get(), 0);
+    record.fileName = textColumn(statement.get(), 1);
+    record.sourcePath = textColumn(statement.get(), 2);
+    record.bbox = doubleListFromJson(textColumn(statement.get(), 3));
+    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 4));
+    return record;
+}
+
 std::vector<PersonSummary> Database::loadPeople() const {
     const char* sql =
         "SELECT p.id, p.name, COALESCE(p.notes, ''), COUNT(f.id) AS face_count, "

@@ -32,7 +32,7 @@ continuing that prototype.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
-- Search now has threshold/min-quality/include-ignored/person/tag controls, an identity candidate table, a separate result preview with fast top-result cycling, and native result/identity assignment actions.
+- Search now has threshold/min-quality/include-ignored/person/tag controls, an identity candidate table, a throttled progressive result preview while filtered database faces are compared, and native result/identity assignment actions. It ends on the best match rather than cycling completed results.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
 - Camera captures native frames, downsizes recognition frames by a configurable process-size limit, overlays recent detected face boxes, and shows per-face smoothed identity/gallery candidates plus similar database hits beside a best-match preview.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.

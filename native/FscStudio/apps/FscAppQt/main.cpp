@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -1625,7 +1626,7 @@ private:
         connect(searchIdentityTable_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelectedSearchIdentityPreview(); });
         connect(assignResultButton, &QPushButton::clicked, this, [this] { assignSelectedSearchResult(); });
         connect(confirmIdentityButton, &QPushButton::clicked, this, [this] { confirmSearchIdentity(); });
-        connect(searchPreviewTimer_, &QTimer::timeout, this, [this] { advanceSearchPreviewAnimation(); });
+        connect(searchPreviewTimer_, &QTimer::timeout, this, [this] { advanceSearchProgress(); });
         refreshSearchFilterOptions();
     }
 
@@ -3604,9 +3605,7 @@ private:
             return;
         }
         try {
-            if (searchPreviewTimer_ != nullptr) {
-                searchPreviewTimer_->stop();
-            }
+            resetSearchProgress();
             int64_t databaseFaceId = 0;
             const auto embedding = currentSearchEmbedding(&databaseFaceId);
             currentSearchDatabaseFaceId_ = databaseFaceId;
@@ -3642,48 +3641,157 @@ private:
                     return false;
                 }),
                 records.end());
-            searchHits_ = fsc::core::searchFaces(
-                records,
-                embedding,
-                topKSpin_->value(),
-                searchThresholdSpin_ != nullptr ? searchThresholdSpin_->value() : -1.0,
-                includeIgnored);
+            searchHits_.clear();
             searchTable_->setRowCount(0);
-            for (auto it = searchHits_.begin(); it != searchHits_.end();) {
-                if (databaseFaceId > 0 && it->record.id == databaseFaceId) {
-                    it = searchHits_.erase(it);
-                } else {
-                    ++it;
+            searchIdentityTable_->setRowCount(0);
+            lastSearchIdentityResult_ = {};
+            if (identityLabel_ != nullptr) {
+                identityLabel_->setText("Identity: searching...");
+            }
+            if (searchResultPreviewLabel_ != nullptr) {
+                searchResultPreviewLabel_->setText("Comparing database faces...");
+                searchResultPreviewLabel_->setPixmap(QPixmap());
+            }
+            beginSearchProgress(std::move(records), embedding, databaseFaceId);
+        } catch (const std::exception& ex) {
+            showError(ex);
+        }
+    }
+
+    void resetSearchProgress() {
+        if (searchPreviewTimer_ != nullptr) {
+            searchPreviewTimer_->stop();
+        }
+        searchProgressActive_ = false;
+        searchProgressRecords_.clear();
+        searchProgressHits_.clear();
+        searchProgressQuery_.clear();
+        searchProgressCursor_ = 0;
+        searchProgressPreviewLastMs_ = -1;
+    }
+
+    void beginSearchProgress(std::vector<fsc::core::FaceRecord> records, const std::vector<float>& embedding, int64_t databaseFaceId) {
+        searchProgressRecords_ = std::move(records);
+        searchProgressQuery_ = fsc::core::normalize(embedding);
+        searchProgressTopK_ = topKSpin_ != nullptr ? topKSpin_->value() : 30;
+        searchProgressThreshold_ = searchThresholdSpin_ != nullptr ? searchThresholdSpin_->value() : -1.0;
+        searchProgressDatabaseFaceId_ = databaseFaceId;
+        searchProgressCursor_ = 0;
+        searchProgressHits_.clear();
+        searchProgressPreviewLastMs_ = -1;
+        searchProgressClock_.start();
+        searchProgressActive_ = true;
+        if (searchProgressRecords_.empty()) {
+            finishSearchProgress();
+            return;
+        }
+        statusBar()->showMessage(QString("Comparing 0/%1 database faces").arg(searchProgressRecords_.size()));
+        if (searchPreviewTimer_ != nullptr) {
+            // Computation yields after a short time slice. Rendering is separately throttled.
+            searchPreviewTimer_->setInterval(0);
+            searchPreviewTimer_->start();
+        }
+    }
+
+    void showSearchProgressPreview(const fsc::core::FaceRecord& record, size_t current, size_t total) {
+        updateSearchResultPreviewForFace(record.id);
+        searchProgressPreviewLastMs_ = searchProgressClock_.elapsed();
+        statusBar()->showMessage(QString("Comparing %1/%2: %3")
+                                     .arg(current)
+                                     .arg(total)
+                                     .arg(qs(record.fileName)));
+    }
+
+    void advanceSearchProgress() {
+        if (!searchProgressActive_) {
+            return;
+        }
+        const size_t total = searchProgressRecords_.size();
+        if (searchProgressCursor_ == 0 && total > 0) {
+            showSearchProgressPreview(searchProgressRecords_.front(), 1, total);
+        }
+
+        QElapsedTimer workSlice;
+        workSlice.start();
+        size_t processed = 0;
+        while (searchProgressCursor_ < total && (processed < 64 || workSlice.elapsed() < 6)) {
+            const auto& record = searchProgressRecords_[searchProgressCursor_];
+            if (record.embedding.size() == searchProgressQuery_.size()) {
+                const double score = fsc::core::dot(record.embedding, searchProgressQuery_);
+                if (score >= searchProgressThreshold_) {
+                    searchProgressHits_.push_back({record, score});
                 }
             }
-            for (int index = 0; index < static_cast<int>(searchHits_.size()); ++index) {
-                const auto& hit = searchHits_[static_cast<size_t>(index)];
-                if (databaseFaceId > 0 && hit.record.id == databaseFaceId) {
-                    continue;
-                }
-                const int row = searchTable_->rowCount();
-                searchTable_->insertRow(row);
-                searchTable_->setItem(row, 0, item(QString::number(index + 1)));
-                searchTable_->setItem(row, 1, item(QString::number(hit.record.id)));
-                searchTable_->setItem(row, 2, item(qs(hit.record.fileName)));
-                searchTable_->setItem(row, 3, item(qs(hit.record.personName)));
-                searchTable_->setItem(row, 4, item(qs(hit.record.tagText)));
-                searchTable_->setItem(row, 5, numberItem(hit.cosine, 4));
-                searchTable_->setItem(row, 6, numberItem(hit.similarityPercent(), 2));
-                searchTable_->setItem(row, 7, numberItem(hit.record.qualityScore, 3));
-            }
-            populateSearchIdentityResult(fsc::core::identifyPerson(database_->loadIdentityProfiles(), embedding, selectedIdentityMode(), 5));
-            searchTable_->resizeColumnsToContents();
-            if (!searchHits_.empty()) {
-                searchTable_->selectRow(0);
-                startSearchPreviewAnimation();
-            } else if (searchResultPreviewLabel_ != nullptr) {
+            ++searchProgressCursor_;
+            ++processed;
+        }
+
+        if (searchProgressCursor_ == 0) {
+            finishSearchProgress();
+            return;
+        }
+        const bool completed = searchProgressCursor_ >= total;
+        const qint64 now = searchProgressClock_.elapsed();
+        if (completed || searchProgressPreviewLastMs_ < 0 || now - searchProgressPreviewLastMs_ >= 80) {
+            showSearchProgressPreview(searchProgressRecords_[searchProgressCursor_ - 1], searchProgressCursor_, total);
+        }
+        if (completed) {
+            finishSearchProgress();
+        }
+    }
+
+    void finishSearchProgress() {
+        if (searchPreviewTimer_ != nullptr) {
+            searchPreviewTimer_->stop();
+            searchPreviewTimer_->setInterval(70);
+        }
+        searchProgressActive_ = false;
+        std::sort(searchProgressHits_.begin(), searchProgressHits_.end(), [](const auto& left, const auto& right) {
+            return left.cosine > right.cosine;
+        });
+        if (searchProgressTopK_ > 0 && searchProgressHits_.size() > static_cast<size_t>(searchProgressTopK_)) {
+            searchProgressHits_.resize(static_cast<size_t>(searchProgressTopK_));
+        }
+        searchHits_ = std::move(searchProgressHits_);
+        searchHits_.erase(
+            std::remove_if(searchHits_.begin(), searchHits_.end(), [this](const auto& hit) {
+                return searchProgressDatabaseFaceId_ > 0 && hit.record.id == searchProgressDatabaseFaceId_;
+            }),
+            searchHits_.end());
+        const auto completedQuery = searchProgressQuery_;
+        searchProgressRecords_.clear();
+        searchProgressQuery_.clear();
+
+        searchTable_->setRowCount(static_cast<int>(searchHits_.size()));
+        for (int row = 0; row < static_cast<int>(searchHits_.size()); ++row) {
+            const auto& hit = searchHits_[static_cast<size_t>(row)];
+            searchTable_->setItem(row, 0, item(QString::number(row + 1)));
+            searchTable_->setItem(row, 1, item(QString::number(hit.record.id)));
+            searchTable_->setItem(row, 2, item(qs(hit.record.fileName)));
+            searchTable_->setItem(row, 3, item(qs(hit.record.personName)));
+            searchTable_->setItem(row, 4, item(qs(hit.record.tagText)));
+            searchTable_->setItem(row, 5, numberItem(hit.cosine, 4));
+            searchTable_->setItem(row, 6, numberItem(hit.similarityPercent(), 2));
+            searchTable_->setItem(row, 7, numberItem(hit.record.qualityScore, 3));
+        }
+        populateSearchIdentityResult(fsc::core::identifyPerson(
+            database_->loadIdentityProfiles(),
+            completedQuery,
+            selectedIdentityMode(),
+            5));
+        searchTable_->resizeColumnsToContents();
+        if (!searchHits_.empty()) {
+            searchTable_->selectRow(0);
+            updateSearchResultPreviewForFace(searchHits_.front().record.id);
+            statusBar()->showMessage(QString("Search complete: %1 result(s). Best match: face %2")
+                                         .arg(searchHits_.size())
+                                         .arg(searchHits_.front().record.id));
+        } else {
+            if (searchResultPreviewLabel_ != nullptr) {
                 searchResultPreviewLabel_->setText("No results");
                 searchResultPreviewLabel_->setPixmap(QPixmap());
             }
-            statusBar()->showMessage(QString("Search complete: %1 result(s)").arg(searchHits_.size()));
-        } catch (const std::exception& ex) {
-            showError(ex);
+            statusBar()->showMessage("Search complete: 0 result(s)");
         }
     }
 
@@ -3738,7 +3846,7 @@ private:
             return;
         }
         try {
-            const auto face = database_->loadFace(faceId);
+            const auto face = database_->loadFacePreview(faceId);
             if (!face.has_value()) {
                 searchResultPreviewLabel_->setText("Face not found");
                 searchResultPreviewLabel_->setPixmap(QPixmap());
@@ -3755,6 +3863,9 @@ private:
         if (searchTable_ == nullptr || searchTable_->selectionModel() == nullptr) {
             return;
         }
+        if (searchProgressActive_) {
+            return;
+        }
         if (searchPreviewTimer_ != nullptr && searchPreviewTimer_->isActive()) {
             searchPreviewTimer_->stop();
         }
@@ -3766,46 +3877,6 @@ private:
         if (row >= 0 && row < static_cast<int>(searchHits_.size())) {
             updateSearchResultPreviewForFace(searchHits_[static_cast<size_t>(row)].record.id);
         }
-    }
-
-    void startSearchPreviewAnimation() {
-        if (searchPreviewTimer_ == nullptr || searchHits_.empty()) {
-            if (!searchHits_.empty()) {
-                updateSearchResultPreviewForFace(searchHits_.front().record.id);
-            }
-            return;
-        }
-        searchPreviewAnimationIndex_ = 0;
-        const int previewCount = std::min<int>(static_cast<int>(searchHits_.size()), 24);
-        if (previewCount <= 1) {
-            updateSearchResultPreviewForFace(searchHits_.front().record.id);
-            return;
-        }
-        updateSearchResultPreviewForFace(searchHits_.front().record.id);
-        searchPreviewTimer_->start();
-    }
-
-    void advanceSearchPreviewAnimation() {
-        if (searchPreviewTimer_ == nullptr || searchHits_.empty()) {
-            return;
-        }
-        const int previewCount = std::min<int>(static_cast<int>(searchHits_.size()), 24);
-        ++searchPreviewAnimationIndex_;
-        if (searchPreviewAnimationIndex_ >= previewCount) {
-            searchPreviewTimer_->stop();
-            updateSearchResultPreviewForFace(searchHits_.front().record.id);
-            if (searchTable_ != nullptr && searchTable_->rowCount() > 0) {
-                searchTable_->selectRow(0);
-            }
-            statusBar()->showMessage(QString("Search preview stopped at best match: face %1").arg(searchHits_.front().record.id));
-            return;
-        }
-        const auto& hit = searchHits_[static_cast<size_t>(searchPreviewAnimationIndex_)];
-        updateSearchResultPreviewForFace(hit.record.id);
-        statusBar()->showMessage(QString("Previewing result %1/%2: face %3")
-                                     .arg(searchPreviewAnimationIndex_ + 1)
-                                     .arg(previewCount)
-                                     .arg(hit.record.id));
     }
 
     void updateSelectedSearchIdentityPreview() {
@@ -5079,10 +5150,19 @@ private:
     QTimer* searchPreviewTimer_ = nullptr;
     std::vector<fsc::vision::AnalyzedFace> searchQueryFaces_;
     std::vector<fsc::core::SearchHit> searchHits_;
+    std::vector<fsc::core::FaceRecord> searchProgressRecords_;
+    std::vector<fsc::core::SearchHit> searchProgressHits_;
+    std::vector<float> searchProgressQuery_;
+    QElapsedTimer searchProgressClock_;
     fsc::core::IdentityResult lastSearchIdentityResult_;
     int64_t currentSearchDatabaseFaceId_ = 0;
+    int64_t searchProgressDatabaseFaceId_ = 0;
     int searchQueryFaceIndex_ = 0;
-    int searchPreviewAnimationIndex_ = 0;
+    int searchProgressTopK_ = 30;
+    double searchProgressThreshold_ = -1.0;
+    size_t searchProgressCursor_ = 0;
+    qint64 searchProgressPreviewLastMs_ = -1;
+    bool searchProgressActive_ = false;
     QSpinBox* cameraIndexSpin_ = nullptr;
     QDoubleSpinBox* cameraThresholdSpin_ = nullptr;
     QSpinBox* cameraTopKSpin_ = nullptr;
