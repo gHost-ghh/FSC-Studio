@@ -30,7 +30,7 @@ continuing that prototype.
 - Minimal Qt Widgets desktop shell with Python-style left navigation for Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime; the People page can add people, assign faces, and train identity profiles, and Library owns image import plus selected-face Image / 3D Landmarks / Dense Mesh visual tabs.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
 - Dense Mesh tab reads cached `face_mesh3d_json` / `landmarks3d_json` from `.fscdb` and renders an interactive native point-cloud preview without Python.
-- Dense Mesh tab can generate a deterministic native fallback mesh from cached 3D landmarks; this is not yet equivalent to the Python MediaPipe textured dense mesh.
+- Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
 - Search now has threshold/min-quality/include-ignored/person/tag controls, an identity candidate table, a separate result preview with fast top-result cycling, and native result/identity assignment actions.
 - Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.

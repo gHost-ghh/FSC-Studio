@@ -2555,24 +2555,26 @@ private:
                     QString("Face %1 3D landmarks (%2)").arg(face->id).arg(face->landmarks3d.size()));
             }
 
-            const bool hasDenseMesh = !face->faceMesh3d.empty();
+            const bool hasDenseMesh = fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d);
             const bool hasLandmarks = !face->landmarks3d.empty();
-            if (!hasDenseMesh && !hasLandmarks) {
-                libraryDenseMeshView_->setMessage("No cached dense mesh or 3D landmarks");
+            if (!hasDenseMesh) {
+                const QString detail = face->faceMesh3d.empty()
+                    ? "No cached MediaPipe dense mesh. Select Generate Mesh to analyze the source image."
+                    : QString("Cached dense mesh is incompatible (%1 points; expected 478). Select Generate Mesh to repair it.")
+                          .arg(face->faceMesh3d.size());
+                libraryDenseMeshView_->setMessage(detail);
                 if (libraryMeshStatusLabel_ != nullptr) {
-                    libraryMeshStatusLabel_->setText("No cached 3D data");
+                    libraryMeshStatusLabel_->setText(detail);
                 }
                 return;
             }
 
-            std::vector<std::vector<double>> meshPoints = hasDenseMesh
-                ? face->faceMesh3d
-                : fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            std::vector<std::vector<double>> meshPoints = face->faceMesh3d;
             std::vector<std::vector<double>> overlay;
             if (hasLandmarks && libraryMeshOverlayCheck_ != nullptr && libraryMeshOverlayCheck_->isChecked()) {
                 overlay = face->landmarks3d;
             }
-            const QString source = hasDenseMesh ? "cached dense mesh" : "native fallback mesh";
+            const QString source = "cached MediaPipe dense mesh";
             if (libraryMeshStatusLabel_ != nullptr) {
                 libraryMeshStatusLabel_->setText(QString("Face %1: %2 point(s) from %3")
                                                      .arg(face->id)
@@ -2592,6 +2594,25 @@ private:
         }
     }
 
+    std::vector<std::vector<double>> buildMediaPipeMeshForFace(const fsc::core::FaceRecord& face) {
+        if (face.sourcePath.empty()) {
+            throw std::runtime_error("This face has no source image for MediaPipe dense-mesh analysis.");
+        }
+        const std::filesystem::path sourcePath = face.sourcePath;
+        if (!std::filesystem::is_regular_file(sourcePath)) {
+            throw std::runtime_error("The source image for this face is no longer available: " + sourcePath.string());
+        }
+        const auto modelPath = fsc::mesh::defaultMediaPipeFaceLandmarkerModelPath();
+        if (!mediaPipeFaceLandmarker_ || mediaPipeFaceLandmarkerModelPath_ != modelPath) {
+            fsc::mesh::MediaPipeFaceLandmarkerOptions options;
+            options.modelAssetPath = modelPath;
+            mediaPipeFaceLandmarker_ = std::make_unique<fsc::mesh::MediaPipeFaceLandmarker>(std::move(options));
+            mediaPipeFaceLandmarkerModelPath_ = modelPath;
+        }
+        const auto image = fsc::vision::loadImageRgb(sourcePath);
+        return fsc::mesh::selectBestMediaPipeFaceMesh(mediaPipeFaceLandmarker_->detect(image), face.bbox);
+    }
+
     void generateLibraryMeshForSelectedFace() {
         if (!database_ || libraryPreviewFaceId_ <= 0) {
             return;
@@ -2601,16 +2622,13 @@ private:
             if (!face.has_value()) {
                 throw std::runtime_error("Face id not found.");
             }
-            if (face->landmarks3d.empty()) {
-                throw std::runtime_error("This face has no cached 3D landmarks to build a native mesh from.");
-            }
-            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            const auto mesh = buildMediaPipeMeshForFace(*face);
             database_->updateFaceMesh3d(libraryPreviewFaceId_, mesh);
             updateLibrary3dPreview(libraryPreviewFaceId_);
             if (meshFaceIdSpin_ != nullptr && meshFaceIdSpin_->value() == libraryPreviewFaceId_) {
                 loadDenseMeshFace();
             }
-            statusBar()->showMessage(QString("Generated native mesh for face %1 (%2 points)").arg(libraryPreviewFaceId_).arg(mesh.size()));
+            statusBar()->showMessage(QString("Generated MediaPipe dense mesh for face %1 (%2 points)").arg(libraryPreviewFaceId_).arg(mesh.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -3117,19 +3135,23 @@ private:
             if (!face.has_value()) {
                 throw std::runtime_error("Face id not found.");
             }
-            const bool hasDenseMesh = !face->faceMesh3d.empty();
+            const bool hasDenseMesh = fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d);
             const bool hasLandmarks = !face->landmarks3d.empty();
-            if (!hasDenseMesh && !hasLandmarks) {
-                meshStatusLabel_->setText("No cached 3D data");
-                meshView_->setMessage("No cached dense mesh or 3D landmarks");
+            if (!hasDenseMesh) {
+                const QString detail = face->faceMesh3d.empty()
+                    ? "No cached MediaPipe dense mesh. Generate Mesh to analyze the source image."
+                    : QString("Cached mesh is incompatible (%1 points; expected 478). Generate Mesh to repair it.")
+                          .arg(face->faceMesh3d.size());
+                meshStatusLabel_->setText(detail);
+                meshView_->setMessage(detail);
                 return;
             }
-            std::vector<std::vector<double>> points = hasDenseMesh ? face->faceMesh3d : face->landmarks3d;
+            std::vector<std::vector<double>> points = face->faceMesh3d;
             std::vector<std::vector<double>> overlay;
             if (hasDenseMesh && hasLandmarks && meshOverlayCheck_->isChecked()) {
                 overlay = face->landmarks3d;
             }
-            const QString source = hasDenseMesh ? "cached dense mesh" : "3D landmarks";
+            const QString source = "cached MediaPipe dense mesh";
             meshStatusLabel_->setText(QString("Face %1: %2 point(s) from %3")
                                           .arg(face->id)
                                           .arg(points.size())
@@ -3153,13 +3175,10 @@ private:
             if (!face.has_value()) {
                 throw std::runtime_error("Face id not found.");
             }
-            if (face->landmarks3d.empty()) {
-                throw std::runtime_error("This face has no cached 3D landmarks to build a native mesh from.");
-            }
-            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            const auto mesh = buildMediaPipeMeshForFace(*face);
             database_->updateFaceMesh3d(faceId, mesh);
             loadDenseMeshFace();
-            statusBar()->showMessage(QString("Generated native mesh for face %1 (%2 points)").arg(faceId).arg(mesh.size()));
+            statusBar()->showMessage(QString("Generated MediaPipe dense mesh for face %1 (%2 points)").arg(faceId).arg(mesh.size()));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -5129,6 +5148,8 @@ private:
     std::vector<fsc::vision::AnalyzedFace> latestCameraFaces_;
     std::set<int> latestCameraMatchedFaceIndexes_;
     std::chrono::steady_clock::time_point latestCameraFacesAt_;
+    std::unique_ptr<fsc::mesh::MediaPipeFaceLandmarker> mediaPipeFaceLandmarker_;
+    std::filesystem::path mediaPipeFaceLandmarkerModelPath_;
 #ifdef FSC_ENABLE_OPENCV
     cv::VideoCapture camera_;
     cv::Mat lastCameraFrame_;
@@ -5279,10 +5300,7 @@ int main(int argc, char** argv) {
             if (!face.has_value() || face->landmarks3d.empty()) {
                 return 1;
             }
-            const auto mesh = face->faceMesh3d.empty()
-                ? fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d)
-                : face->faceMesh3d;
-            return !mesh.empty() ? 0 : 1;
+            return fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d) ? 0 : 1;
         } catch (...) {
             return 1;
         }
@@ -5292,13 +5310,16 @@ int main(int argc, char** argv) {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto face = database.loadFace(faceId);
-            if (!face.has_value() || face->landmarks3d.empty()) {
+            if (!face.has_value() || face->sourcePath.empty() || !std::filesystem::is_regular_file(face->sourcePath)) {
                 return 1;
             }
-            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            fsc::mesh::MediaPipeFaceLandmarker landmarker;
+            const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
+                landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
+                face->bbox);
             database.updateFaceMesh3d(faceId, mesh);
             const auto updated = database.loadFace(faceId);
-            return updated.has_value() && !updated->faceMesh3d.empty() ? 0 : 1;
+            return updated.has_value() && fsc::mesh::isMediaPipeFaceMesh(updated->faceMesh3d) ? 0 : 1;
         } catch (...) {
             return 1;
         }

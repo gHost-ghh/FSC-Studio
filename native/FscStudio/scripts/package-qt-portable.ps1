@@ -5,6 +5,7 @@ param(
     [string]$BuildDir = "",
     [string]$OutputDir = "",
     [string]$ModelRoot = "D:\FSC\model\insightface\models",
+    [string]$MediaPipeModel = "",
     [switch]$Camera,
     [switch]$DirectML,
     [switch]$AllowOutsideOutput,
@@ -15,6 +16,10 @@ $ErrorActionPreference = "Stop"
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..")
+$workspaceRoot = Resolve-Path (Join-Path $projectRoot "..\..")
+if (-not $MediaPipeModel) {
+    $MediaPipeModel = Join-Path $workspaceRoot "model\mediapipe\face_landmarker.task"
+}
 if (-not $BuildDir) {
     $flavor = ""
     if ($Camera) {
@@ -55,6 +60,7 @@ if (-not (Test-Path $exePath)) {
 }
 
 $modelRootPath = Resolve-Path $ModelRoot
+$mediaPipeModelPath = Resolve-Path $MediaPipeModel
 $vcpkgInstalled = Join-Path $buildRoot "vcpkg_installed\x64-windows"
 $qtPluginRoot = Join-Path $vcpkgInstalled ("debug\Qt6\plugins")
 if ($Configuration -eq "Release") {
@@ -74,6 +80,9 @@ Copy-Item -LiteralPath $exePath -Destination $outputFull
 Get-ChildItem -LiteralPath $binaryDir -Filter "*.dll" | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $outputFull
 }
+if (-not (Test-Path (Join-Path $outputFull "libmediapipe.dll"))) {
+    throw "libmediapipe.dll was not staged by the native build. Configure FSC_MEDIAPIPE_RUNTIME_PATH and rebuild before packaging."
+}
 
 $pluginsOut = Join-Path $outputFull "platforms"
 New-Item -ItemType Directory -Force -Path $pluginsOut | Out-Null
@@ -84,6 +93,9 @@ Get-ChildItem -LiteralPath $platformPlugin -Filter "qwindows*.dll" | ForEach-Obj
 $modelOut = Join-Path $outputFull "models\insightface\models"
 New-Item -ItemType Directory -Force -Path $modelOut | Out-Null
 Copy-Item -LiteralPath (Join-Path $modelRootPath "buffalo_l") -Destination $modelOut -Recurse -Force
+$mediaPipeOut = Join-Path $outputFull "models\mediapipe"
+New-Item -ItemType Directory -Force -Path $mediaPipeOut | Out-Null
+Copy-Item -LiteralPath $mediaPipeModelPath -Destination (Join-Path $mediaPipeOut "face_landmarker.task") -Force
 
 $launcher = Join-Path $outputFull "Launch-FSCStudio.bat"
 Set-Content -LiteralPath $launcher -Encoding ASCII -Value "@echo off`r`nstart """" ""%~dp0FscStudioQt.exe"" %*`r`n"
@@ -174,6 +186,11 @@ $manifest = [ordered]@{
     includes_python_runtime = $false
     includes_user_database = $false
     model_root = "models/insightface/models"
+    mediapipe = [ordered]@{
+        runtime = "libmediapipe.dll"
+        model = "models/mediapipe/face_landmarker.task"
+        python_runtime_required = $false
+    }
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputFull "package-manifest.json") -Encoding UTF8
 

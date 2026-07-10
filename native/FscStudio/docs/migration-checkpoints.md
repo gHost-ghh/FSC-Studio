@@ -80,20 +80,20 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: cached 3D data display, native fallback mesh generation, and native Camera capture started; MediaPipe-equivalent textured Dense Mesh generation pending.
+Status: cached 3D data display, MediaPipe-native 478-point Dense Mesh generation, and native Camera capture are implemented.
 
 Acceptance:
 
 - Read and display existing `landmarks3d_json` and `face_mesh3d_json` without Python.
-- Generate Dense Mesh natively or through a clearly documented native dependency.
+- Generate Dense Mesh through MediaPipe's native Windows C API using the same task asset and point convention as Python.
 - Camera uses native capture, native inference, cached identity profiles, and short-term smoothing.
 
 Current Dense Mesh shell:
 
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
 - Qt Dense Mesh tab renders cached dense mesh or falls back to 3D landmarks in a native draggable point-cloud preview.
-- Qt Dense Mesh tab can generate and cache a deterministic native fallback mesh from existing 3D landmarks.
-- `fsc_native_probe <database.fscdb> build-mesh <face_id>` writes fallback `face_mesh3d_json` without Python.
+- Qt Dense Mesh tabs generate and cache a validated 478-point MediaPipe mesh from the original source image, never from the 68-point landmark cache.
+- `fsc_native_probe <database.fscdb> build-mesh <face_id> <face_landmarker.task>` writes the MediaPipe `face_mesh3d_json` without Python. `repair-invalid-meshes` removes/rebuilds old non-478-point caches.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 
 Current Camera shell:
@@ -128,7 +128,7 @@ Current Qt shell:
 - Includes Overview, Library, People, Search, Camera, Review, Clusters, Compare, Dense Mesh, and Runtime pages backed by native `FscCore` / `FscVision`.
 - Uses the Python app's left navigation order with lower-left language and identity-mode controls.
 - Can create/open `.fscdb`, list faces and people, add people, assign selected faces to people, train identity profiles, search by face id, identify by face id, import images or folders from the Library page through native ONNX, and export the filtered Library table to CSV.
-- Library has right-side Image / 3D Landmarks / Dense Mesh visual tabs for the selected face. Image overlays cached bbox / 2D landmarks and toggles full-image versus face-focused viewing; 3D tabs use cached landmarks / dense mesh or a native fallback mesh preview.
+- Library has right-side Image / 3D Landmarks / Dense Mesh visual tabs for the selected face. Image overlays cached bbox / 2D landmarks and toggles full-image versus face-focused viewing; Dense Mesh uses only validated MediaPipe caches and explicitly asks the user to generate or repair missing/invalid data.
 - Library now includes text/person/tag/review/quality filters, Selected and Batch metadata tabs for person assignment, tags, review state, ignored state, and notes, plus an Activity tab with import progress and processed-image preview; native SQLite reads/writes `face_tags`.
 - People now mirrors the Python person-management workflow more closely: filtered person list with identity health/scorer columns, member table, selected-member preview, focus toggle, name/notes editing, merge into target, clear assignment, manual face assignment, and identity-profile training.
 - Review now mirrors the Python queue workflow more closely: database/filter/limit controls, reason and duplicate columns, selected-face preview with focus toggle, person/tag/review/ignored/notes editor, automatic identity suggestion, confirm AI person, and reject AI suggestion.

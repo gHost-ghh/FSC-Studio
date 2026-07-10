@@ -99,15 +99,14 @@ void modelPathResolutionUsesBuffaloRoot() {
     assert(fsc::vision::parseRuntimeMode("dml") == fsc::vision::RuntimeMode::DirectMl);
 }
 
-void syntheticMeshBuildsFromLandmarks() {
-    std::vector<std::vector<double>> landmarks;
-    for (int i = 0; i < 16; ++i) {
-        const double angle = static_cast<double>(i) * 0.3926990817;
-        landmarks.push_back({100.0 + std::cos(angle) * 40.0, 120.0 + std::sin(angle) * 55.0, 10.0 + std::cos(angle) * 5.0});
-    }
-    const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(landmarks, {16, 18});
-    assert(mesh.size() > landmarks.size());
-    assert(mesh.front().size() == 3);
+void mediaPipeMeshValidationRejectsSyntheticFallbacks() {
+    std::vector<std::vector<double>> mesh(fsc::mesh::kMediaPipeFaceMeshPointCount, {10.0, 20.0, -3.0});
+    assert(fsc::mesh::isMediaPipeFaceMesh(mesh));
+    mesh.push_back({1.0, 2.0, 3.0});
+    assert(!fsc::mesh::isMediaPipeFaceMesh(mesh));
+    mesh.resize(fsc::mesh::kMediaPipeFaceMeshPointCount);
+    mesh[0][2] = std::numeric_limits<double>::infinity();
+    assert(!fsc::mesh::isMediaPipeFaceMesh(mesh));
 }
 
 void databasePersonActionsRoundTrip() {
@@ -166,7 +165,7 @@ int main() {
     visionSimilarityTransformMapsReferencePoints();
     visionNmsKeepsBestBoxes();
     modelPathResolutionUsesBuffaloRoot();
-    syntheticMeshBuildsFromLandmarks();
+    mediaPipeMeshValidationRejectsSyntheticFallbacks();
     databasePersonActionsRoundTrip();
     std::cout << "fsc_core_tests passed\n";
     return 0;

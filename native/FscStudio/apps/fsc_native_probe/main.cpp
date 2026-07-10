@@ -32,7 +32,8 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
-        << "  fsc_native_probe <database.fscdb> build-mesh <face_id>\n"
+        << "  fsc_native_probe <database.fscdb> build-mesh <face_id> [face_landmarker.task]\n"
+        << "  fsc_native_probe <database.fscdb> repair-invalid-meshes [face_landmarker.task]\n"
         << "  fsc_native_probe <database.fscdb> import-image <model_root> <image_path> [threshold] [person_id]\n"
         << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n";
 }
@@ -297,11 +298,80 @@ int main(int argc, char** argv) {
                 std::cerr << "Face id not found: " << faceId << "\n";
                 return 1;
             }
-            const auto mesh = fsc::mesh::buildSyntheticFaceMesh3d(face->landmarks3d);
+            if (face->sourcePath.empty() || !std::filesystem::is_regular_file(face->sourcePath)) {
+                throw std::runtime_error("The face source image is unavailable for MediaPipe dense-mesh analysis.");
+            }
+            fsc::mesh::MediaPipeFaceLandmarkerOptions options;
+            if (argc >= 5) {
+                options.modelAssetPath = argv[4];
+            }
+            fsc::mesh::MediaPipeFaceLandmarker landmarker(std::move(options));
+            const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
+                landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
+                face->bbox);
             database.updateFaceMesh3d(faceId, mesh);
             std::cout << "updated_face=" << faceId << "\n";
             std::cout << "mesh_points=" << mesh.size() << "\n";
             return 0;
+        }
+
+        if (command == "repair-invalid-meshes") {
+            fsc::mesh::MediaPipeFaceLandmarkerOptions options;
+            if (argc >= 4) {
+                options.modelAssetPath = argv[3];
+            }
+            fsc::mesh::MediaPipeFaceLandmarker landmarker(std::move(options));
+            int scanned = 0;
+            int retained = 0;
+            int repaired = 0;
+            int cleared = 0;
+            int unavailable = 0;
+            int failed = 0;
+            for (const auto& summary : database.loadFaces(true)) {
+                const auto face = database.loadFace(summary.id);
+                if (!face.has_value()) {
+                    continue;
+                }
+                ++scanned;
+                if (fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d)) {
+                    ++retained;
+                    continue;
+                }
+                if (face->faceMesh3d.empty()) {
+                    ++retained;
+                    continue;
+                }
+                if (!face->faceMesh3d.empty()) {
+                    database.clearFaceMesh3d(face->id);
+                    ++cleared;
+                }
+                try {
+                    if (face->sourcePath.empty() || !std::filesystem::is_regular_file(face->sourcePath)) {
+                        throw std::runtime_error("source image is unavailable");
+                    }
+                    const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
+                        landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
+                        face->bbox);
+                    database.updateFaceMesh3d(face->id, mesh);
+                    ++repaired;
+                } catch (const std::exception& ex) {
+                    const std::string message = ex.what();
+                    if (message.starts_with("MediaPipe did not detect a face mesh")) {
+                        ++unavailable;
+                        std::cerr << "face=" << face->id << " cleared: " << message << "\n";
+                    } else {
+                        ++failed;
+                        std::cerr << "face=" << face->id << " failed: " << message << "\n";
+                    }
+                }
+            }
+            std::cout << "scanned=" << scanned << "\n";
+            std::cout << "retained=" << retained << "\n";
+            std::cout << "repaired=" << repaired << "\n";
+            std::cout << "cleared=" << cleared << "\n";
+            std::cout << "unavailable=" << unavailable << "\n";
+            std::cout << "failed=" << failed << "\n";
+            return failed == 0 ? 0 : 1;
         }
 
         if (command == "import-image") {

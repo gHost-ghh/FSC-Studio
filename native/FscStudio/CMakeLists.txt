@@ -6,6 +6,30 @@ option(FSC_BUILD_QT_APP "Build the Qt desktop shell" OFF)
 option(FSC_CORE_ONLY "Build dependency-light algorithm core only" OFF)
 option(FSC_ENABLE_ONNX "Build ONNX Runtime based vision inference" OFF)
 option(FSC_ENABLE_OPENCV "Build OpenCV based native camera capture" OFF)
+set(FSC_MEDIAPIPE_RUNTIME_PATH "" CACHE FILEPATH "Path to libmediapipe.dll from the official MediaPipe Windows package")
+set(FSC_MEDIAPIPE_MODEL_PATH "" CACHE FILEPATH "Path to MediaPipe face_landmarker.task")
+
+if(NOT FSC_MEDIAPIPE_RUNTIME_PATH)
+    foreach(candidate
+        "${CMAKE_SOURCE_DIR}/../../.deps/mediapipe/libmediapipe.dll"
+        "${CMAKE_SOURCE_DIR}/../../.venv312/Lib/site-packages/mediapipe/tasks/c/libmediapipe.dll")
+        if(EXISTS "${candidate}")
+            set(FSC_MEDIAPIPE_RUNTIME_PATH "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+
+if(NOT FSC_MEDIAPIPE_MODEL_PATH)
+    foreach(candidate
+        "${CMAKE_SOURCE_DIR}/../../.deps/mediapipe/face_landmarker.task"
+        "${CMAKE_SOURCE_DIR}/../../model/mediapipe/face_landmarker.task")
+        if(EXISTS "${candidate}")
+            set(FSC_MEDIAPIPE_MODEL_PATH "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -69,6 +93,31 @@ add_library(FscMesh STATIC
 )
 target_include_directories(FscMesh PUBLIC include)
 target_compile_definitions(FscMesh PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(FscMesh PUBLIC FscVision)
+
+function(fsc_copy_mediapipe_runtime target_name)
+    if(FSC_MEDIAPIPE_RUNTIME_PATH AND EXISTS "${FSC_MEDIAPIPE_RUNTIME_PATH}")
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FSC_MEDIAPIPE_RUNTIME_PATH}"
+                "$<TARGET_FILE_DIR:${target_name}>/libmediapipe.dll"
+            COMMENT "Copying MediaPipe native runtime next to ${target_name}"
+        )
+    else()
+        message(WARNING "FSC_MEDIAPIPE_RUNTIME_PATH is not set; Dense Mesh generation requires libmediapipe.dll next to the executable.")
+    endif()
+    if(FSC_MEDIAPIPE_MODEL_PATH AND EXISTS "${FSC_MEDIAPIPE_MODEL_PATH}")
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target_name}>/models/mediapipe"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FSC_MEDIAPIPE_MODEL_PATH}"
+                "$<TARGET_FILE_DIR:${target_name}>/models/mediapipe/face_landmarker.task"
+            COMMENT "Copying MediaPipe Face Landmarker task next to ${target_name}"
+        )
+    else()
+        message(WARNING "FSC_MEDIAPIPE_MODEL_PATH is not set; Dense Mesh generation requires face_landmarker.task under models/mediapipe.")
+    endif()
+endfunction()
 
 if(NOT FSC_CORE_ONLY OR FSC_BUILD_QT_APP)
     target_sources(FscCore PRIVATE src/core/Database.cpp)
@@ -80,6 +129,7 @@ if(NOT FSC_CORE_ONLY OR FSC_BUILD_QT_APP)
     if(NOT FSC_CORE_ONLY)
         add_executable(fsc_native_probe apps/fsc_native_probe/main.cpp)
         target_link_libraries(fsc_native_probe PRIVATE FscCore FscVision FscMesh)
+        fsc_copy_mediapipe_runtime(fsc_native_probe)
         if(FSC_ENABLE_ONNX)
             fsc_copy_onnx_runtime(fsc_native_probe)
         endif()
@@ -101,6 +151,7 @@ if(FSC_BUILD_QT_APP)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
     add_executable(FscStudioQt WIN32 apps/FscAppQt/main.cpp)
     target_link_libraries(FscStudioQt PRIVATE FscCore FscVision FscMesh Qt6::Widgets)
+    fsc_copy_mediapipe_runtime(FscStudioQt)
     if(FSC_ENABLE_ONNX)
         fsc_copy_onnx_runtime(FscStudioQt)
     endif()
