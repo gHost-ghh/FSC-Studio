@@ -79,6 +79,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -134,6 +135,33 @@ void registerDeployedQtPluginPath(const char* executablePath) {
         QCoreApplication::addLibraryPath(appDirectory);
     }
 }
+
+#ifdef FSC_ENABLE_ONNX
+class SharedFaceAnalyzer final {
+public:
+    std::vector<fsc::vision::AnalyzedFace> analyze(
+        const std::filesystem::path& modelRoot,
+        fsc::vision::RuntimeMode runtimeMode,
+        const std::filesystem::path& imagePath) {
+        const auto image = fsc::vision::loadImageRgb(imagePath);
+        std::lock_guard lock(mutex_);
+        if (!engine_ || modelRoot_ != modelRoot || runtimeMode_ != runtimeMode) {
+            engine_ = std::make_unique<fsc::vision::InsightFaceEngine>(
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot),
+                runtimeMode);
+            modelRoot_ = modelRoot;
+            runtimeMode_ = runtimeMode;
+        }
+        return engine_->analyze(image, 0.50f, 10);
+    }
+
+private:
+    std::mutex mutex_;
+    std::filesystem::path modelRoot_;
+    fsc::vision::RuntimeMode runtimeMode_ = fsc::vision::RuntimeMode::Auto;
+    std::unique_ptr<fsc::vision::InsightFaceEngine> engine_;
+};
+#endif
 
 QTableWidgetItem* item(const QString& value) {
     auto* output = new QTableWidgetItem(value);
@@ -282,6 +310,7 @@ const TranslationTable& uiTranslations() {
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
             {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
             {"Select Image", "选择图像"}, {"Top K", "返回数量"}, {"Threshold", "阈值"},
+            {"Images", "图像"}, {"Image A", "图像 A"}, {"Image B", "图像 B"},
             {"Image", "图像"}, {"3D Landmarks", "3D 特征点"}, {"Points", "点云"}, {"Textured", "贴图"},
             {"Focus on Face", "聚焦于人脸"}, {"Full Image", "查看完整图像"}, {"View Full Image", "查看完整图像"},
             {"Generate Dense Mesh", "生成稠密网格"}, {"Save Metadata", "保存元数据"},
@@ -300,6 +329,7 @@ const TranslationTable& uiTranslations() {
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
             {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
             {"Select Image", "画像選択"}, {"Top K", "件数"}, {"Threshold", "しきい値"},
+            {"Images", "画像"}, {"Image A", "画像 A"}, {"Image B", "画像 B"},
             {"Image", "画像"}, {"3D Landmarks", "3D ランドマーク"}, {"Points", "点"}, {"Textured", "テクスチャ"},
             {"Focus on Face", "顔にフォーカス"}, {"Full Image", "全体画像"}, {"View Full Image", "全体画像"},
             {"Generate Dense Mesh", "高密度メッシュを生成"}, {"Save Metadata", "メタデータを保存"},
@@ -318,6 +348,7 @@ const TranslationTable& uiTranslations() {
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
             {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
             {"Select Image", "이미지 선택"}, {"Top K", "결과 수"}, {"Threshold", "임계값"},
+            {"Images", "이미지"}, {"Image A", "이미지 A"}, {"Image B", "이미지 B"},
             {"Image", "이미지"}, {"3D Landmarks", "3D 랜드마크"}, {"Points", "점"}, {"Textured", "텍스처"},
             {"Focus on Face", "얼굴에 초점"}, {"Full Image", "전체 이미지"}, {"View Full Image", "전체 이미지"},
             {"Generate Dense Mesh", "고밀도 메시 생성"}, {"Save Metadata", "메타데이터 저장"},
@@ -1593,6 +1624,37 @@ public:
     [[nodiscard]] int searchQuerySmokeFaceCount() const noexcept {
         return static_cast<int>(searchQueryFaces_.size());
     }
+
+    void startCompareSmoke(
+        const QString& modelRoot,
+        const QString& imageA,
+        const QString& imageB,
+        const QString& runtimeMode) {
+        if (modelRootEdit_ != nullptr) {
+            modelRootEdit_->setText(modelRoot);
+        }
+        if (runtimeModeCombo_ != nullptr) {
+            const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
+            runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
+        }
+        compareImageAEdit_->setText(imageA);
+        compareImageBEdit_->setText(imageB);
+        comparePreviewA_->setImagePath(imageA);
+        comparePreviewB_->setImagePath(imageB);
+        compareFacesA_.clear();
+        compareFacesB_.clear();
+        analyzeCompareImage('a');
+        analyzeCompareImage('b');
+    }
+
+    [[nodiscard]] bool compareSmokeFinished() const noexcept {
+        return !compareAnalysisActiveA_ && !compareAnalysisActiveB_;
+    }
+
+    [[nodiscard]] bool compareSmokeReady() const noexcept {
+        return !compareFacesA_.empty() && !compareFacesB_.empty() &&
+            compareFacesA_.front().embedding.size() == compareFacesB_.front().embedding.size();
+    }
 #endif
 
 private:
@@ -1609,6 +1671,14 @@ private:
     };
 
     struct SearchQueryAnalysisResult {
+        int generation = 0;
+        QString imagePath;
+        std::vector<fsc::vision::AnalyzedFace> faces;
+        QString error;
+    };
+
+    struct CompareImageAnalysisResult {
+        char slot = 'a';
         int generation = 0;
         QString imagePath;
         std::vector<fsc::vision::AnalyzedFace> faces;
@@ -2715,44 +2785,50 @@ private:
         auto* layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
 
-        auto* formWidget = new QWidget(page);
-        auto* form = new QFormLayout(formWidget);
-        compareImageAEdit_ = new QLineEdit(formWidget);
-        compareImageBEdit_ = new QLineEdit(formWidget);
+        auto* title = new QLabel("Compare", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
+
+        auto* imagesBox = new QGroupBox("Images", page);
+        auto* form = new QGridLayout(imagesBox);
+        compareImageAEdit_ = new QLineEdit(imagesBox);
+        compareImageBEdit_ = new QLineEdit(imagesBox);
+        compareImageAEdit_->setObjectName("CompareImageAPath");
+        compareImageBEdit_->setObjectName("CompareImageBPath");
         compareImageAEdit_->setReadOnly(true);
         compareImageBEdit_->setReadOnly(true);
-        auto* rowA = new QWidget(formWidget);
-        auto* rowALayout = new QHBoxLayout(rowA);
-        rowALayout->setContentsMargins(0, 0, 0, 0);
-        auto* browseA = new QPushButton("Image A", rowA);
-        rowALayout->addWidget(compareImageAEdit_, 1);
-        rowALayout->addWidget(browseA);
-        auto* rowB = new QWidget(formWidget);
-        auto* rowBLayout = new QHBoxLayout(rowB);
-        rowBLayout->setContentsMargins(0, 0, 0, 0);
-        auto* browseB = new QPushButton("Image B", rowB);
-        rowBLayout->addWidget(compareImageBEdit_, 1);
-        rowBLayout->addWidget(browseB);
-        auto* compareButton = new QPushButton("Compare", formWidget);
-        compareResultLabel_ = new QLabel("Cosine: --    Similarity: --", formWidget);
-        compareResultLabel_->setAlignment(Qt::AlignCenter);
-        form->addRow("Image A", rowA);
-        form->addRow("Image B", rowB);
-        form->addRow("", compareButton);
-        form->addRow("Result", compareResultLabel_);
-        layout->addWidget(formWidget);
+        auto* browseA = new QPushButton("Image A", imagesBox);
+        browseA->setObjectName("CompareSelectImageA");
+        auto* browseB = new QPushButton("Image B", imagesBox);
+        browseB->setObjectName("CompareSelectImageB");
+        auto* compareButton = new QPushButton("Compare", imagesBox);
+        compareButton->setObjectName("CompareRun");
+        form->addWidget(new QLabel("A", imagesBox), 0, 0);
+        form->addWidget(compareImageAEdit_, 0, 1);
+        form->addWidget(browseA, 0, 2);
+        form->addWidget(new QLabel("B", imagesBox), 1, 0);
+        form->addWidget(compareImageBEdit_, 1, 1);
+        form->addWidget(browseB, 1, 2);
+        form->addWidget(compareButton, 0, 3, 2, 1);
+        layout->addWidget(imagesBox);
 
         auto* previews = new QWidget(page);
         auto* previewsLayout = new QHBoxLayout(previews);
         previewsLayout->setContentsMargins(0, 0, 0, 0);
-        previewsLayout->setSpacing(8);
+        previewsLayout->setSpacing(12);
         auto* panelA = new QWidget(previews);
         auto* panelALayout = new QVBoxLayout(panelA);
         panelALayout->setContentsMargins(0, 0, 0, 0);
-        compareFocusAButton_ = new QPushButton("Focus on Face", panelA);
-        compareFocusAButton_->setMaximumWidth(132);
+        compareFocusAButton_ = new QToolButton(panelA);
+        compareFocusAButton_->setObjectName("CompareFocusA");
+        compareFocusAButton_->setText("Focus on Face");
+        compareFocusAButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        compareFocusAButton_->setMaximumSize(118, 24);
+        compareFocusAButton_->setEnabled(false);
         comparePreviewA_ = new FaceSelectionPreview(panelA);
+        comparePreviewA_->setObjectName("ComparePreviewA");
         compareFaceListA_ = new QListWidget(panelA);
+        compareFaceListA_->setObjectName("CompareFaceListA");
         compareFaceListA_->setMaximumHeight(110);
         panelALayout->addWidget(compareFocusAButton_, 0, Qt::AlignLeft);
         panelALayout->addWidget(comparePreviewA_, 1);
@@ -2760,10 +2836,16 @@ private:
         auto* panelB = new QWidget(previews);
         auto* panelBLayout = new QVBoxLayout(panelB);
         panelBLayout->setContentsMargins(0, 0, 0, 0);
-        compareFocusBButton_ = new QPushButton("Focus on Face", panelB);
-        compareFocusBButton_->setMaximumWidth(132);
+        compareFocusBButton_ = new QToolButton(panelB);
+        compareFocusBButton_->setObjectName("CompareFocusB");
+        compareFocusBButton_->setText("Focus on Face");
+        compareFocusBButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        compareFocusBButton_->setMaximumSize(118, 24);
+        compareFocusBButton_->setEnabled(false);
         comparePreviewB_ = new FaceSelectionPreview(panelB);
+        comparePreviewB_->setObjectName("ComparePreviewB");
         compareFaceListB_ = new QListWidget(panelB);
+        compareFaceListB_->setObjectName("CompareFaceListB");
         compareFaceListB_->setMaximumHeight(110);
         panelBLayout->addWidget(compareFocusBButton_, 0, Qt::AlignLeft);
         panelBLayout->addWidget(comparePreviewB_, 1);
@@ -2772,20 +2854,18 @@ private:
         previewsLayout->addWidget(panelB);
         layout->addWidget(previews, 1);
 
-        compareFaceTable_ = new QTableWidget(page);
-        compareFaceTable_->setColumnCount(5);
-        compareFaceTable_->setHorizontalHeaderLabels({"Image", "Detection", "Quality", "2D", "3D"});
-        fitTable(compareFaceTable_);
-        compareFaceTable_->setMaximumHeight(110);
-        layout->addWidget(compareFaceTable_);
+        compareResultLabel_ = new QLabel("Cosine: --    Similarity: --", page);
+        compareResultLabel_->setObjectName("Metric");
+        compareResultLabel_->setAlignment(Qt::AlignCenter);
+        layout->addWidget(compareResultLabel_);
         addMainTab(page, "Compare");
 
         comparePreviewA_->faceClicked = [this](int index) { selectCompareFace('a', index); };
         comparePreviewB_->faceClicked = [this](int index) { selectCompareFace('b', index); };
         connect(browseA, &QPushButton::clicked, this, [this] { selectCompareImage('a'); });
         connect(browseB, &QPushButton::clicked, this, [this] { selectCompareImage('b'); });
-        connect(compareFocusAButton_, &QPushButton::clicked, this, [this] { toggleCompareFocus('a'); });
-        connect(compareFocusBButton_, &QPushButton::clicked, this, [this] { toggleCompareFocus('b'); });
+        connect(compareFocusAButton_, &QToolButton::clicked, this, [this] { toggleCompareFocus('a'); });
+        connect(compareFocusBButton_, &QToolButton::clicked, this, [this] { toggleCompareFocus('b'); });
         connect(compareFaceListA_, &QListWidget::itemSelectionChanged, this, [this] {
             if (!updatingCompareLists_) {
                 selectCompareFace('a', compareFaceListA_->currentRow());
@@ -4500,6 +4580,7 @@ private:
         const auto imagePath = pathFrom(imagePathText);
         const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
         const auto runtimeMode = selectedRuntimeMode();
+        const auto analyzer = sharedFaceAnalyzer_;
         const int generation = ++searchQueryGeneration_;
         searchQueryAnalysisActive_ = true;
 
@@ -4546,15 +4627,12 @@ private:
             watcher->deleteLater();
             finishSearchImageAnalysis(result);
         });
-        watcher->setFuture(QtConcurrent::run([generation, imagePathText, imagePath, modelRoot, runtimeMode] {
+        watcher->setFuture(QtConcurrent::run([generation, imagePathText, imagePath, modelRoot, runtimeMode, analyzer] {
             SearchQueryAnalysisResult result;
             result.generation = generation;
             result.imagePath = imagePathText;
             try {
-                fsc::vision::InsightFaceEngine engine(
-                    fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot),
-                    runtimeMode);
-                result.faces = engine.analyze(fsc::vision::loadImageRgb(imagePath), 0.50f, 10);
+                result.faces = analyzer->analyze(modelRoot, runtimeMode, imagePath);
                 if (result.faces.empty()) {
                     result.error = "No face detected in the query image.";
                 }
@@ -5532,7 +5610,11 @@ private:
     }
 
     void selectCompareImage(char slot) {
-        const auto path = QFileDialog::getOpenFileName(this, "Select image", {}, "Images (*.jpg *.jpeg *.png *.bmp *.ppm)");
+        const auto path = QFileDialog::getOpenFileName(
+            this,
+            "Select image",
+            {},
+            "Images (*.jpg *.jpeg *.png *.bmp *.webp *.tif *.tiff *.ppm);;All Files (*)");
         if (path.isEmpty()) {
             return;
         }
@@ -5546,36 +5628,93 @@ private:
         selected = 0;
         list->clear();
         preview->setImagePath(path);
+        preview->setFaces({}, 0);
+        preview->setFocusOnFace(false);
+        auto* focusButton = slot == 'a' ? compareFocusAButton_ : compareFocusBButton_;
+        if (focusButton != nullptr) {
+            focusButton->setText(trUi("Focus on Face"));
+            focusButton->setEnabled(false);
+        }
         compareResultLabel_->setText("Cosine: --    Similarity: --");
         analyzeCompareImage(slot);
     }
 
     void analyzeCompareImage(char slot) {
 #ifdef FSC_ENABLE_ONNX
-        try {
-            auto* edit = slot == 'a' ? compareImageAEdit_ : compareImageBEdit_;
-            auto& faces = slot == 'a' ? compareFacesA_ : compareFacesB_;
-            if (edit == nullptr || edit->text().isEmpty()) {
-                throw std::runtime_error("Select both images first.");
-            }
-            const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
-            const auto image = fsc::vision::loadImageRgb(pathFrom(edit->text()));
-            faces = engine.analyze(image, 0.50f, 10);
-            populateCompareFaces(slot);
-            if (faces.empty()) {
-                statusBar()->showMessage(QString("Image %1: no face detected").arg(slot == 'a' ? "A" : "B"));
-                updateComparePreview(slot);
-                return;
-            }
-            selectCompareFace(slot, 0);
-            statusBar()->showMessage(QString("Image %1: detected %2 face(s)").arg(slot == 'a' ? "A" : "B").arg(faces.size()));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        auto* edit = slot == 'a' ? compareImageAEdit_ : compareImageBEdit_;
+        if (edit == nullptr || edit->text().isEmpty()) {
+            showError(std::runtime_error("Select an image first."));
+            return;
         }
+        const int generation = slot == 'a' ? ++compareGenerationA_ : ++compareGenerationB_;
+        if (slot == 'a') {
+            compareAnalysisActiveA_ = true;
+        } else {
+            compareAnalysisActiveB_ = true;
+        }
+        const QString imagePathText = edit->text();
+        const auto imagePath = pathFrom(imagePathText);
+        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto runtimeMode = selectedRuntimeMode();
+        const auto analyzer = sharedFaceAnalyzer_;
+        statusBar()->showMessage(QString("Detecting faces in image %1...").arg(slot == 'a' ? "A" : "B"));
+
+        auto* watcher = new QFutureWatcher<CompareImageAnalysisResult>(this);
+        connect(watcher, &QFutureWatcher<CompareImageAnalysisResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            finishCompareImageAnalysis(std::move(result));
+        });
+        watcher->setFuture(QtConcurrent::run(
+            [slot, generation, imagePathText, imagePath, modelRoot, runtimeMode, analyzer] {
+                CompareImageAnalysisResult result;
+                result.slot = slot;
+                result.generation = generation;
+                result.imagePath = imagePathText;
+                try {
+                    result.faces = analyzer->analyze(modelRoot, runtimeMode, imagePath);
+                } catch (const std::exception& ex) {
+                    result.error = QString::fromUtf8(ex.what());
+                }
+                return result;
+            }));
 #else
         QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
 #endif
+    }
+
+    void finishCompareImageAnalysis(CompareImageAnalysisResult result) {
+        auto* edit = result.slot == 'a' ? compareImageAEdit_ : compareImageBEdit_;
+        const int currentGeneration = result.slot == 'a' ? compareGenerationA_ : compareGenerationB_;
+        if (edit == nullptr || result.generation != currentGeneration || result.imagePath != edit->text()) {
+            return;
+        }
+        if (result.slot == 'a') {
+            compareAnalysisActiveA_ = false;
+        } else {
+            compareAnalysisActiveB_ = false;
+        }
+        if (!result.error.isEmpty()) {
+            statusBar()->showMessage(result.error);
+            showError(std::runtime_error(result.error.toUtf8().constData()));
+            return;
+        }
+        auto& faces = result.slot == 'a' ? compareFacesA_ : compareFacesB_;
+        faces = std::move(result.faces);
+        populateCompareFaces(result.slot);
+        auto* focusButton = result.slot == 'a' ? compareFocusAButton_ : compareFocusBButton_;
+        if (focusButton != nullptr) {
+            focusButton->setEnabled(!faces.empty());
+        }
+        if (faces.empty()) {
+            updateComparePreview(result.slot);
+        } else {
+            selectCompareFace(result.slot, 0);
+        }
+        statusBar()->showMessage(
+            QString("Image %1: detected %2 face(s).")
+                .arg(result.slot == 'a' ? "A" : "B")
+                .arg(faces.size()));
     }
 
     void populateCompareFaces(char slot) {
@@ -5627,19 +5766,17 @@ private:
         if (preview == nullptr || button == nullptr) {
             return;
         }
+        const auto& faces = slot == 'a' ? compareFacesA_ : compareFacesB_;
+        if (faces.empty()) {
+            return;
+        }
         preview->setFocusOnFace(!preview->focusOnFace());
-        button->setText(preview->focusOnFace() ? "Full Image" : "Focus on Face");
+        button->setText(preview->focusOnFace() ? trUi("View Full Image") : trUi("Focus on Face"));
     }
 
     void compareImages() {
 #ifdef FSC_ENABLE_ONNX
         try {
-            if (compareFacesA_.empty()) {
-                analyzeCompareImage('a');
-            }
-            if (compareFacesB_.empty()) {
-                analyzeCompareImage('b');
-            }
             if (compareFacesA_.empty() || compareFacesB_.empty()) {
                 throw std::runtime_error("Select both images and wait for face detection first.");
             }
@@ -5655,17 +5792,6 @@ private:
                     .arg(faceA.qualityScore, 0, 'f', 3)
                     .arg(faceB.qualityScore, 0, 'f', 3));
 
-            compareFaceTable_->setRowCount(2);
-            const auto fill = [this](int row, const QString& name, const fsc::vision::AnalyzedFace& face) {
-                compareFaceTable_->setItem(row, 0, item(name));
-                compareFaceTable_->setItem(row, 1, numberItem(face.detection.score, 4));
-                compareFaceTable_->setItem(row, 2, numberItem(face.qualityScore, 4));
-                compareFaceTable_->setItem(row, 3, item(QString::number(face.landmarks2d.size())));
-                compareFaceTable_->setItem(row, 4, item(QString::number(face.landmarks3d.size())));
-            };
-            fill(0, "A", faceA);
-            fill(1, "B", faceB);
-            compareFaceTable_->resizeColumnsToContents();
             updateComparePreview('a');
             updateComparePreview('b');
             statusBar()->showMessage("Images compared");
@@ -6177,18 +6303,21 @@ private:
     QLineEdit* compareImageAEdit_ = nullptr;
     QLineEdit* compareImageBEdit_ = nullptr;
     QLabel* compareResultLabel_ = nullptr;
-    QTableWidget* compareFaceTable_ = nullptr;
     FaceSelectionPreview* comparePreviewA_ = nullptr;
     FaceSelectionPreview* comparePreviewB_ = nullptr;
     QListWidget* compareFaceListA_ = nullptr;
     QListWidget* compareFaceListB_ = nullptr;
-    QPushButton* compareFocusAButton_ = nullptr;
-    QPushButton* compareFocusBButton_ = nullptr;
+    QToolButton* compareFocusAButton_ = nullptr;
+    QToolButton* compareFocusBButton_ = nullptr;
     std::vector<fsc::vision::AnalyzedFace> compareFacesA_;
     std::vector<fsc::vision::AnalyzedFace> compareFacesB_;
     int selectedCompareA_ = 0;
     int selectedCompareB_ = 0;
+    int compareGenerationA_ = 0;
+    int compareGenerationB_ = 0;
     bool updatingCompareLists_ = false;
+    bool compareAnalysisActiveA_ = false;
+    bool compareAnalysisActiveB_ = false;
     QDoubleSpinBox* clusterThresholdSpin_ = nullptr;
     QSpinBox* clusterMinSizeSpin_ = nullptr;
     QSpinBox* clusterMaxFacesSpin_ = nullptr;
@@ -6228,6 +6357,7 @@ private:
     cv::Mat lastCameraFrame_;
 #endif
 #ifdef FSC_ENABLE_ONNX
+    std::shared_ptr<SharedFaceAnalyzer> sharedFaceAnalyzer_ = std::make_shared<SharedFaceAnalyzer>();
     std::unique_ptr<fsc::vision::InsightFaceEngine> cameraEngine_;
     std::string cameraEngineKey_;
 #endif
@@ -6552,6 +6682,32 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef FSC_ENABLE_ONNX
+    if (argc >= 5 && std::string(argv[1]) == "--compare-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
+        window.startCompareSmoke(
+            QString::fromLocal8Bit(argv[2]),
+            QString::fromLocal8Bit(argv[3]),
+            QString::fromLocal8Bit(argv[4]),
+            runtimeMode);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (window.compareSmokeFinished()) {
+                outcome = window.compareSmokeReady() ? 0 : 4;
+                uiApp.quit();
+            }
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
     if (argc >= 4 && std::string(argv[1]) == "--search-query-ui-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
@@ -6614,10 +6770,22 @@ int main(int argc, char** argv) {
             window.findChild<QListWidget*>("SearchQueryFaceList") != nullptr &&
             window.findChild<QToolButton*>("SearchQueryFocus") != nullptr &&
             window.findChild<QToolButton*>("SearchResultFocus") != nullptr;
+        const bool compareControlsPresent =
+            window.findChild<QLineEdit*>("CompareImageAPath") != nullptr &&
+            window.findChild<QLineEdit*>("CompareImageBPath") != nullptr &&
+            window.findChild<QPushButton*>("CompareSelectImageA") != nullptr &&
+            window.findChild<QPushButton*>("CompareSelectImageB") != nullptr &&
+            window.findChild<QPushButton*>("CompareRun") != nullptr &&
+            window.findChild<QWidget*>("ComparePreviewA") != nullptr &&
+            window.findChild<QWidget*>("ComparePreviewB") != nullptr &&
+            window.findChild<QListWidget*>("CompareFaceListA") != nullptr &&
+            window.findChild<QListWidget*>("CompareFaceListB") != nullptr &&
+            window.findChild<QToolButton*>("CompareFocusA") != nullptr &&
+            window.findChild<QToolButton*>("CompareFocusB") != nullptr;
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
-                legacyActionPresent && searchControlsPresent) {
+                legacyActionPresent && searchControlsPresent && compareControlsPresent) {
                 return 0;
             }
         }
