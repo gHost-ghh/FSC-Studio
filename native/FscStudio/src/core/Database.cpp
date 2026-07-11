@@ -1612,6 +1612,28 @@ int64_t Database::insertFace(const FaceInsertRecord& record) {
     return sqlite3_last_insert_rowid(db_);
 }
 
+std::vector<int64_t> Database::insertFaces(const std::vector<FaceInsertRecord>& records) {
+    std::vector<int64_t> ids;
+    if (records.empty()) {
+        return ids;
+    }
+    ids.reserve(records.size());
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        for (const auto& record : records) {
+            ids.push_back(insertFace(record));
+        }
+        execSql(db_, "COMMIT");
+    } catch (...) {
+        try {
+            execSql(db_, "ROLLBACK");
+        } catch (...) {
+        }
+        throw;
+    }
+    return ids;
+}
+
 IdentityTrainingSummary Database::rebuildIdentityProfiles(const IdentityTrainingOptions& options) {
     IdentityTrainingSummary summary;
     const bool targeted = !options.personIds.empty();

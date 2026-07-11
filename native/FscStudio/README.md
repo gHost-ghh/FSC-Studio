@@ -29,6 +29,7 @@ continuing that prototype.
 - CLI probes for database/search/identity/import and model-path parity checks.
 - Qt Widgets desktop shell with the Python page order: Overview, Library, People, Search, Camera, Review, Clusters, Compare, and Runtime. Dense Mesh remains a selected-face visual tab inside Library, alongside Image and 3D Landmarks.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
+- Library image and recursive-folder imports run native ONNX analysis on a worker thread, commit accepted faces in batches of 50, and coalesce preview painting to one update per 50 ms so visual progress does not serialize inference or database writes.
 - Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, an optional 68-point landmark overlay in Textured mode, and local eyelid/iris triangulation so the 468--477 MediaPipe iris points retain their textured eyeballs.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
@@ -111,12 +112,18 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render.png
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 D:\FSC\native\FscStudio\out\probe\mesh_render_side.png 1.1 -0.15
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --ui-language-smoke zh
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --library-import-ui-smoke D:\FSC\native\FscStudio\out\probe\library-import-smoke.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg cpu
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --overview-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 
 Use a copied database for `--review-smoke`, because it writes a review state
 back to the selected face row.
+
+All `*-smoke` commands automatically use the deployed `qminimal` platform
+plugin and stay off-screen. Installer creation opts into one explicit
+`qwindows` smoke through `FSC_QT_SMOKE_PLATFORM=windows`; ordinary application
+launches continue to use the Windows desktop platform plugin.
 
 If vcpkg download through the local proxy fails while installing Qt, place the
 failed archive into `D:\FSC\.deps\vcpkg\downloads` and rerun the preset. On this

@@ -37,6 +37,7 @@ $runtimeSmokeInfo.WorkingDirectory = $packageFull
 $runtimeSmokeInfo.UseShellExecute = $false
 $runtimeSmokeInfo.CreateNoWindow = $true
 $runtimeSmokeInfo.Environment["QT_QPA_PLATFORM"] = "windows"
+$runtimeSmokeInfo.Environment["FSC_QT_SMOKE_PLATFORM"] = "windows"
 $runtimeSmokeInfo.Environment.Remove("QT_PLUGIN_PATH") | Out-Null
 $runtimeSmoke = [System.Diagnostics.Process]::Start($runtimeSmokeInfo)
 if (-not $runtimeSmoke.WaitForExit(15000)) {

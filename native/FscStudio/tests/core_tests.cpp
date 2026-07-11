@@ -137,11 +137,22 @@ void databasePersonActionsRoundTrip() {
         record.fileName = "person-test-duplicate.jpg";
         record.sourcePath = "person-test-duplicate.jpg";
         const auto duplicateFaceId = database.insertFace(record);
+        auto batchA = record;
+        batchA.fileName = "batch-a.jpg";
+        batchA.sourcePath = "batch-a.jpg";
+        batchA.imageHash = "batch-a";
+        auto batchB = batchA;
+        batchB.fileName = "batch-b.jpg";
+        batchB.sourcePath = "batch-b.jpg";
+        batchB.imageHash = "batch-b";
+        const auto batchIds = database.insertFaces({batchA, batchB});
+        assert(batchIds.size() == 2);
+        assert(batchIds[0] > duplicateFaceId && batchIds[1] > batchIds[0]);
         database.setFaceTags(faceId, "alpha, beta");
         database.setFaceTags(duplicateFaceId, "alpha");
 
         const auto stats = database.statistics();
-        assert(stats.faceCount == 2);
+        assert(stats.faceCount == 4);
         assert(stats.tagCount == 2);
         assert(stats.duplicateImageGroupCount == 1);
         const auto tags = database.loadTagSummaries();

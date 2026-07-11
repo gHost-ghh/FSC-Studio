@@ -52,6 +52,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QTextDocument>
 #include <QTime>
 #include <QTimer>
 #include <QToolButton>
@@ -60,6 +61,13 @@
 #include <QWheelEvent>
 #include <QWidget>
 #include <QtConcurrent/QtConcurrentRun>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifdef FSC_ENABLE_OPENCV
 #include <opencv2/core.hpp>
@@ -97,6 +105,11 @@ std::filesystem::path pathFrom(const QString& value) {
     return std::filesystem::path(value.toStdWString());
 }
 
+std::string utf8FromPath(const std::filesystem::path& value) {
+    const auto bytes = QString::fromStdWString(value.wstring()).toUtf8();
+    return std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+}
+
 QImage previewImageFromRgb(const fsc::vision::RgbImage& image) {
     if (image.width <= 0 || image.height <= 0 ||
         image.pixels.size() != static_cast<size_t>(image.width) * static_cast<size_t>(image.height) * 3U) {
@@ -126,13 +139,41 @@ QString defaultModelRoot() {
     return "D:\\FSC\\model\\insightface\\models";
 }
 
-void registerDeployedQtPluginPath(const char* executablePath) {
-    const QFileInfo executable(QString::fromLocal8Bit(executablePath));
-    const QString appDirectory = executable.absolutePath();
+QString executableDirectory(const char* executablePath) {
+#ifdef _WIN32
+    std::vector<wchar_t> modulePath(32768);
+    const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+    if (length > 0 && length < modulePath.size()) {
+        return QFileInfo(QString::fromWCharArray(modulePath.data(), static_cast<qsizetype>(length))).absolutePath();
+    }
+#endif
+    return QFileInfo(QString::fromLocal8Bit(executablePath)).absolutePath();
+}
+
+bool isAutomatedSmokeCommand(int argc, char** argv) {
+    if (argc < 2 || argv[1] == nullptr) {
+        return false;
+    }
+    const std::string command(argv[1]);
+    return command == "--smoke" || command.ends_with("-smoke");
+}
+
+void configureDeployedQtRuntime(int argc, char** argv) {
+    if (argc <= 0 || argv[0] == nullptr) {
+        return;
+    }
+    const QString appDirectory = executableDirectory(argv[0]);
     if (QDir(appDirectory).exists("platforms")) {
         // qt.conf normally covers this, but keeping the application directory in
         // the global library paths also protects a copied portable installation.
+        qputenv("QT_PLUGIN_PATH", QDir::toNativeSeparators(appDirectory).toLocal8Bit());
         QCoreApplication::addLibraryPath(appDirectory);
+    }
+    const bool requireWindowsSmoke =
+        qEnvironmentVariable("FSC_QT_SMOKE_PLATFORM").compare("windows", Qt::CaseInsensitive) == 0;
+    if (isAutomatedSmokeCommand(argc, argv) && !requireWindowsSmoke &&
+        QFileInfo::exists(appDirectory + "/platforms/qminimal.dll")) {
+        qputenv("QT_QPA_PLATFORM", "minimal");
     }
 }
 
@@ -199,7 +240,8 @@ std::string csvEscape(const std::string& value) {
 
 bool isSupportedImageFile(const QString& path) {
     const auto suffix = QFileInfo(path).suffix().toLower();
-    return suffix == "jpg" || suffix == "jpeg" || suffix == "png" || suffix == "bmp" || suffix == "ppm";
+    return suffix == "jpg" || suffix == "jpeg" || suffix == "png" || suffix == "bmp" ||
+        suffix == "webp" || suffix == "tif" || suffix == "tiff" || suffix == "ppm";
 }
 
 int writeFacesCsv(const std::vector<fsc::core::FaceRecord>& records, const std::filesystem::path& outputPath) {
@@ -451,8 +493,8 @@ fsc::core::FaceInsertRecord insertRecordFromFace(
     const std::string& imageHash,
     bool duplicate) {
     fsc::core::FaceInsertRecord record;
-    record.fileName = imagePath.filename().string();
-    record.sourcePath = imagePath.string();
+    record.fileName = utf8FromPath(imagePath.filename());
+    record.sourcePath = utf8FromPath(imagePath);
     record.embedding = face.embedding;
     record.embeddingDim = static_cast<int>(face.embedding.size());
     record.bbox = {
@@ -1615,6 +1657,27 @@ public:
     }
 
 #ifdef FSC_ENABLE_ONNX
+    void startLibraryImportSmoke(
+        const QString& databasePath,
+        const QString& modelRoot,
+        const QString& imagePath,
+        const QString& runtimeMode) {
+        openDatabasePath(databasePath);
+        if (modelRootEdit_ != nullptr) {
+            modelRootEdit_->setText(modelRoot);
+        }
+        if (runtimeModeCombo_ != nullptr) {
+            const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
+            runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
+        }
+        libraryImportSmokeStarted_ = true;
+        startLibraryImport({imagePath});
+    }
+
+    [[nodiscard]] bool libraryImportSmokeFinished() const noexcept {
+        return libraryImportSmokeStarted_ && !libraryImportActive_;
+    }
+
     void startSearchQuerySmoke(const QString& modelRoot, const QString& imagePath, const QString& runtimeMode) {
         searchQuerySmokeMode_ = true;
         if (modelRootEdit_ != nullptr) {
@@ -1761,6 +1824,38 @@ private:
         int topK = 3;
         int processSize = 640;
         QString error;
+    };
+#endif
+
+#ifdef FSC_ENABLE_ONNX
+    struct LibraryImportProgressEvent {
+        int current = 0;
+        int total = 0;
+        QString imagePath;
+        QString message;
+        bool preview = false;
+    };
+
+    struct LibraryImportTaskState {
+        std::mutex mutex;
+        std::deque<LibraryImportProgressEvent> events;
+    };
+
+    struct LibraryImportSummary {
+        uint64_t token = 0;
+        QString databasePath;
+        int imagesTotal = 0;
+        int facesSaved = 0;
+        int imagesWithoutFaces = 0;
+        int failedImages = 0;
+        int lowQualityFaces = 0;
+        int duplicateImages = 0;
+        double qualityTotal = 0.0;
+        QString error;
+
+        [[nodiscard]] double averageQuality() const noexcept {
+            return facesSaved > 0 ? qualityTotal / static_cast<double>(facesSaved) : 0.0;
+        }
     };
 #endif
 
@@ -2060,12 +2155,7 @@ private:
 
         connect(newButton, &QPushButton::clicked, this, [this] { createDatabase(); });
         connect(openButton, &QPushButton::clicked, this, [this] { chooseDatabase(); });
-        connect(importButton, &QPushButton::clicked, this, [this] {
-            chooseImage(importImageEdit_);
-            if (importImageEdit_ != nullptr && !importImageEdit_->text().isEmpty()) {
-                importImage();
-            }
-        });
+        connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
         connect(folderButton, &QPushButton::clicked, this, [this] { importFolder(); });
         connect(refreshButton, &QPushButton::clicked, this, [this] { reloadAll(); });
         connect(reviewButton, &QPushButton::clicked, this, [this] { selectMainTab("Review"); });
@@ -2078,6 +2168,9 @@ private:
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
+        auto* title = new QLabel("Library", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
         auto* mainSplitter = new QSplitter(Qt::Horizontal, page);
         auto* leftPanel = new QWidget(mainSplitter);
         auto* leftLayout = new QVBoxLayout(leftPanel);
@@ -2088,11 +2181,11 @@ private:
         auto* form = new QFormLayout(controls);
         modelRootEdit_ = new QLineEdit(controls);
         modelRootEdit_->setText(defaultModelRoot());
-        importImageEdit_ = new QLineEdit(controls);
         auto* modelButton = new QPushButton("Browse", controls);
-        auto* imageButton = new QPushButton("Browse", controls);
-        auto* importButton = new QPushButton("Import Image", controls);
-        auto* importFolderButton = new QPushButton("Import Folder", controls);
+        libraryImportImagesButton_ = new QPushButton("Add Images", controls);
+        libraryImportImagesButton_->setObjectName("LibraryAddImages");
+        libraryImportFolderButton_ = new QPushButton("Add Folder", controls);
+        libraryImportFolderButton_->setObjectName("LibraryAddFolder");
         auto* exportButton = new QPushButton("Export CSV", controls);
         auto* reloadLibraryButton = new QPushButton("Reload", controls);
         auto* modelRow = new QWidget(controls);
@@ -2103,14 +2196,13 @@ private:
         auto* imageRow = new QWidget(controls);
         auto* imageRowLayout = new QHBoxLayout(imageRow);
         imageRowLayout->setContentsMargins(0, 0, 0, 0);
-        imageRowLayout->addWidget(importImageEdit_, 1);
-        imageRowLayout->addWidget(imageButton);
-        imageRowLayout->addWidget(importButton);
-        imageRowLayout->addWidget(importFolderButton);
+        imageRowLayout->addWidget(libraryImportImagesButton_);
+        imageRowLayout->addWidget(libraryImportFolderButton_);
         imageRowLayout->addWidget(reloadLibraryButton);
         imageRowLayout->addWidget(exportButton);
+        imageRowLayout->addStretch(1);
         form->addRow("Models", modelRow);
-        form->addRow("Image", imageRow);
+        form->addRow("Import", imageRow);
         libraryImportMinQualitySpin_ = new QDoubleSpinBox(controls);
         libraryImportMinQualitySpin_->setRange(0.0, 1.0);
         libraryImportMinQualitySpin_->setDecimals(3);
@@ -2154,22 +2246,12 @@ private:
         filterLayout->setColumnStretch(10, 1);
         leftLayout->addWidget(filterControls);
 
-        auto* splitter = new QSplitter(Qt::Vertical, leftPanel);
-        libraryTable_ = new QTableWidget(splitter);
+        libraryTable_ = new QTableWidget(leftPanel);
         libraryTable_->setColumnCount(9);
         libraryTable_->setHorizontalHeaderLabels({"ID", "Name", "Person", "Tags", "Review", "Ignored", "Dupes", "Quality", "Source"});
         fitTable(libraryTable_);
         libraryTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-        importLog_ = new QTableWidget(splitter);
-        importLog_->setColumnCount(6);
-        importLog_->setHorizontalHeaderLabels({"Inserted ID", "Face", "Detection", "Quality", "2D", "3D"});
-        fitTable(importLog_);
-        importLog_->setMaximumHeight(150);
-        splitter->addWidget(libraryTable_);
-        splitter->addWidget(importLog_);
-        splitter->setStretchFactor(0, 1);
-        splitter->setStretchFactor(1, 0);
-        leftLayout->addWidget(splitter, 1);
+        leftLayout->addWidget(libraryTable_, 1);
 
         auto* visualPanel = new QWidget(mainSplitter);
         auto* visualLayout = new QVBoxLayout(visualPanel);
@@ -2267,6 +2349,7 @@ private:
         libraryActivityLog_ = new QTextEdit(activityTab);
         libraryActivityLog_->setReadOnly(true);
         libraryActivityLog_->setMinimumHeight(130);
+        libraryActivityLog_->document()->setMaximumBlockCount(1000);
         activityLayout->addWidget(libraryProgressBar_);
         activityLayout->addWidget(libraryActivityLog_, 1);
         metadataTabs->addTab(activityTab, "Activity");
@@ -2277,6 +2360,8 @@ private:
         mainSplitter->setStretchFactor(0, 3);
         mainSplitter->setStretchFactor(1, 2);
         layout->addWidget(mainSplitter, 1);
+        libraryImportProgressTimer_ = new QTimer(this);
+        libraryImportProgressTimer_->setInterval(50);
         addMainTab(page, "Library");
         connect(libraryTable_, &QTableWidget::itemSelectionChanged, this, [this] {
             const auto selected = libraryTable_->selectedItems();
@@ -2304,9 +2389,9 @@ private:
                 modelRootEdit_->setText(path);
             }
         });
-        connect(imageButton, &QPushButton::clicked, this, [this] { chooseImage(importImageEdit_); });
-        connect(importButton, &QPushButton::clicked, this, [this] { importImage(); });
-        connect(importFolderButton, &QPushButton::clicked, this, [this] { importFolder(); });
+        connect(libraryImportImagesButton_, &QPushButton::clicked, this, [this] { importImage(); });
+        connect(libraryImportFolderButton_, &QPushButton::clicked, this, [this] { importFolder(); });
+        connect(libraryImportProgressTimer_, &QTimer::timeout, this, [this] { drainLibraryImportProgress(); });
         connect(reloadLibraryButton, &QPushButton::clicked, this, [this] { loadLibrary(); });
         connect(exportButton, &QPushButton::clicked, this, [this] { exportLibraryCsv(); });
         connect(applyFilterButton, &QPushButton::clicked, this, [this] { loadLibrary(); });
@@ -3575,6 +3660,9 @@ private:
             return;
         }
         libraryPreviewFaceId_ = faceId;
+        if (libraryFocusButton_ != nullptr) {
+            libraryFocusButton_->setEnabled(faceId > 0);
+        }
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
@@ -3644,7 +3732,7 @@ private:
                 }
             }
             libraryPreviewLabel_->setPixmap(pixmap);
-            libraryFocusButton_->setText(libraryFocusOnFace_ ? "Full Image" : "Focus on Face");
+            libraryFocusButton_->setText(libraryFocusOnFace_ ? trUi("Full Image") : trUi("Focus on Face"));
         } catch (const std::exception& ex) {
             libraryPreviewLabel_->setText(ex.what());
             libraryPreviewLabel_->setPixmap(QPixmap());
@@ -6052,7 +6140,8 @@ private:
         libraryPreviewFaceId_ = 0;
         libraryFocusOnFace_ = false;
         if (libraryFocusButton_ != nullptr) {
-            libraryFocusButton_->setText("Focus on Face");
+            libraryFocusButton_->setText(trUi("Focus on Face"));
+            libraryFocusButton_->setEnabled(false);
         }
         if (libraryVisualTabs_ != nullptr) {
             libraryVisualTabs_->setCurrentIndex(0);
@@ -6072,77 +6161,285 @@ private:
     }
 
 #ifdef FSC_ENABLE_ONNX
-    int importImagePath(
-        const std::filesystem::path& imagePath,
-        fsc::vision::InsightFaceEngine& engine,
-        bool clearLog) {
-        if (importLog_ != nullptr && clearLog) {
-            importLog_->setRowCount(0);
+    bool ensureLibraryDatabaseForImport() {
+        if (database_) {
+            return true;
         }
-        setLibraryImportPreview(imagePath);
-        QApplication::processEvents();
+        createDatabase();
+        return database_ != nullptr;
+    }
 
-        const auto imageHash = fsc::core::sha256File(imagePath);
-        const bool duplicate = database_->imageHashExists(imageHash);
-        const auto image = fsc::vision::loadImageRgb(imagePath);
-        const auto faces = engine.analyze(image, 0.50f, 10);
+    void startLibraryImport(std::vector<QString> files) {
+        if (!database_ || libraryImportActive_) {
+            if (libraryImportActive_) {
+                statusBar()->showMessage("An image import is already running.");
+            }
+            return;
+        }
+        files.erase(
+            std::remove_if(files.begin(), files.end(), [](const QString& path) {
+                return path.trimmed().isEmpty() || !isSupportedImageFile(path);
+            }),
+            files.end());
+        std::sort(files.begin(), files.end(), [](const QString& left, const QString& right) {
+            return QString::compare(left, right, Qt::CaseInsensitive) < 0;
+        });
+        files.erase(
+            std::unique(files.begin(), files.end(), [](const QString& left, const QString& right) {
+                return QString::compare(left, right, Qt::CaseInsensitive) == 0;
+            }),
+            files.end());
+        if (files.empty()) {
+            showError(std::runtime_error("No supported image files were selected."));
+            return;
+        }
+
+        const uint64_t token = ++libraryImportToken_;
+        const QString databasePath = QString::fromStdWString(database_->path().wstring());
+        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto runtimeMode = selectedRuntimeMode();
         const double minQuality = libraryImportMinQualitySpin_ != nullptr ? libraryImportMinQualitySpin_->value() : 0.0;
-        int inserted = 0;
-        for (int index = 0; index < static_cast<int>(faces.size()); ++index) {
-            const auto& face = faces[static_cast<size_t>(index)];
-            QString insertedText = "skipped";
-            if (face.qualityScore >= minQuality) {
-                const auto id = database_->insertFace(insertRecordFromFace(imagePath, face, imageHash, duplicate));
-                insertedText = QString::number(id);
-                ++inserted;
+        const auto analyzer = sharedFaceAnalyzer_;
+        const auto state = std::make_shared<LibraryImportTaskState>();
+        libraryImportTaskState_ = state;
+        libraryImportActive_ = true;
+        if (libraryImportImagesButton_ != nullptr) {
+            libraryImportImagesButton_->setEnabled(false);
+        }
+        if (libraryImportFolderButton_ != nullptr) {
+            libraryImportFolderButton_->setEnabled(false);
+        }
+        if (libraryProgressBar_ != nullptr) {
+            libraryProgressBar_->setRange(0, static_cast<int>(files.size()));
+            libraryProgressBar_->setValue(0);
+        }
+        appendLibraryActivity(QString("Importing %1 image file(s)...").arg(files.size()));
+        if (libraryImportProgressTimer_ != nullptr) {
+            libraryImportProgressTimer_->start();
+        }
+
+        auto* watcher = new QFutureWatcher<LibraryImportSummary>(this);
+        connect(watcher, &QFutureWatcher<LibraryImportSummary>::finished, this, [this, watcher] {
+            auto summary = watcher->result();
+            watcher->deleteLater();
+            finishLibraryImport(std::move(summary));
+        });
+        watcher->setFuture(QtConcurrent::run(
+            [token, databasePath, files = std::move(files), modelRoot, runtimeMode, minQuality, analyzer, state]() mutable {
+                LibraryImportSummary summary;
+                summary.token = token;
+                summary.databasePath = databasePath;
+                summary.imagesTotal = static_cast<int>(files.size());
+                const auto push = [state](LibraryImportProgressEvent event) {
+                    std::lock_guard lock(state->mutex);
+                    state->events.push_back(std::move(event));
+                };
+
+                struct PendingFace {
+                    fsc::core::FaceInsertRecord record;
+                    QString displayName;
+                    double quality = 0.0;
+                    bool duplicate = false;
+                    int imageIndex = 0;
+                };
+
+                try {
+                    fsc::core::Database workerDatabase(pathFrom(databasePath));
+                    std::set<std::string> seenHashes;
+                    std::vector<PendingFace> pending;
+                    pending.reserve(64);
+
+                    const auto flushPending = [&] {
+                        if (pending.empty()) {
+                            return;
+                        }
+                        std::vector<fsc::core::FaceInsertRecord> records;
+                        records.reserve(pending.size());
+                        for (const auto& item : pending) {
+                            records.push_back(item.record);
+                        }
+                        const auto ids = workerDatabase.insertFaces(records);
+                        for (size_t index = 0; index < ids.size(); ++index) {
+                            const auto& saved = pending[index];
+                            ++summary.facesSaved;
+                            summary.qualityTotal += saved.quality;
+                            push({
+                                saved.imageIndex,
+                                summary.imagesTotal,
+                                {},
+                                QString("%1: saved face %2%3")
+                                    .arg(saved.displayName)
+                                    .arg(ids[index])
+                                    .arg(saved.duplicate ? " duplicate" : ""),
+                                false,
+                            });
+                        }
+                        pending.clear();
+                    };
+
+                    for (int index = 0; index < summary.imagesTotal; ++index) {
+                        const QString imagePathText = files[static_cast<size_t>(index)];
+                        const std::filesystem::path imagePath = pathFrom(imagePathText);
+                        const QString fileName = QFileInfo(imagePathText).fileName();
+                        push({
+                            index + 1,
+                            summary.imagesTotal,
+                            imagePathText,
+                            QString("Analyzing %1").arg(fileName),
+                            true,
+                        });
+
+                        try {
+                            const std::string imageHash = fsc::core::sha256File(imagePath);
+                            const bool duplicate = seenHashes.contains(imageHash) || workerDatabase.imageHashExists(imageHash);
+                            if (duplicate) {
+                                ++summary.duplicateImages;
+                            }
+                            seenHashes.insert(imageHash);
+                            const auto faces = analyzer->analyze(modelRoot, runtimeMode, imagePath);
+                            if (faces.empty()) {
+                                ++summary.imagesWithoutFaces;
+                                push({index + 1, summary.imagesTotal, {}, QString("%1: no faces").arg(fileName), false});
+                                continue;
+                            }
+
+                            for (int faceIndex = 0; faceIndex < static_cast<int>(faces.size()); ++faceIndex) {
+                                const auto& face = faces[static_cast<size_t>(faceIndex)];
+                                const QString displayName = faces.size() > 1
+                                    ? QString("%1 #%2").arg(fileName).arg(faceIndex + 1)
+                                    : fileName;
+                                if (face.qualityScore < minQuality) {
+                                    ++summary.lowQualityFaces;
+                                    push({
+                                        index + 1,
+                                        summary.imagesTotal,
+                                        {},
+                                        QString("%1: skipped low quality (%2)").arg(displayName).arg(face.qualityScore, 0, 'f', 3),
+                                        false,
+                                    });
+                                    continue;
+                                }
+                                auto record = insertRecordFromFace(imagePath, face, imageHash, duplicate);
+                                record.fileName = displayName.toUtf8().constData();
+                                if (duplicate) {
+                                    record.notes = "Same source image hash already exists in this database or import batch.";
+                                }
+                                pending.push_back({std::move(record), displayName, face.qualityScore, duplicate, index + 1});
+                            }
+                            if (pending.size() >= 50) {
+                                flushPending();
+                            }
+                            push({
+                                index + 1,
+                                summary.imagesTotal,
+                                {},
+                                QString("Processed %1 face(s) from %2").arg(faces.size()).arg(fileName),
+                                false,
+                            });
+                        } catch (const std::exception& ex) {
+                            ++summary.failedImages;
+                            push({
+                                index + 1,
+                                summary.imagesTotal,
+                                {},
+                                QString("%1: failed (%2)").arg(fileName, QString::fromUtf8(ex.what())),
+                                false,
+                            });
+                        }
+                    }
+                    flushPending();
+                } catch (const std::exception& ex) {
+                    summary.error = QString::fromUtf8(ex.what());
+                }
+                return summary;
+            }));
+    }
+
+    void drainLibraryImportProgress() {
+        const auto state = libraryImportTaskState_;
+        if (!state) {
+            return;
+        }
+        std::deque<LibraryImportProgressEvent> events;
+        {
+            std::lock_guard lock(state->mutex);
+            events.swap(state->events);
+        }
+        std::optional<LibraryImportProgressEvent> latestPreview;
+        for (const auto& event : events) {
+            if (libraryProgressBar_ != nullptr) {
+                libraryProgressBar_->setRange(0, std::max(1, event.total));
+                libraryProgressBar_->setValue(std::max(libraryProgressBar_->value(), event.current));
             }
-            if (importLog_ != nullptr) {
-                const int row = importLog_->rowCount();
-                importLog_->insertRow(row);
-                importLog_->setItem(row, 0, item(insertedText));
-                importLog_->setItem(row, 1, item(QString::number(index + 1)));
-                importLog_->setItem(row, 2, numberItem(face.detection.score, 4));
-                importLog_->setItem(row, 3, numberItem(face.qualityScore, 4));
-                importLog_->setItem(row, 4, item(QString::number(face.landmarks2d.size())));
-                importLog_->setItem(row, 5, item(QString::number(face.landmarks3d.size())));
+            if (!event.message.isEmpty()) {
+                appendLibraryActivity(event.message);
+            }
+            if (event.preview) {
+                latestPreview = event;
             }
         }
-        if (importLog_ != nullptr) {
-            importLog_->resizeColumnsToContents();
+        if (latestPreview.has_value() && !latestPreview->imagePath.isEmpty()) {
+            setLibraryImportPreview(pathFrom(latestPreview->imagePath));
+            statusBar()->showMessage(QString("%1 (%2/%3)")
+                                         .arg(latestPreview->message)
+                                         .arg(latestPreview->current)
+                                         .arg(latestPreview->total));
         }
-        appendLibraryActivity(QString("Imported %1 from %2%3")
-                                  .arg(inserted)
-                                  .arg(QString::fromStdWString(imagePath.filename().wstring()))
-                                  .arg(duplicate ? " (duplicate source)" : ""));
-        return inserted;
+    }
+
+    void finishLibraryImport(LibraryImportSummary summary) {
+        if (summary.token != libraryImportToken_) {
+            return;
+        }
+        drainLibraryImportProgress();
+        libraryImportActive_ = false;
+        if (libraryImportProgressTimer_ != nullptr) {
+            libraryImportProgressTimer_->stop();
+        }
+        if (libraryImportImagesButton_ != nullptr) {
+            libraryImportImagesButton_->setEnabled(true);
+        }
+        if (libraryImportFolderButton_ != nullptr) {
+            libraryImportFolderButton_->setEnabled(true);
+        }
+        if (!summary.error.isEmpty()) {
+            appendLibraryActivity(QString("Import stopped: %1").arg(summary.error));
+            showError(std::runtime_error(summary.error.toUtf8().constData()));
+        }
+        appendLibraryActivity(QString("Done: %1 face(s), %2 no-face image(s), %3 failed image(s), "
+                                      "%4 low-quality face(s) skipped, %5 duplicate image(s), avg quality %6.")
+                                  .arg(summary.facesSaved)
+                                  .arg(summary.imagesWithoutFaces)
+                                  .arg(summary.failedImages)
+                                  .arg(summary.lowQualityFaces)
+                                  .arg(summary.duplicateImages)
+                                  .arg(summary.averageQuality(), 0, 'f', 3));
+        if (database_ && QString::fromStdWString(database_->path().wstring()) == summary.databasePath) {
+            reloadAll();
+        }
+        libraryImportTaskState_.reset();
     }
 #endif
 
     void importImage() {
 #ifdef FSC_ENABLE_ONNX
-        if (!database_) {
+        if (!ensureLibraryDatabaseForImport()) {
             return;
         }
-        try {
-            const auto modelRoot = pathFrom(modelRootEdit_->text());
-            const auto imagePath = pathFrom(importImageEdit_->text());
-            if (imagePath.empty()) {
-                throw std::runtime_error("Select an image first.");
-            }
-            fsc::vision::InsightFaceEngine engine(fsc::vision::InsightFaceModelPaths::fromBuffaloL(modelRoot), selectedRuntimeMode());
-            if (libraryProgressBar_ != nullptr) {
-                libraryProgressBar_->setRange(0, 1);
-                libraryProgressBar_->setValue(0);
-            }
-            const int inserted = importImagePath(imagePath, engine, true);
-            if (libraryProgressBar_ != nullptr) {
-                libraryProgressBar_->setValue(1);
-            }
-            reloadAll();
-            statusBar()->showMessage(QString("Imported %1 face(s)").arg(inserted));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        const QStringList selected = QFileDialog::getOpenFileNames(
+            this,
+            "Add images",
+            {},
+            "Images (*.jpg *.jpeg *.png *.bmp *.webp *.tif *.tiff *.ppm);;All Files (*)");
+        if (selected.isEmpty()) {
+            return;
         }
+        std::vector<QString> files;
+        files.reserve(static_cast<size_t>(selected.size()));
+        for (const auto& path : selected) {
+            files.push_back(path);
+        }
+        startLibraryImport(std::move(files));
 #else
         QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
 #endif
@@ -6150,58 +6447,27 @@ private:
 
     void importFolder() {
 #ifdef FSC_ENABLE_ONNX
-        if (!database_) {
+        if (!ensureLibraryDatabaseForImport()) {
             return;
         }
-        try {
-            const QString folder = QFileDialog::getExistingDirectory(this, "Import image folder", importImageEdit_ == nullptr ? QString() : importImageEdit_->text());
-            if (folder.isEmpty()) {
-                return;
-            }
-            const QStringList filters = {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.ppm"};
-            std::vector<QString> files;
-            QDirIterator iterator(folder, filters, QDir::Files, QDirIterator::Subdirectories);
-            while (iterator.hasNext()) {
-                const QString file = iterator.next();
-                if (isSupportedImageFile(file)) {
-                    files.push_back(file);
-                }
-            }
-            if (files.empty()) {
-                throw std::runtime_error("No supported image files found.");
-            }
-            if (importLog_ != nullptr) {
-                importLog_->setRowCount(0);
-            }
-            if (libraryProgressBar_ != nullptr) {
-                libraryProgressBar_->setRange(0, static_cast<int>(files.size()));
-                libraryProgressBar_->setValue(0);
-            }
-            fsc::vision::InsightFaceEngine engine(
-                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(modelRootEdit_->text())),
-                selectedRuntimeMode());
-            int insertedTotal = 0;
-            int failed = 0;
-            for (int index = 0; index < static_cast<int>(files.size()); ++index) {
-                try {
-                    insertedTotal += importImagePath(pathFrom(files[static_cast<size_t>(index)]), engine, false);
-                } catch (const std::exception& ex) {
-                    ++failed;
-                    appendLibraryActivity(QString("Failed %1: %2")
-                                              .arg(QFileInfo(files[static_cast<size_t>(index)]).fileName(), QString::fromUtf8(ex.what())));
-                }
-                if (libraryProgressBar_ != nullptr) {
-                    libraryProgressBar_->setValue(index + 1);
-                }
-                QApplication::processEvents();
-            }
-            reloadAll();
-            appendLibraryActivity(QString("Folder import complete: %1 face(s), %2 failed file(s)")
-                                      .arg(insertedTotal)
-                                      .arg(failed));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        const QString folder = QFileDialog::getExistingDirectory(this, "Add folder recursively");
+        if (folder.isEmpty()) {
+            return;
         }
+        std::vector<QString> files;
+        QDirIterator iterator(folder, QDir::Files, QDirIterator::Subdirectories);
+        while (iterator.hasNext()) {
+            const QString file = iterator.next();
+            if (isSupportedImageFile(file)) {
+                files.push_back(file);
+            }
+        }
+        if (files.empty()) {
+            showError(std::runtime_error("No supported image files were found in the selected folder."));
+            return;
+        }
+        appendLibraryActivity(QString("Importing %1 image file(s) from %2").arg(files.size()).arg(folder));
+        startLibraryImport(std::move(files));
 #else
         QMessageBox::information(this, "FSC Studio Native", "This build was not compiled with ONNX Runtime.");
 #endif
@@ -6283,6 +6549,15 @@ private:
     QCheckBox* libraryFilterIncludeIgnoredCheck_ = nullptr;
     QProgressBar* libraryProgressBar_ = nullptr;
     QTextEdit* libraryActivityLog_ = nullptr;
+    QPushButton* libraryImportImagesButton_ = nullptr;
+    QPushButton* libraryImportFolderButton_ = nullptr;
+    QTimer* libraryImportProgressTimer_ = nullptr;
+#ifdef FSC_ENABLE_ONNX
+    std::shared_ptr<LibraryImportTaskState> libraryImportTaskState_;
+    uint64_t libraryImportToken_ = 0;
+    bool libraryImportActive_ = false;
+    bool libraryImportSmokeStarted_ = false;
+#endif
     int libraryPreviewFaceId_ = 0;
     bool libraryFocusOnFace_ = false;
     QTableWidget* peopleTable_ = nullptr;
@@ -6412,8 +6687,6 @@ private:
     QPushButton* runtimeLegacyConvertButton_ = nullptr;
     QProgressBar* runtimeLegacyProgressBar_ = nullptr;
     QLineEdit* modelRootEdit_ = nullptr;
-    QLineEdit* importImageEdit_ = nullptr;
-    QTableWidget* importLog_ = nullptr;
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
     std::shared_ptr<const std::vector<fsc::core::IdentityProfile>> cameraIdentityProfilesSnapshot_ =
@@ -6448,9 +6721,7 @@ private:
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc > 0 && argv[0] != nullptr) {
-        registerDeployedQtPluginPath(argv[0]);
-    }
+    configureDeployedQtRuntime(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "--smoke") {
         try {
             fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
@@ -6808,6 +7079,44 @@ int main(int argc, char** argv) {
         return outcome;
     }
 #endif
+
+    if (argc >= 5 && std::string(argv[1]) == "--library-import-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        try {
+            fsc::core::Database::createEmpty(pathFrom(databasePath), true);
+        } catch (...) {
+            return 2;
+        }
+        MainWindow window;
+        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
+        window.startLibraryImportSmoke(
+            databasePath,
+            QString::fromLocal8Bit(argv[3]),
+            QString::fromLocal8Bit(argv[4]),
+            runtimeMode);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.libraryImportSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                outcome = database.statistics().faceCount > 0 ? 0 : 4;
+            } catch (...) {
+                outcome = 7;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
 
     if (argc >= 5 && std::string(argv[1]) == "--compare-ui-smoke") {
         QApplication uiApp(argc, argv);

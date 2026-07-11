@@ -51,6 +51,7 @@ public:
     void updateFaceMesh3d(int64_t faceId, const std::vector<std::vector<double>>& faceMesh3d);
     void clearFaceMesh3d(int64_t faceId);
     int64_t insertFace(const FaceInsertRecord& record);
+    std::vector<int64_t> insertFaces(const std::vector<FaceInsertRecord>& records);
     IdentityTrainingSummary rebuildIdentityProfiles(const IdentityTrainingOptions& options = {});
 
 private:
