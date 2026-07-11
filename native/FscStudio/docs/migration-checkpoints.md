@@ -100,11 +100,14 @@ Current Dense Mesh shell:
 Current Camera shell:
 
 - OpenCV is optional through vcpkg feature `opencv` with default OpenCV features disabled; only `core`, `dshow`, `msmf`, and `thread` are enabled.
-- Qt Camera tab captures frames natively through OpenCV, displays live preview, downsizes recognition frames by a configurable process-size limit, analyzes the latest frame through native ONNX InsightFace, identifies against cached Identity Gallery profiles, and smooths displayed names with per-face short vote windows.
-- Qt Camera tab now has threshold, top-k, recognition interval, process size, current database status, a live preview with recent face boxes, a best-match preview, and a Python-style result table that combines identity decision, evidence face, similar-face hit, cosine, similarity, and quality.
+- Qt Camera tab captures frames natively through OpenCV on a 33 ms UI timer. Configurable-size ONNX recognition runs on a background worker, so model initialization and inference no longer pause live preview or box refresh.
+- Database face embeddings and Identity Gallery profiles are immutable snapshots rebuilt only when the opened database changes. Recognition results carry camera-session, task-token, and database-path guards before UI application; short vote windows smooth names without overriding `unknown` safety decisions.
+- The page mirrors Python controls and layout: Open Database / Use Library DB, threshold, top-k, 300 ms default interval, process size, start/stop, live boxes, focusable best-match preview, and the 11-column identity/similar-hit table.
 - `FscStudioQt.exe --camera-smoke`: exit code `0`.
 - `FscStudioQt.exe --camera-open-smoke 0`: exit code `0` on this machine; OpenCV selected the MSMF backend and captured a frame from camera index `0`.
 - `FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
+- `FscStudioQt.exe --camera-ui-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg cpu|directml`: both modes exit `0` after populating native Camera UI results.
+- `FscStudioQt.exe --camera-live-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models 0 cpu`: exit code `0` after an 8-second physical-camera run proved at least 20 captured frames and one completed background recognition.
 
 Current DirectML shell:
 
@@ -139,7 +142,7 @@ Current Qt shell:
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters can group stored face embeddings with configurable cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options; the page shows known people, member tags, selected-member preview, and batch assignment actions.
-- Camera result rows now support selected-match actions: confirm the identity suggestion onto a stored match, manually assign the stored match to a person, or mark the stored match reviewed without changing live frame processing.
+- Camera result selection updates the evidence/best-hit preview locally; person assignment and review mutations remain on the People and Review pages, matching the Python workflow.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Runtime tab now shows current database stats and provides native SQLite maintenance actions: integrity check, database backup, WAL checkpoint, VACUUM, and operation log.
 - Runtime now also converts trusted legacy `.dtb` files without Python: it parses only the known FSC tuple/NumPy-image format, re-extracts embeddings with native ONNX, writes `<output>_legacy_images` PPM previews, and opens the converted v8 database. `fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml] [limit]` provides a reproducible non-UI path.

@@ -32,10 +32,9 @@ continuing that prototype.
 - Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, an optional 68-point landmark overlay in Textured mode, and local eyelid/iris triangulation so the 468--477 MediaPipe iris points retain their textured eyeballs.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
-- Search can use either a stored face id or a standalone analyzed query image with detected-face selection.
-- Search now has threshold/min-quality/include-ignored/person/tag controls, an identity candidate table, a throttled progressive result preview while filtered database faces are compared, and native result/identity assignment actions. It ends on the best match rather than cycling completed results.
-- Compare analyzes both selected images, lists all detected faces, lets the user choose faces by list or preview click, and compares the selected pair.
-- Camera captures native frames, downsizes recognition frames by a configurable process-size limit, overlays recent detected face boxes, and shows per-face smoothed identity/gallery candidates plus similar database hits beside a best-match preview.
+- Search mirrors the Python query workflow: select an image, detect faces asynchronously, choose by list or preview click, then run filtered similarity and identity search with a throttled progressive preview that ends on the best match.
+- Compare detects both selected images asynchronously through a reusable ONNX session, lists every detected face, synchronizes list/preview selection, and compares the selected pair without blocking the UI.
+- Camera keeps native capture at a 33 ms UI cadence while recognition runs on a background worker at the configured interval. Database faces and Identity Gallery profiles are immutable snapshots refreshed only when the database changes; recent boxes, smoothed identities, similar hits, and a focusable best-match preview update on the UI thread.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Clusters supports max-face/min-quality/unassigned/ignored filters, shows known people and member tags, previews selected members, and can batch-assign a selected cluster.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
@@ -173,6 +172,8 @@ cmake --build --preset msvc-vs-qt-camera-dml-release
 ctest --preset msvc-vs-qt-camera-dml-release
 .\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml
 .\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml
+.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-ui-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg directml
+.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-live-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models 0 cpu
 powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip
 ```
 
