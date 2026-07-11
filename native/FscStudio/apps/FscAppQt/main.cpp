@@ -211,6 +211,29 @@ private:
 };
 #endif
 
+class SharedFaceMeshAnalyzer final {
+public:
+    std::vector<std::vector<double>> analyze(
+        const std::filesystem::path& modelPath,
+        const std::filesystem::path& imagePath,
+        const std::vector<double>& faceBox) {
+        const auto image = fsc::vision::loadImageRgb(imagePath);
+        std::lock_guard lock(mutex_);
+        if (!landmarker_ || modelPath_ != modelPath) {
+            fsc::mesh::MediaPipeFaceLandmarkerOptions options;
+            options.modelAssetPath = modelPath;
+            landmarker_ = std::make_unique<fsc::mesh::MediaPipeFaceLandmarker>(std::move(options));
+            modelPath_ = modelPath;
+        }
+        return fsc::mesh::selectBestMediaPipeFaceMesh(landmarker_->detect(image), faceBox);
+    }
+
+private:
+    std::mutex mutex_;
+    std::filesystem::path modelPath_;
+    std::unique_ptr<fsc::mesh::MediaPipeFaceLandmarker> landmarker_;
+};
+
 QTableWidgetItem* item(const QString& value) {
     auto* output = new QTableWidgetItem(value);
     output->setFlags(output->flags() & ~Qt::ItemIsEditable);
@@ -355,6 +378,10 @@ const TranslationTable& uiTranslations() {
             {"Camera", "摄像头"}, {"Review", "复核"}, {"Clusters", "聚类"}, {"Compare", "比对"},
             {"Runtime", "运行环境"}, {"Ready", "就绪"}, {"Browse", "浏览"}, {"Import Image", "导入图片"},
             {"Import Folder", "导入文件夹"}, {"Export CSV", "导出 CSV"}, {"Reload", "重新加载"},
+            {"New", "新建"}, {"Open", "打开"}, {"Add Images", "添加图片"}, {"Add Folder", "添加文件夹"},
+            {"File", "文件"}, {"View", "视图"}, {"No database loaded", "未加载数据库"},
+            {"Name", "名称"}, {"Tags", "标签"}, {"Ignored", "已忽略"}, {"Dupes", "重复数"},
+            {"Quality", "质量"}, {"Source", "来源"}, {"Notes", "备注"},
             {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
             {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
@@ -376,6 +403,10 @@ const TranslationTable& uiTranslations() {
             {"Camera", "カメラ"}, {"Review", "レビュー"}, {"Clusters", "クラスタ"}, {"Compare", "比較"},
             {"Runtime", "実行環境"}, {"Ready", "準備完了"}, {"Browse", "参照"}, {"Import Image", "画像を追加"},
             {"Import Folder", "フォルダーを追加"}, {"Export CSV", "CSVを書き出す"}, {"Reload", "再読み込み"},
+            {"New", "新規"}, {"Open", "開く"}, {"Add Images", "画像を追加"}, {"Add Folder", "フォルダーを追加"},
+            {"File", "ファイル"}, {"View", "表示"}, {"No database loaded", "データベース未読込"},
+            {"Name", "名前"}, {"Tags", "タグ"}, {"Ignored", "除外"}, {"Dupes", "重複数"},
+            {"Quality", "品質"}, {"Source", "ソース"}, {"Notes", "メモ"},
             {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
             {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
@@ -397,6 +428,10 @@ const TranslationTable& uiTranslations() {
             {"Camera", "카메라"}, {"Review", "검토"}, {"Clusters", "클러스터"}, {"Compare", "비교"},
             {"Runtime", "실행 환경"}, {"Ready", "준비됨"}, {"Browse", "찾아보기"}, {"Import Image", "이미지 가져오기"},
             {"Import Folder", "폴더 가져오기"}, {"Export CSV", "CSV 내보내기"}, {"Reload", "새로 고침"},
+            {"New", "새로 만들기"}, {"Open", "열기"}, {"Add Images", "이미지 추가"}, {"Add Folder", "폴더 추가"},
+            {"File", "파일"}, {"View", "보기"}, {"No database loaded", "데이터베이스가 열리지 않음"},
+            {"Name", "이름"}, {"Tags", "태그"}, {"Ignored", "제외됨"}, {"Dupes", "중복 수"},
+            {"Quality", "품질"}, {"Source", "원본"}, {"Notes", "메모"},
             {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
             {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
@@ -1649,11 +1684,30 @@ public:
         : QMainWindow(parent) {
         setWindowTitle("FSC Studio");
         resize(1180, 760);
+        modelRootPath_ = defaultModelRoot();
         buildUi();
     }
 
     void openDatabasePath(const QString& path) {
         openDatabase(path);
+    }
+
+    void selectPageForSmoke(const QString& page) {
+        selectMainTab(page);
+        if (page.compare("Library", Qt::CaseInsensitive) == 0 && libraryTable_ != nullptr && libraryTable_->rowCount() > 0) {
+            libraryTable_->selectRow(0);
+        }
+    }
+
+    void startLibraryMeshSmoke(const QString& databasePath, int64_t faceId) {
+        openDatabasePath(databasePath);
+        libraryMeshSmokeStarted_ = true;
+        libraryPreviewFaceId_ = static_cast<int>(faceId);
+        updateLibrary3dPreview(static_cast<int>(faceId));
+    }
+
+    [[nodiscard]] bool libraryMeshSmokeFinished() const noexcept {
+        return libraryMeshSmokeStarted_ && libraryMeshTasksInFlight_.empty();
     }
 
 #ifdef FSC_ENABLE_ONNX
@@ -1663,9 +1717,7 @@ public:
         const QString& imagePath,
         const QString& runtimeMode) {
         openDatabasePath(databasePath);
-        if (modelRootEdit_ != nullptr) {
-            modelRootEdit_->setText(modelRoot);
-        }
+        modelRootPath_ = modelRoot;
         if (runtimeModeCombo_ != nullptr) {
             const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
             runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
@@ -1680,9 +1732,7 @@ public:
 
     void startSearchQuerySmoke(const QString& modelRoot, const QString& imagePath, const QString& runtimeMode) {
         searchQuerySmokeMode_ = true;
-        if (modelRootEdit_ != nullptr) {
-            modelRootEdit_->setText(modelRoot);
-        }
+        modelRootPath_ = modelRoot;
         if (runtimeModeCombo_ != nullptr) {
             const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
             runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
@@ -1706,9 +1756,7 @@ public:
         const QString& imageA,
         const QString& imageB,
         const QString& runtimeMode) {
-        if (modelRootEdit_ != nullptr) {
-            modelRootEdit_->setText(modelRoot);
-        }
+        modelRootPath_ = modelRoot;
         if (runtimeModeCombo_ != nullptr) {
             const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
             runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
@@ -1734,9 +1782,7 @@ public:
 
 #ifdef FSC_ENABLE_OPENCV
     void startCameraFrameSmoke(const QString& modelRoot, const QString& imagePath, const QString& runtimeMode) {
-        if (modelRootEdit_ != nullptr) {
-            modelRootEdit_->setText(modelRoot);
-        }
+        modelRootPath_ = modelRoot;
         if (runtimeModeCombo_ != nullptr) {
             const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
             runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
@@ -1758,9 +1804,7 @@ public:
     }
 
     void startCameraLiveSmoke(const QString& modelRoot, int cameraIndex, const QString& runtimeMode) {
-        if (modelRootEdit_ != nullptr) {
-            modelRootEdit_->setText(modelRoot);
-        }
+        modelRootPath_ = modelRoot;
         if (runtimeModeCombo_ != nullptr) {
             const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
             runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
@@ -1826,6 +1870,14 @@ private:
         QString error;
     };
 #endif
+
+    struct LibraryMeshAnalysisResult {
+        QString taskKey;
+        QString databasePath;
+        int64_t faceId = 0;
+        std::vector<std::vector<double>> mesh;
+        QString error;
+    };
 
 #ifdef FSC_ENABLE_ONNX
     struct LibraryImportProgressEvent {
@@ -2057,6 +2109,8 @@ private:
         tabs_ = new QTabWidget(content);
         tabs_->tabBar()->hide();
         tabs_->setDocumentMode(true);
+        tabs_->setMinimumSize(0, 0);
+        tabs_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
         contentLayout->addWidget(tabs_, 1);
         rootLayout->addWidget(content, 1);
         buildOverviewTab();
@@ -2167,108 +2221,123 @@ private:
     void buildLibraryTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(24, 22, 24, 22);
+        layout->setSpacing(14);
         auto* title = new QLabel("Library", page);
         title->setObjectName("PageTitle");
         layout->addWidget(title);
-        auto* mainSplitter = new QSplitter(Qt::Horizontal, page);
-        auto* leftPanel = new QWidget(mainSplitter);
-        auto* leftLayout = new QVBoxLayout(leftPanel);
-        leftLayout->setContentsMargins(0, 0, 0, 0);
-        leftLayout->setSpacing(6);
-
-        auto* controls = new QWidget(leftPanel);
-        auto* form = new QFormLayout(controls);
-        modelRootEdit_ = new QLineEdit(controls);
-        modelRootEdit_->setText(defaultModelRoot());
-        auto* modelButton = new QPushButton("Browse", controls);
+        auto* controls = new QGroupBox("Database", page);
+        auto* controlsLayout = new QGridLayout(controls);
+        libraryDatabasePathEdit_ = new QLineEdit(controls);
+        libraryDatabasePathEdit_->setReadOnly(true);
+        libraryDatabasePathEdit_->setObjectName("LibraryDatabasePath");
+        auto* newDatabaseButton = new QPushButton("New", controls);
+        auto* openDatabaseButton = new QPushButton("Open", controls);
         libraryImportImagesButton_ = new QPushButton("Add Images", controls);
         libraryImportImagesButton_->setObjectName("LibraryAddImages");
         libraryImportFolderButton_ = new QPushButton("Add Folder", controls);
         libraryImportFolderButton_->setObjectName("LibraryAddFolder");
         auto* exportButton = new QPushButton("Export CSV", controls);
         auto* reloadLibraryButton = new QPushButton("Reload", controls);
-        auto* modelRow = new QWidget(controls);
-        auto* modelRowLayout = new QHBoxLayout(modelRow);
-        modelRowLayout->setContentsMargins(0, 0, 0, 0);
-        modelRowLayout->addWidget(modelRootEdit_, 1);
-        modelRowLayout->addWidget(modelButton);
-        auto* imageRow = new QWidget(controls);
-        auto* imageRowLayout = new QHBoxLayout(imageRow);
-        imageRowLayout->setContentsMargins(0, 0, 0, 0);
-        imageRowLayout->addWidget(libraryImportImagesButton_);
-        imageRowLayout->addWidget(libraryImportFolderButton_);
-        imageRowLayout->addWidget(reloadLibraryButton);
-        imageRowLayout->addWidget(exportButton);
-        imageRowLayout->addStretch(1);
-        form->addRow("Models", modelRow);
-        form->addRow("Import", imageRow);
         libraryImportMinQualitySpin_ = new QDoubleSpinBox(controls);
         libraryImportMinQualitySpin_->setRange(0.0, 1.0);
         libraryImportMinQualitySpin_->setDecimals(3);
         libraryImportMinQualitySpin_->setSingleStep(0.050);
         libraryImportMinQualitySpin_->setValue(0.0);
-        form->addRow("Import min quality", libraryImportMinQualitySpin_);
-        leftLayout->addWidget(controls);
+        libraryStatsLabel_ = new QLabel("No database loaded", controls);
+        libraryStatsLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        controlsLayout->addWidget(new QLabel("File", controls), 0, 0);
+        controlsLayout->addWidget(libraryDatabasePathEdit_, 0, 1, 1, 7);
+        controlsLayout->addWidget(newDatabaseButton, 0, 8);
+        controlsLayout->addWidget(openDatabaseButton, 0, 9);
+        controlsLayout->addWidget(new QLabel("Min quality", controls), 1, 0);
+        controlsLayout->addWidget(libraryImportMinQualitySpin_, 1, 1);
+        controlsLayout->addWidget(libraryStatsLabel_, 1, 2, 1, 4);
+        controlsLayout->addWidget(libraryImportImagesButton_, 1, 6);
+        controlsLayout->addWidget(libraryImportFolderButton_, 1, 7);
+        controlsLayout->addWidget(reloadLibraryButton, 1, 8);
+        controlsLayout->addWidget(exportButton, 1, 9);
 
-        auto* filterControls = new QWidget(leftPanel);
-        auto* filterLayout = new QGridLayout(filterControls);
-        filterLayout->setContentsMargins(0, 0, 0, 0);
-        libraryFilterTextEdit_ = new QLineEdit(filterControls);
+        libraryFilterTextEdit_ = new QLineEdit(controls);
         libraryFilterTextEdit_->setPlaceholderText("name, path, person, tag, notes");
-        libraryFilterPersonCombo_ = new QComboBox(filterControls);
-        libraryFilterTagCombo_ = new QComboBox(filterControls);
-        libraryFilterReviewCombo_ = new QComboBox(filterControls);
+        libraryFilterPersonCombo_ = new QComboBox(controls);
+        libraryFilterTagCombo_ = new QComboBox(controls);
+        libraryFilterReviewCombo_ = new QComboBox(controls);
         libraryFilterReviewCombo_->addItem("All", "");
         libraryFilterReviewCombo_->addItems({"open", "reviewed", "duplicate", "low_quality", "ignored"});
-        libraryFilterMinQualitySpin_ = new QDoubleSpinBox(filterControls);
+        libraryFilterMinQualitySpin_ = new QDoubleSpinBox(controls);
         libraryFilterMinQualitySpin_->setRange(0.0, 1.0);
         libraryFilterMinQualitySpin_->setDecimals(3);
         libraryFilterMinQualitySpin_->setSingleStep(0.050);
         libraryFilterMinQualitySpin_->setValue(0.0);
-        libraryFilterIncludeIgnoredCheck_ = new QCheckBox("Include ignored", filterControls);
+        libraryFilterIncludeIgnoredCheck_ = new QCheckBox("Include ignored", controls);
         libraryFilterIncludeIgnoredCheck_->setChecked(true);
-        auto* applyFilterButton = new QPushButton("Apply Filter", filterControls);
-        auto* resetFilterButton = new QPushButton("Reset Filter", filterControls);
-        filterLayout->addWidget(new QLabel("Filter", filterControls), 0, 0);
-        filterLayout->addWidget(libraryFilterTextEdit_, 0, 1, 1, 2);
-        filterLayout->addWidget(new QLabel("Person", filterControls), 0, 3);
-        filterLayout->addWidget(libraryFilterPersonCombo_, 0, 4);
-        filterLayout->addWidget(new QLabel("Tag", filterControls), 0, 5);
-        filterLayout->addWidget(libraryFilterTagCombo_, 0, 6);
-        filterLayout->addWidget(libraryFilterIncludeIgnoredCheck_, 0, 7);
-        filterLayout->addWidget(applyFilterButton, 0, 8);
-        filterLayout->addWidget(resetFilterButton, 0, 9);
-        filterLayout->addWidget(new QLabel("Review", filterControls), 1, 0);
-        filterLayout->addWidget(libraryFilterReviewCombo_, 1, 1);
-        filterLayout->addWidget(new QLabel("Min quality", filterControls), 1, 2);
-        filterLayout->addWidget(libraryFilterMinQualitySpin_, 1, 3);
-        filterLayout->setColumnStretch(10, 1);
-        leftLayout->addWidget(filterControls);
+        auto* applyFilterButton = new QPushButton("Apply Filter", controls);
+        auto* resetFilterButton = new QPushButton("Reset Filter", controls);
+        controlsLayout->addWidget(new QLabel("Filter", controls), 2, 0);
+        controlsLayout->addWidget(libraryFilterTextEdit_, 2, 1, 1, 2);
+        controlsLayout->addWidget(new QLabel("Person", controls), 2, 3);
+        controlsLayout->addWidget(libraryFilterPersonCombo_, 2, 4);
+        controlsLayout->addWidget(new QLabel("Tag", controls), 2, 5);
+        controlsLayout->addWidget(libraryFilterTagCombo_, 2, 6);
+        controlsLayout->addWidget(libraryFilterIncludeIgnoredCheck_, 2, 7);
+        controlsLayout->addWidget(applyFilterButton, 2, 8);
+        controlsLayout->addWidget(resetFilterButton, 2, 9);
+        controlsLayout->addWidget(new QLabel("Review", controls), 3, 0);
+        controlsLayout->addWidget(libraryFilterReviewCombo_, 3, 1);
+        controlsLayout->addWidget(new QLabel("Min quality", controls), 3, 2);
+        controlsLayout->addWidget(libraryFilterMinQualitySpin_, 3, 3);
+        controlsLayout->setColumnStretch(1, 1);
+        controlsLayout->setColumnStretch(2, 1);
+        layout->addWidget(controls);
 
-        libraryTable_ = new QTableWidget(leftPanel);
+        auto* mainSplitter = new QSplitter(Qt::Horizontal, page);
+        libraryTable_ = new QTableWidget(mainSplitter);
+        libraryTable_->setObjectName("LibraryFaceTable");
         libraryTable_->setColumnCount(9);
         libraryTable_->setHorizontalHeaderLabels({"ID", "Name", "Person", "Tags", "Review", "Ignored", "Dupes", "Quality", "Source"});
         fitTable(libraryTable_);
         libraryTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-        leftLayout->addWidget(libraryTable_, 1);
+        libraryTable_->setColumnWidth(0, 70);
+        libraryTable_->setColumnWidth(1, 190);
+        libraryTable_->setColumnWidth(2, 130);
+        libraryTable_->setColumnWidth(3, 160);
+        libraryTable_->setColumnWidth(4, 95);
+        libraryTable_->setColumnWidth(5, 95);
+        libraryTable_->setColumnWidth(6, 75);
+        libraryTable_->setColumnWidth(7, 80);
 
         auto* visualPanel = new QWidget(mainSplitter);
+        visualPanel->setMinimumWidth(430);
+        visualPanel->setMaximumWidth(500);
         auto* visualLayout = new QVBoxLayout(visualPanel);
-        visualLayout->setContentsMargins(8, 0, 0, 0);
+        visualLayout->setContentsMargins(0, 0, 0, 0);
+        visualLayout->setSpacing(10);
 
         libraryVisualTabs_ = new QTabWidget(visualPanel);
+        libraryVisualTabs_->setObjectName("LibraryVisualTabs");
         auto* imageTab = new QWidget(libraryVisualTabs_);
         auto* imageLayout = new QVBoxLayout(imageTab);
         imageLayout->setContentsMargins(0, 0, 0, 0);
-        libraryFocusButton_ = new QPushButton("Focus on Face", imageTab);
-        libraryFocusButton_->setMaximumWidth(132);
-        libraryPreviewLabel_ = new QLabel("Select a face", imageTab);
+        auto* imageOverlay = new QWidget(imageTab);
+        auto* imageOverlayLayout = new QGridLayout(imageOverlay);
+        imageOverlayLayout->setContentsMargins(0, 0, 0, 0);
+        libraryPreviewLabel_ = new QLabel("Select a face", imageOverlay);
         libraryPreviewLabel_->setAlignment(Qt::AlignCenter);
-        libraryPreviewLabel_->setMinimumWidth(300);
+        libraryPreviewLabel_->setMinimumSize(320, 320);
         libraryPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        imageLayout->addWidget(libraryFocusButton_, 0, Qt::AlignLeft);
-        imageLayout->addWidget(libraryPreviewLabel_, 1);
+        libraryFocusButton_ = new QToolButton(imageOverlay);
+        libraryFocusButton_->setObjectName("LibraryFocus");
+        libraryFocusButton_->setText("Focus on Face");
+        libraryFocusButton_->setAutoRaise(false);
+        libraryFocusButton_->setMaximumWidth(132);
+        libraryFocusButton_->setStyleSheet(
+            "QToolButton{background:rgba(250,252,255,225);color:#152235;border:1px solid #9eb1c7;"
+            "padding:3px 7px;font-weight:600;}"
+            "QToolButton:hover{background:#ffffff;border-color:#4a90c2;}");
+        imageOverlayLayout->addWidget(libraryPreviewLabel_, 0, 0);
+        imageOverlayLayout->addWidget(libraryFocusButton_, 0, 0, Qt::AlignLeft | Qt::AlignTop);
+        imageLayout->addWidget(imageOverlay, 1);
 
         auto* landmarksTab = new QWidget(libraryVisualTabs_);
         auto* landmarksLayout = new QVBoxLayout(landmarksTab);
@@ -2281,18 +2350,15 @@ private:
         denseLayout->setContentsMargins(0, 0, 0, 0);
         auto* denseControls = new QWidget(denseTab);
         auto* denseControlsLayout = new QHBoxLayout(denseControls);
-        denseControlsLayout->setContentsMargins(0, 0, 0, 0);
-        libraryMeshOverlayCheck_ = new QCheckBox("3D Landmarks", denseControls);
-        libraryMeshOverlayCheck_->setChecked(true);
+        denseControlsLayout->setContentsMargins(6, 4, 6, 0);
         libraryMeshModeCombo_ = new QComboBox(denseControls);
         libraryMeshModeCombo_->addItem("Points", "points");
         libraryMeshModeCombo_->addItem("Textured", "textured");
-        auto* generateLibraryMeshButton = new QPushButton("Generate Dense Mesh", denseControls);
-        libraryMeshStatusLabel_ = new QLabel("Select a face", denseControls);
+        libraryMeshOverlayCheck_ = new QCheckBox("3D Landmarks", denseControls);
+        libraryMeshOverlayCheck_->setChecked(true);
+        denseControlsLayout->addWidget(new QLabel("View", denseControls));
+        denseControlsLayout->addWidget(libraryMeshModeCombo_, 1);
         denseControlsLayout->addWidget(libraryMeshOverlayCheck_);
-        denseControlsLayout->addWidget(libraryMeshModeCombo_);
-        denseControlsLayout->addWidget(generateLibraryMeshButton);
-        denseControlsLayout->addWidget(libraryMeshStatusLabel_, 1);
         libraryDenseMeshView_ = new TexturedMeshWidget(denseTab);
         denseLayout->addWidget(denseControls);
         denseLayout->addWidget(libraryDenseMeshView_, 1);
@@ -2355,10 +2421,11 @@ private:
         metadataTabs->addTab(activityTab, "Activity");
         visualLayout->addWidget(metadataTabs, 1);
 
-        mainSplitter->addWidget(leftPanel);
+        mainSplitter->addWidget(libraryTable_);
         mainSplitter->addWidget(visualPanel);
-        mainSplitter->setStretchFactor(0, 3);
-        mainSplitter->setStretchFactor(1, 2);
+        mainSplitter->setStretchFactor(0, 1);
+        mainSplitter->setStretchFactor(1, 0);
+        mainSplitter->setSizes({760, 460});
         layout->addWidget(mainSplitter, 1);
         libraryImportProgressTimer_ = new QTimer(this);
         libraryImportProgressTimer_->setInterval(50);
@@ -2383,12 +2450,8 @@ private:
                 updateLibraryVisuals(faceId);
             }
         });
-        connect(modelButton, &QPushButton::clicked, this, [this] {
-            const auto path = QFileDialog::getExistingDirectory(this, "Select model root", modelRootEdit_->text());
-            if (!path.isEmpty()) {
-                modelRootEdit_->setText(path);
-            }
-        });
+        connect(newDatabaseButton, &QPushButton::clicked, this, [this] { createDatabase(); });
+        connect(openDatabaseButton, &QPushButton::clicked, this, [this] { chooseDatabase(); });
         connect(libraryImportImagesButton_, &QPushButton::clicked, this, [this] { importImage(); });
         connect(libraryImportFolderButton_, &QPushButton::clicked, this, [this] { importFolder(); });
         connect(libraryImportProgressTimer_, &QTimer::timeout, this, [this] { drainLibraryImportProgress(); });
@@ -2397,7 +2460,7 @@ private:
         connect(applyFilterButton, &QPushButton::clicked, this, [this] { loadLibrary(); });
         connect(resetFilterButton, &QPushButton::clicked, this, [this] { resetLibraryFilters(); });
         connect(libraryFilterTextEdit_, &QLineEdit::returnPressed, this, [this] { loadLibrary(); });
-        connect(libraryFocusButton_, &QPushButton::clicked, this, [this] {
+        connect(libraryFocusButton_, &QToolButton::clicked, this, [this] {
             libraryFocusOnFace_ = !libraryFocusOnFace_;
             if (libraryPreviewFaceId_ > 0) {
                 updateLibraryPreview(libraryPreviewFaceId_);
@@ -2413,7 +2476,6 @@ private:
                 updateLibrary3dPreview(libraryPreviewFaceId_);
             }
         });
-        connect(generateLibraryMeshButton, &QPushButton::clicked, this, [this] { generateLibraryMeshForSelectedFace(); });
         connect(saveMetadataButton, &QPushButton::clicked, this, [this] { saveLibrarySelectedMetadata(); });
         connect(applyBatchButton, &QPushButton::clicked, this, [this] { applyLibraryBatchMetadata(); });
     }
@@ -3338,6 +3400,9 @@ private:
         if (!database_ || libraryTable_ == nullptr) {
             return;
         }
+        if (libraryDatabasePathEdit_ != nullptr) {
+            libraryDatabasePathEdit_->setText(QString::fromStdWString(database_->path().wstring()));
+        }
         const bool includeIgnored = libraryFilterIncludeIgnoredCheck_ == nullptr || libraryFilterIncludeIgnoredCheck_->isChecked();
         auto records = database_->loadFaces(includeIgnored);
         records.erase(
@@ -3353,13 +3418,42 @@ private:
             libraryTable_->setItem(row, 2, item(qs(record.personName)));
             libraryTable_->setItem(row, 3, item(qs(record.tagText)));
             libraryTable_->setItem(row, 4, item(qs(record.reviewState)));
-            libraryTable_->setItem(row, 5, item(record.ignored ? "yes" : "no"));
-            libraryTable_->setItem(row, 6, item(record.reviewState == "duplicate" ? "yes" : "no"));
+            libraryTable_->setItem(row, 5, item(record.ignored ? "yes" : ""));
+            libraryTable_->setItem(row, 6, item(record.duplicateCount > 1 ? QString::number(record.duplicateCount) : QString()));
             libraryTable_->setItem(row, 7, numberItem(record.qualityScore, 3));
             libraryTable_->setItem(row, 8, item(qs(record.sourcePath)));
         }
-        libraryTable_->resizeColumnsToContents();
-        appendLibraryActivity(QString("Loaded %1 face(s)").arg(records.size()));
+        if (records.empty()) {
+            libraryPreviewFaceId_ = 0;
+            libraryFocusOnFace_ = false;
+            libraryPreviewLabel_->setPixmap(QPixmap());
+            libraryPreviewLabel_->setText("Select a face");
+            libraryFocusButton_->setEnabled(false);
+            libraryLandmarksView_->setMessage("Select a face");
+            libraryDenseMeshView_->setTextureImage(QImage());
+            libraryDenseMeshView_->setMessage("Select a face");
+        }
+        const auto stats = database_->statistics();
+        if (libraryStatsLabel_ != nullptr) {
+            libraryStatsLabel_->setText(
+                QString("Faces: %1    Avg quality: %2    People: %3    Tags: %4    Review: %5    Ignored: %6    Format: v%7")
+                    .arg(stats.faceCount)
+                    .arg(stats.averageQuality, 0, 'f', 3)
+                    .arg(stats.peopleCount)
+                    .arg(stats.tagCount)
+                    .arg(stats.reviewCount)
+                    .arg(stats.ignoredCount)
+                    .arg(qs(stats.formatVersion)));
+        }
+        bool importActive = false;
+#ifdef FSC_ENABLE_ONNX
+        importActive = libraryImportActive_;
+#endif
+        if (libraryProgressBar_ != nullptr && !importActive) {
+            libraryProgressBar_->setRange(0, 100);
+            libraryProgressBar_->setValue(100);
+        }
+        appendLibraryActivity(QString("Loaded %1 face(s). Model: %2").arg(records.size()).arg(qs(stats.modelName)));
     }
 
     bool recordMatchesLibraryFilters(const fsc::core::FaceRecord& record) const {
@@ -3780,13 +3874,14 @@ private:
             const bool hasLandmarks = !face->landmarks3d.empty();
             if (!hasDenseMesh) {
                 const QString detail = face->faceMesh3d.empty()
-                    ? "No cached MediaPipe dense mesh. Select Generate Mesh to analyze the source image."
-                    : QString("Cached dense mesh is incompatible (%1 points; expected 478). Select Generate Mesh to repair it.")
+                    ? "Analyzing dense mesh..."
+                    : QString("Repairing incompatible dense mesh (%1 points; expected 478)...")
                           .arg(face->faceMesh3d.size());
                 libraryDenseMeshView_->setMessage(detail);
                 if (libraryMeshStatusLabel_ != nullptr) {
                     libraryMeshStatusLabel_->setText(detail);
                 }
+                startLibraryMeshAnalysis(*face);
                 return;
             }
 
@@ -3818,41 +3913,66 @@ private:
         }
     }
 
-    std::vector<std::vector<double>> buildMediaPipeMeshForFace(const fsc::core::FaceRecord& face) {
-        if (face.sourcePath.empty()) {
-            throw std::runtime_error("This face has no source image for MediaPipe dense-mesh analysis.");
-        }
-        const std::filesystem::path sourcePath = face.sourcePath;
-        if (!std::filesystem::is_regular_file(sourcePath)) {
-            throw std::runtime_error("The source image for this face is no longer available: " + sourcePath.string());
-        }
-        const auto modelPath = fsc::mesh::defaultMediaPipeFaceLandmarkerModelPath();
-        if (!mediaPipeFaceLandmarker_ || mediaPipeFaceLandmarkerModelPath_ != modelPath) {
-            fsc::mesh::MediaPipeFaceLandmarkerOptions options;
-            options.modelAssetPath = modelPath;
-            mediaPipeFaceLandmarker_ = std::make_unique<fsc::mesh::MediaPipeFaceLandmarker>(std::move(options));
-            mediaPipeFaceLandmarkerModelPath_ = modelPath;
-        }
-        const auto image = fsc::vision::loadImageRgb(sourcePath);
-        return fsc::mesh::selectBestMediaPipeFaceMesh(mediaPipeFaceLandmarker_->detect(image), face.bbox);
-    }
-
-    void generateLibraryMeshForSelectedFace() {
-        if (!database_ || libraryPreviewFaceId_ <= 0) {
+    void startLibraryMeshAnalysis(const fsc::core::FaceRecord& face) {
+        if (!database_) {
             return;
         }
-        try {
-            const auto face = database_->loadFace(libraryPreviewFaceId_);
-            if (!face.has_value()) {
-                throw std::runtime_error("Face id not found.");
-            }
-            const auto mesh = buildMediaPipeMeshForFace(*face);
-            database_->updateFaceMesh3d(libraryPreviewFaceId_, mesh);
-            updateLibrary3dPreview(libraryPreviewFaceId_);
-            statusBar()->showMessage(QString("Generated MediaPipe dense mesh for face %1 (%2 points)").arg(libraryPreviewFaceId_).arg(mesh.size()));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        if (face.sourcePath.empty()) {
+            libraryDenseMeshView_->setMessage("Dense mesh unavailable: this face has no source image.");
+            return;
         }
+        const std::filesystem::path sourcePath = pathFrom(qs(face.sourcePath));
+        if (!std::filesystem::is_regular_file(sourcePath)) {
+            libraryDenseMeshView_->setMessage("Dense mesh unavailable: the source image no longer exists.");
+            return;
+        }
+        const QString databasePath = QString::fromStdWString(database_->path().wstring());
+        const QString taskKey = QString("%1|%2").arg(databasePath).arg(face.id);
+        if (libraryMeshTasksInFlight_.contains(taskKey)) {
+            return;
+        }
+        libraryMeshTasksInFlight_.insert(taskKey);
+        const int64_t faceId = face.id;
+        const std::vector<double> faceBox = face.bbox;
+        const auto modelPath = fsc::mesh::defaultMediaPipeFaceLandmarkerModelPath();
+        const auto analyzer = sharedFaceMeshAnalyzer_;
+        statusBar()->showMessage(QString("Analyzing dense face mesh for face %1...").arg(faceId));
+
+        auto* watcher = new QFutureWatcher<LibraryMeshAnalysisResult>(this);
+        connect(watcher, &QFutureWatcher<LibraryMeshAnalysisResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            libraryMeshTasksInFlight_.erase(result.taskKey);
+            if (!result.error.isEmpty()) {
+                if (database_ && libraryPreviewFaceId_ == result.faceId &&
+                    QString::fromStdWString(database_->path().wstring()) == result.databasePath) {
+                    libraryDenseMeshView_->setMessage(result.error);
+                    statusBar()->showMessage(result.error);
+                }
+                return;
+            }
+            if (database_ && libraryPreviewFaceId_ == result.faceId &&
+                QString::fromStdWString(database_->path().wstring()) == result.databasePath) {
+                updateLibrary3dPreview(static_cast<int>(result.faceId));
+                statusBar()->showMessage(
+                    QString("Dense mesh ready for face %1 (%2 points)").arg(result.faceId).arg(result.mesh.size()));
+            }
+        });
+        watcher->setFuture(QtConcurrent::run(
+            [taskKey, databasePath, faceId, sourcePath, faceBox, modelPath, analyzer] {
+                LibraryMeshAnalysisResult result;
+                result.taskKey = taskKey;
+                result.databasePath = databasePath;
+                result.faceId = faceId;
+                try {
+                    result.mesh = analyzer->analyze(modelPath, sourcePath, faceBox);
+                    fsc::core::Database workerDatabase(pathFrom(databasePath));
+                    workerDatabase.updateFaceMesh3d(faceId, result.mesh);
+                } catch (const std::exception& ex) {
+                    result.error = QString::fromUtf8(ex.what());
+                }
+                return result;
+            }));
     }
 
     void loadPeople() {
@@ -4746,7 +4866,7 @@ private:
         }
         const QString imagePathText = searchImageEdit_->text();
         const auto imagePath = pathFrom(imagePathText);
-        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto modelRoot = pathFrom(modelRootPath_.isEmpty() ? defaultModelRoot() : modelRootPath_);
         const auto runtimeMode = selectedRuntimeMode();
         const auto analyzer = sharedFaceAnalyzer_;
         const int generation = ++searchQueryGeneration_;
@@ -5475,7 +5595,7 @@ private:
         const uint64_t session = cameraSessionGeneration_;
         const QString databasePath = QString::fromStdWString(database_->path().wstring());
         const cv::Mat frame = lastCameraFrame_.clone();
-        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto modelRoot = pathFrom(modelRootPath_.isEmpty() ? defaultModelRoot() : modelRootPath_);
         const auto runtimeMode = selectedRuntimeMode();
         const auto identityMode = selectedIdentityMode();
         const int processSize = cameraProcessSizeSpin_ != nullptr ? cameraProcessSizeSpin_->value() : 640;
@@ -5814,7 +5934,7 @@ private:
         }
         const QString imagePathText = edit->text();
         const auto imagePath = pathFrom(imagePathText);
-        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto modelRoot = pathFrom(modelRootPath_.isEmpty() ? defaultModelRoot() : modelRootPath_);
         const auto runtimeMode = selectedRuntimeMode();
         const auto analyzer = sharedFaceAnalyzer_;
         statusBar()->showMessage(QString("Detecting faces in image %1...").arg(slot == 'a' ? "A" : "B"));
@@ -6196,7 +6316,7 @@ private:
 
         const uint64_t token = ++libraryImportToken_;
         const QString databasePath = QString::fromStdWString(database_->path().wstring());
-        const auto modelRoot = pathFrom(modelRootEdit_ != nullptr ? modelRootEdit_->text() : defaultModelRoot());
+        const auto modelRoot = pathFrom(modelRootPath_.isEmpty() ? defaultModelRoot() : modelRootPath_);
         const auto runtimeMode = selectedRuntimeMode();
         const double minQuality = libraryImportMinQualitySpin_ != nullptr ? libraryImportMinQualitySpin_->value() : 0.0;
         const auto analyzer = sharedFaceAnalyzer_;
@@ -6521,9 +6641,11 @@ private:
     QTableWidget* overviewPeopleTable_ = nullptr;
     QTableWidget* overviewTagsTable_ = nullptr;
     QTableWidget* libraryTable_ = nullptr;
+    QLineEdit* libraryDatabasePathEdit_ = nullptr;
+    QLabel* libraryStatsLabel_ = nullptr;
     QLabel* libraryPreviewLabel_ = nullptr;
     QTabWidget* libraryVisualTabs_ = nullptr;
-    QPushButton* libraryFocusButton_ = nullptr;
+    QToolButton* libraryFocusButton_ = nullptr;
     PointCloudWidget* libraryLandmarksView_ = nullptr;
     TexturedMeshWidget* libraryDenseMeshView_ = nullptr;
     QCheckBox* libraryMeshOverlayCheck_ = nullptr;
@@ -6686,7 +6808,7 @@ private:
     QTextEdit* runtimeMaintenanceLog_ = nullptr;
     QPushButton* runtimeLegacyConvertButton_ = nullptr;
     QProgressBar* runtimeLegacyProgressBar_ = nullptr;
-    QLineEdit* modelRootEdit_ = nullptr;
+    QString modelRootPath_;
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
     std::shared_ptr<const std::vector<fsc::core::IdentityProfile>> cameraIdentityProfilesSnapshot_ =
@@ -6704,8 +6826,9 @@ private:
     int cameraCapturedFrameCount_ = 0;
     int cameraCompletedAnalysisCount_ = 0;
     bool cameraMatchFocusOnFace_ = false;
-    std::unique_ptr<fsc::mesh::MediaPipeFaceLandmarker> mediaPipeFaceLandmarker_;
-    std::filesystem::path mediaPipeFaceLandmarkerModelPath_;
+    std::shared_ptr<SharedFaceMeshAnalyzer> sharedFaceMeshAnalyzer_ = std::make_shared<SharedFaceMeshAnalyzer>();
+    std::set<QString> libraryMeshTasksInFlight_;
+    bool libraryMeshSmokeStarted_ = false;
 #ifdef FSC_ENABLE_OPENCV
     cv::VideoCapture camera_;
     cv::Mat lastCameraFrame_;
@@ -7170,6 +7293,64 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    if (argc >= 4 && std::string(argv[1]) == "--library-mesh-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const int64_t faceId = std::strtoll(argv[3], nullptr, 10);
+        try {
+            fsc::core::Database database(pathFrom(databasePath));
+            database.clearFaceMesh3d(faceId);
+        } catch (...) {
+            return 2;
+        }
+        MainWindow window;
+        window.startLibraryMeshSmoke(databasePath, faceId);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.libraryMeshSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                const auto face = database.loadFace(faceId);
+                outcome = face.has_value() && fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d) ? 0 : 4;
+            } catch (...) {
+                outcome = 7;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
+    if (argc >= 5 && std::string(argv[1]) == "--page-render-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        window.resize(
+            argc >= 6 ? std::max(900, std::atoi(argv[5])) : 1600,
+            argc >= 7 ? std::max(650, std::atoi(argv[6])) : 1000);
+        window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
+        window.selectPageForSmoke(QString::fromLocal8Bit(argv[3]));
+        window.show();
+        int outcome = 2;
+        QTimer::singleShot(500, &uiApp, [&] {
+            const std::filesystem::path outputPath = pathFrom(QString::fromLocal8Bit(argv[4]));
+            if (outputPath.has_parent_path()) {
+                std::filesystem::create_directories(outputPath.parent_path());
+            }
+            outcome = window.grab().save(QString::fromStdWString(outputPath.wstring())) ? 0 : 3;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
     if (argc >= 2 && std::string(argv[1]) == "--ui-language-smoke") {
         const QString language = argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString("zh");
         QApplication uiApp(argc, argv);
@@ -7189,6 +7370,13 @@ int main(int argc, char** argv) {
         if (languageIndex < 0) {
             return 3;
         }
+        for (const QString& cycleLanguage : {QString("zh"), QString("ja"), QString("ko"), QString("en")}) {
+            const int cycleIndex = languageSelector->findData(cycleLanguage);
+            if (cycleIndex < 0) {
+                return 3;
+            }
+            languageSelector->setCurrentIndex(cycleIndex);
+        }
         languageSelector->setCurrentIndex(languageIndex);
         bool legacyActionPresent = false;
         for (auto* button : window.findChildren<QPushButton*>()) {
@@ -7197,6 +7385,16 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+        const auto* libraryAddImages = window.findChild<QPushButton*>("LibraryAddImages");
+        const auto* libraryAddFolder = window.findChild<QPushButton*>("LibraryAddFolder");
+        const auto* libraryFocus = window.findChild<QToolButton*>("LibraryFocus");
+        const bool libraryControlsPresent =
+            window.findChild<QLineEdit*>("LibraryDatabasePath") != nullptr &&
+            libraryAddImages != nullptr && libraryAddImages->text() == translatedText("Add Images", language) &&
+            libraryAddFolder != nullptr && libraryAddFolder->text() == translatedText("Add Folder", language) &&
+            window.findChild<QTableWidget*>("LibraryFaceTable") != nullptr &&
+            window.findChild<QTabWidget*>("LibraryVisualTabs") != nullptr &&
+            libraryFocus != nullptr && libraryFocus->text() == translatedText("Focus on Face", language);
         const bool searchControlsPresent =
             window.findChild<QLineEdit*>("SearchDatabasePath") != nullptr &&
             window.findChild<QPushButton*>("SearchOpenDatabase") != nullptr &&
@@ -7231,7 +7429,8 @@ int main(int argc, char** argv) {
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
-                legacyActionPresent && searchControlsPresent && compareControlsPresent && cameraControlsPresent) {
+                legacyActionPresent && libraryControlsPresent && searchControlsPresent &&
+                compareControlsPresent && cameraControlsPresent) {
                 return 0;
             }
         }
