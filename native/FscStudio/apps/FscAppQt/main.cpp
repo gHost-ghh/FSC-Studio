@@ -382,6 +382,13 @@ const TranslationTable& uiTranslations() {
             {"File", "文件"}, {"View", "视图"}, {"No database loaded", "未加载数据库"},
             {"Name", "名称"}, {"Tags", "标签"}, {"Ignored", "已忽略"}, {"Dupes", "重复数"},
             {"Quality", "质量"}, {"Source", "来源"}, {"Notes", "备注"},
+            {"Train Identity Profiles", "训练身份模板"}, {"Manage Person", "管理人物"},
+            {"Save Name / Notes", "保存姓名和备注"}, {"Merge Into Target", "合并到目标"},
+            {"Clear Assignment", "清除人物归属"}, {"Target", "目标"}, {"Faces", "人脸数"},
+            {"Avg Q", "平均质量"}, {"Rev", "复核"}, {"Ign", "忽略"}, {"Identity", "身份模板"},
+            {"Samples", "样本"}, {"Exemplars", "代表样本"}, {"Accept", "接受阈值"},
+            {"Health", "健康度"}, {"Scorer", "评分器"}, {"No person selected", "未选择人物"},
+            {"Identity profile: not trained", "身份模板：未训练"},
             {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
             {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
@@ -407,6 +414,13 @@ const TranslationTable& uiTranslations() {
             {"File", "ファイル"}, {"View", "表示"}, {"No database loaded", "データベース未読込"},
             {"Name", "名前"}, {"Tags", "タグ"}, {"Ignored", "除外"}, {"Dupes", "重複数"},
             {"Quality", "品質"}, {"Source", "ソース"}, {"Notes", "メモ"},
+            {"Train Identity Profiles", "識別プロファイルを学習"}, {"Manage Person", "人物を管理"},
+            {"Save Name / Notes", "名前とメモを保存"}, {"Merge Into Target", "対象へ統合"},
+            {"Clear Assignment", "割り当てを解除"}, {"Target", "対象"}, {"Faces", "顔数"},
+            {"Avg Q", "平均品質"}, {"Rev", "要確認"}, {"Ign", "除外"}, {"Identity", "識別"},
+            {"Samples", "サンプル"}, {"Exemplars", "代表例"}, {"Accept", "受入値"},
+            {"Health", "健全性"}, {"Scorer", "スコアラー"}, {"No person selected", "人物未選択"},
+            {"Identity profile: not trained", "識別プロファイル：未学習"},
             {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
             {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
@@ -432,6 +446,13 @@ const TranslationTable& uiTranslations() {
             {"File", "파일"}, {"View", "보기"}, {"No database loaded", "데이터베이스가 열리지 않음"},
             {"Name", "이름"}, {"Tags", "태그"}, {"Ignored", "제외됨"}, {"Dupes", "중복 수"},
             {"Quality", "품질"}, {"Source", "원본"}, {"Notes", "메모"},
+            {"Train Identity Profiles", "식별 프로필 학습"}, {"Manage Person", "인물 관리"},
+            {"Save Name / Notes", "이름 및 메모 저장"}, {"Merge Into Target", "대상으로 병합"},
+            {"Clear Assignment", "할당 해제"}, {"Target", "대상"}, {"Faces", "얼굴 수"},
+            {"Avg Q", "평균 품질"}, {"Rev", "검토"}, {"Ign", "제외"}, {"Identity", "식별"},
+            {"Samples", "샘플"}, {"Exemplars", "대표 샘플"}, {"Accept", "허용값"},
+            {"Health", "상태"}, {"Scorer", "평가기"}, {"No person selected", "선택된 인물 없음"},
+            {"Identity profile: not trained", "식별 프로필: 학습 안 됨"},
             {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
             {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
@@ -1710,6 +1731,16 @@ public:
         return libraryMeshSmokeStarted_ && libraryMeshTasksInFlight_.empty();
     }
 
+    void startPeopleTrainingSmoke(const QString& databasePath) {
+        openDatabasePath(databasePath);
+        peopleTrainingSmokeStarted_ = true;
+        trainProfiles();
+    }
+
+    [[nodiscard]] bool peopleTrainingSmokeFinished() const noexcept {
+        return peopleTrainingSmokeStarted_ && !peopleTrainingActive_;
+    }
+
 #ifdef FSC_ENABLE_ONNX
     void startLibraryImportSmoke(
         const QString& databasePath,
@@ -1876,6 +1907,13 @@ private:
         QString databasePath;
         int64_t faceId = 0;
         std::vector<std::vector<double>> mesh;
+        QString error;
+    };
+
+    struct PeopleTrainingTaskResult {
+        uint64_t token = 0;
+        QString databasePath;
+        fsc::core::IdentityTrainingSummary summary;
         QString error;
     };
 
@@ -2442,9 +2480,6 @@ private:
             }
             const int faceId = idItem->text().toInt();
             if (faceId > 0) {
-                if (assignFaceSpin_ != nullptr) {
-                    assignFaceSpin_->setValue(faceId);
-                }
                 libraryFocusOnFace_ = false;
                 loadLibraryMetadata(faceId);
                 updateLibraryVisuals(faceId);
@@ -2483,89 +2518,113 @@ private:
     void buildPeopleTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(24, 22, 24, 22);
+        layout->setSpacing(14);
+        auto* title = new QLabel("People", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
 
-        auto* controls = new QWidget(page);
+        auto* controls = new QGroupBox("People", page);
         auto* controlsLayout = new QGridLayout(controls);
-        controlsLayout->setContentsMargins(0, 0, 0, 0);
         peopleDatabaseEdit_ = new QLineEdit(controls);
         peopleDatabaseEdit_->setReadOnly(true);
+        peopleDatabaseEdit_->setObjectName("PeopleDatabasePath");
         peopleFilterEdit_ = new QLineEdit(controls);
         peopleFilterEdit_->setPlaceholderText("person name or notes");
-        personNameEdit_ = new QLineEdit(controls);
-        personNameEdit_->setPlaceholderText("New person name");
         auto* reloadPeopleButton = new QPushButton("Reload", controls);
-        auto* trainButton = new QPushButton("Train Identity Profiles", controls);
-        auto* addButton = new QPushButton("Add Person", controls);
+        peopleTrainProfilesButton_ = new QPushButton("Train Identity Profiles", controls);
+        peopleTrainProfilesButton_->setObjectName("PeopleTrainProfiles");
         controlsLayout->addWidget(new QLabel("Database", controls), 0, 0);
         controlsLayout->addWidget(peopleDatabaseEdit_, 0, 1, 1, 4);
         controlsLayout->addWidget(reloadPeopleButton, 0, 5);
-        controlsLayout->addWidget(trainButton, 0, 6);
+        controlsLayout->addWidget(peopleTrainProfilesButton_, 0, 6);
         controlsLayout->addWidget(new QLabel("Filter", controls), 1, 0);
-        controlsLayout->addWidget(peopleFilterEdit_, 1, 1, 1, 4);
-        controlsLayout->addWidget(personNameEdit_, 1, 5);
-        controlsLayout->addWidget(addButton, 1, 6);
+        controlsLayout->addWidget(peopleFilterEdit_, 1, 1, 1, 6);
         layout->addWidget(controls);
 
         auto* splitter = new QSplitter(Qt::Horizontal, page);
         peopleTable_ = new QTableWidget(splitter);
+        peopleTable_->setObjectName("PeopleTable");
         peopleTable_->setColumnCount(11);
         peopleTable_->setHorizontalHeaderLabels({"Name", "Faces", "Avg Q", "Rev", "Ign", "Identity", "Samples", "Exemplars", "Accept", "Health", "Scorer"});
         fitTable(peopleTable_);
         peopleTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         peopleTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        peopleTable_->setMinimumSize(0, 0);
+        peopleTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        peopleTable_->setColumnWidth(0, 160);
+        peopleTable_->setColumnWidth(1, 60);
+        peopleTable_->setColumnWidth(2, 65);
+        peopleTable_->setColumnWidth(3, 45);
+        peopleTable_->setColumnWidth(4, 45);
+        peopleTable_->setColumnWidth(5, 80);
+        peopleTable_->setColumnWidth(6, 70);
+        peopleTable_->setColumnWidth(7, 80);
+        peopleTable_->setColumnWidth(8, 70);
+        peopleTable_->setColumnWidth(9, 150);
+        peopleTable_->setColumnWidth(10, 130);
 
         peopleMemberTable_ = new QTableWidget(splitter);
+        peopleMemberTable_->setObjectName("PeopleMemberTable");
         peopleMemberTable_->setColumnCount(6);
         peopleMemberTable_->setHorizontalHeaderLabels({"ID", "Name", "Tags", "Quality", "Review", "Ignored"});
         fitTable(peopleMemberTable_);
         peopleMemberTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         peopleMemberTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        peopleMemberTable_->setMinimumSize(0, 0);
+        peopleMemberTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        peopleMemberTable_->setColumnWidth(0, 70);
+        peopleMemberTable_->setColumnWidth(1, 180);
+        peopleMemberTable_->setColumnWidth(2, 150);
+        peopleMemberTable_->setColumnWidth(3, 80);
+        peopleMemberTable_->setColumnWidth(4, 90);
 
         auto* rightPanel = new QWidget(splitter);
+        rightPanel->setMinimumWidth(280);
+        rightPanel->setMaximumWidth(420);
         auto* rightLayout = new QVBoxLayout(rightPanel);
-        rightLayout->setContentsMargins(8, 0, 0, 0);
-        peopleFocusButton_ = new QPushButton("Focus on Face", rightPanel);
-        peopleFocusButton_->setMaximumWidth(132);
-        peoplePreviewLabel_ = new QLabel("Select a person", rightPanel);
+        rightLayout->setContentsMargins(0, 0, 0, 0);
+        rightLayout->setSpacing(10);
+        auto* previewOverlay = new QWidget(rightPanel);
+        auto* previewOverlayLayout = new QGridLayout(previewOverlay);
+        previewOverlayLayout->setContentsMargins(0, 0, 0, 0);
+        peoplePreviewLabel_ = new QLabel("Select a person", previewOverlay);
         peoplePreviewLabel_->setAlignment(Qt::AlignCenter);
-        peoplePreviewLabel_->setMinimumWidth(300);
+        peoplePreviewLabel_->setMinimumSize(180, 180);
         peoplePreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
-        rightLayout->addWidget(peopleFocusButton_, 0, Qt::AlignLeft);
-        rightLayout->addWidget(peoplePreviewLabel_, 1);
+        peopleFocusButton_ = new QToolButton(previewOverlay);
+        peopleFocusButton_->setObjectName("PeopleFocus");
+        peopleFocusButton_->setText("Focus on Face");
+        peopleFocusButton_->setMaximumWidth(132);
+        peopleFocusButton_->setStyleSheet(
+            "QToolButton{background:rgba(250,252,255,225);color:#152235;border:1px solid #9eb1c7;"
+            "padding:3px 7px;font-weight:600;}"
+            "QToolButton:hover{background:#ffffff;border-color:#4a90c2;}");
+        previewOverlayLayout->addWidget(peoplePreviewLabel_, 0, 0);
+        previewOverlayLayout->addWidget(peopleFocusButton_, 0, 0, Qt::AlignLeft | Qt::AlignTop);
+        rightLayout->addWidget(previewOverlay, 1);
 
         auto* editor = new QGroupBox("Manage Person", rightPanel);
         auto* form = new QFormLayout(editor);
         peopleNameEdit_ = new QLineEdit(editor);
         peopleNotesEdit_ = new QTextEdit(editor);
-        peopleNotesEdit_->setMinimumHeight(84);
+        peopleNotesEdit_->setMinimumHeight(90);
         peopleMergeTargetCombo_ = new QComboBox(editor);
-        assignFaceSpin_ = new QSpinBox(editor);
-        assignFaceSpin_->setRange(1, 999999999);
-        assignFaceSpin_->setPrefix("Face ");
-        assignPersonSpin_ = new QSpinBox(editor);
-        assignPersonSpin_->setRange(1, 999999999);
-        assignPersonSpin_->setPrefix("Person ");
         auto* savePersonButton = new QPushButton("Save Name / Notes", editor);
         auto* mergeButton = new QPushButton("Merge Into Target", editor);
         auto* clearButton = new QPushButton("Clear Assignment", editor);
-        auto* assignButton = new QPushButton("Assign Face", editor);
-        auto* assignRow = new QWidget(editor);
-        auto* assignRowLayout = new QHBoxLayout(assignRow);
-        assignRowLayout->setContentsMargins(0, 0, 0, 0);
-        assignRowLayout->addWidget(assignFaceSpin_);
-        assignRowLayout->addWidget(assignPersonSpin_);
-        assignRowLayout->addWidget(assignButton);
         form->addRow("Name", peopleNameEdit_);
         form->addRow("Notes", peopleNotesEdit_);
         form->addRow("Target", peopleMergeTargetCombo_);
         form->addRow("", savePersonButton);
         form->addRow("", mergeButton);
         form->addRow("", clearButton);
-        form->addRow("Assign", assignRow);
         peopleSummaryLabel_ = new QLabel("No person selected", rightPanel);
+        peopleSummaryLabel_->setWordWrap(true);
+        peopleSummaryLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         peopleProfileStatusLabel_ = new QLabel("Identity profile: not trained", rightPanel);
         peopleProfileStatusLabel_->setWordWrap(true);
+        peopleProfileStatusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         rightLayout->addWidget(editor);
         rightLayout->addWidget(peopleSummaryLabel_);
         rightLayout->addWidget(peopleProfileStatusLabel_);
@@ -2574,22 +2633,21 @@ private:
         splitter->addWidget(peopleTable_);
         splitter->addWidget(peopleMemberTable_);
         splitter->addWidget(rightPanel);
-        splitter->setStretchFactor(0, 2);
-        splitter->setStretchFactor(1, 2);
+        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(1, 1);
         splitter->setStretchFactor(2, 1);
+        splitter->setSizes({320, 320, 320});
         layout->addWidget(splitter, 1);
         addMainTab(page, "People");
         connect(peopleTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedPerson(); });
         connect(peopleMemberTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedPeopleMember(); });
         connect(peopleFilterEdit_, &QLineEdit::returnPressed, this, [this] { loadPeople(); });
         connect(reloadPeopleButton, &QPushButton::clicked, this, [this] { loadPeople(); });
-        connect(addButton, &QPushButton::clicked, this, [this] { addPerson(); });
         connect(savePersonButton, &QPushButton::clicked, this, [this] { saveSelectedPerson(); });
         connect(mergeButton, &QPushButton::clicked, this, [this] { mergeSelectedPerson(); });
         connect(clearButton, &QPushButton::clicked, this, [this] { clearSelectedPerson(); });
-        connect(assignButton, &QPushButton::clicked, this, [this] { assignFace(); });
-        connect(trainButton, &QPushButton::clicked, this, [this] { trainProfiles(); });
-        connect(peopleFocusButton_, &QPushButton::clicked, this, [this] {
+        connect(peopleTrainProfilesButton_, &QPushButton::clicked, this, [this] { trainProfiles(); });
+        connect(peopleFocusButton_, &QToolButton::clicked, this, [this] {
             peopleFocusOnFace_ = !peopleFocusOnFace_;
             if (peoplePreviewFaceId_ > 0) {
                 updatePeoplePreview(peoplePreviewFaceId_);
@@ -3980,7 +4038,7 @@ private:
             return;
         }
         if (peopleDatabaseEdit_ != nullptr) {
-            peopleDatabaseEdit_->setText(qs(database_->path().string()));
+            peopleDatabaseEdit_->setText(QString::fromStdWString(database_->path().wstring()));
         }
         const QString filter = peopleFilterEdit_ == nullptr ? QString() : peopleFilterEdit_->text().trimmed();
         peopleRows_ = database_->loadPeople();
@@ -4008,7 +4066,6 @@ private:
             peopleTable_->setItem(row, 9, item(qs(person.identityHealth)));
             peopleTable_->setItem(row, 10, item(qs(person.identityScoringModelVersion)));
         }
-        peopleTable_->resizeColumnsToContents();
         refreshPeopleMergeTargets(0);
         if (peopleSummaryLabel_ != nullptr) {
             peopleSummaryLabel_->setText(QString("%1 person(s)").arg(peopleRows_.size()));
@@ -4019,6 +4076,11 @@ private:
         peopleMembers_.clear();
         currentPersonId_ = 0;
         peoplePreviewFaceId_ = 0;
+        peopleFocusOnFace_ = false;
+        if (peopleFocusButton_ != nullptr) {
+            peopleFocusButton_->setText(trUi("Focus on Face"));
+            peopleFocusButton_->setEnabled(false);
+        }
         if (peoplePreviewLabel_ != nullptr) {
             peoplePreviewLabel_->setText(peopleRows_.empty() ? "No people" : "Select a person");
             peoplePreviewLabel_->setPixmap(QPixmap());
@@ -4061,9 +4123,6 @@ private:
         }
         const auto& person = peopleRows_[static_cast<size_t>(row)];
         currentPersonId_ = person.id;
-        if (assignPersonSpin_ != nullptr) {
-            assignPersonSpin_->setValue(static_cast<int>(person.id));
-        }
         if (peopleNameEdit_ != nullptr) {
             peopleNameEdit_->setText(qs(person.name));
         }
@@ -4117,7 +4176,6 @@ private:
             peopleMemberTable_->setItem(row, 4, item(qs(record.reviewState)));
             peopleMemberTable_->setItem(row, 5, item(record.ignored ? "yes" : ""));
         }
-        peopleMemberTable_->resizeColumnsToContents();
     }
 
     void showSelectedPeopleMember() {
@@ -4133,16 +4191,14 @@ private:
             return;
         }
         const auto faceId = peopleMembers_[static_cast<size_t>(row)].id;
-        if (assignFaceSpin_ != nullptr) {
-            assignFaceSpin_->setValue(static_cast<int>(faceId));
-        }
         updatePeoplePreview(faceId);
     }
 
     void updatePeoplePreview(int64_t faceId) {
         peoplePreviewFaceId_ = faceId;
         if (peopleFocusButton_ != nullptr) {
-            peopleFocusButton_->setText(peopleFocusOnFace_ ? "Full Image" : "Focus on Face");
+            peopleFocusButton_->setText(peopleFocusOnFace_ ? trUi("Full Image") : trUi("Focus on Face"));
+            peopleFocusButton_->setEnabled(faceId > 0);
         }
         if (!database_ || peoplePreviewLabel_ == nullptr || faceId <= 0) {
             return;
@@ -4701,25 +4757,6 @@ private:
         }
     }
 
-    void addPerson() {
-        if (!database_) {
-            return;
-        }
-        try {
-            const auto name = personNameEdit_->text().trimmed();
-            if (name.isEmpty()) {
-                throw std::runtime_error("Person name is empty.");
-            }
-            const auto personId = database_->upsertPerson(name.toUtf8().constData());
-            assignPersonSpin_->setValue(static_cast<int>(personId));
-            personNameEdit_->clear();
-            reloadAll();
-            statusBar()->showMessage("Person saved");
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-    }
-
     void saveSelectedPerson() {
         if (!database_ || currentPersonId_ <= 0) {
             showError(std::runtime_error("Select a person first."));
@@ -4779,30 +4816,62 @@ private:
         }
     }
 
-    void assignFace() {
-        if (!database_) {
-            return;
-        }
-        try {
-            database_->assignFaceToPerson(assignFaceSpin_->value(), assignPersonSpin_->value());
-            reloadAll();
-            statusBar()->showMessage("Face assigned");
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-    }
-
     void trainProfiles() {
-        if (!database_) {
+        if (!database_ || peopleTrainingActive_) {
             return;
         }
-        try {
-            const auto summary = database_->rebuildIdentityProfiles();
-            reloadAll();
-            statusBar()->showMessage(QString("Trained %1 profile(s), %2 weak").arg(summary.profilesBuilt).arg(summary.weakProfiles));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        const uint64_t token = ++peopleTrainingToken_;
+        const QString databasePath = QString::fromStdWString(database_->path().wstring());
+        peopleTrainingActive_ = true;
+        if (peopleTrainProfilesButton_ != nullptr) {
+            peopleTrainProfilesButton_->setEnabled(false);
         }
+        statusBar()->showMessage("Training identity profiles...");
+
+        auto* watcher = new QFutureWatcher<PeopleTrainingTaskResult>(this);
+        connect(watcher, &QFutureWatcher<PeopleTrainingTaskResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            if (result.token != peopleTrainingToken_) {
+                return;
+            }
+            peopleTrainingActive_ = false;
+            if (peopleTrainProfilesButton_ != nullptr) {
+                peopleTrainProfilesButton_->setEnabled(true);
+            }
+            if (!result.error.isEmpty()) {
+                showError(std::runtime_error(result.error.toUtf8().constData()));
+                return;
+            }
+            if (peopleSummaryLabel_ != nullptr && !result.summary.messages.empty()) {
+                QStringList messages;
+                const size_t count = std::min<size_t>(6, result.summary.messages.size());
+                for (size_t index = 0; index < count; ++index) {
+                    messages.push_back(qs(result.summary.messages[index]));
+                }
+                peopleSummaryLabel_->setText(messages.join('\n'));
+            }
+            if (database_ && QString::fromStdWString(database_->path().wstring()) == result.databasePath) {
+                reloadAll();
+            }
+            statusBar()->showMessage(
+                QString("Identity profiles trained: %1 profile(s), %2 weak, %3 sample(s).")
+                    .arg(result.summary.profilesBuilt)
+                    .arg(result.summary.weakProfiles)
+                    .arg(result.summary.samplesUsed));
+        });
+        watcher->setFuture(QtConcurrent::run([token, databasePath] {
+            PeopleTrainingTaskResult result;
+            result.token = token;
+            result.databasePath = databasePath;
+            try {
+                fsc::core::Database workerDatabase(pathFrom(databasePath));
+                result.summary = workerDatabase.rebuildIdentityProfiles();
+            } catch (const std::exception& ex) {
+                result.error = QString::fromUtf8(ex.what());
+            }
+            return result;
+        }));
     }
 
     void refreshSearchFilterOptions() {
@@ -6687,20 +6756,21 @@ private:
     QLineEdit* peopleFilterEdit_ = nullptr;
     QTableWidget* peopleMemberTable_ = nullptr;
     QLabel* peoplePreviewLabel_ = nullptr;
-    QPushButton* peopleFocusButton_ = nullptr;
+    QToolButton* peopleFocusButton_ = nullptr;
+    QPushButton* peopleTrainProfilesButton_ = nullptr;
     QLineEdit* peopleNameEdit_ = nullptr;
     QTextEdit* peopleNotesEdit_ = nullptr;
     QComboBox* peopleMergeTargetCombo_ = nullptr;
     QLabel* peopleSummaryLabel_ = nullptr;
     QLabel* peopleProfileStatusLabel_ = nullptr;
-    QLineEdit* personNameEdit_ = nullptr;
-    QSpinBox* assignFaceSpin_ = nullptr;
-    QSpinBox* assignPersonSpin_ = nullptr;
     std::vector<fsc::core::PersonSummary> peopleRows_;
     std::vector<fsc::core::FaceRecord> peopleMembers_;
     int64_t currentPersonId_ = 0;
     int64_t peoplePreviewFaceId_ = 0;
     bool peopleFocusOnFace_ = false;
+    uint64_t peopleTrainingToken_ = 0;
+    bool peopleTrainingActive_ = false;
+    bool peopleTrainingSmokeStarted_ = false;
     QTableWidget* reviewTable_ = nullptr;
     QLineEdit* reviewDatabaseEdit_ = nullptr;
     QLineEdit* reviewFilterEdit_ = nullptr;
@@ -7329,6 +7399,34 @@ int main(int argc, char** argv) {
         return outcome;
     }
 
+    if (argc >= 3 && std::string(argv[1]) == "--people-training-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        MainWindow window;
+        window.startPeopleTrainingSmoke(databasePath);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.peopleTrainingSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                outcome = database.loadIdentityProfiles().empty() ? 4 : 0;
+            } catch (...) {
+                outcome = 7;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
     if (argc >= 5 && std::string(argv[1]) == "--page-render-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
@@ -7395,6 +7493,14 @@ int main(int argc, char** argv) {
             window.findChild<QTableWidget*>("LibraryFaceTable") != nullptr &&
             window.findChild<QTabWidget*>("LibraryVisualTabs") != nullptr &&
             libraryFocus != nullptr && libraryFocus->text() == translatedText("Focus on Face", language);
+        const auto* peopleTrain = window.findChild<QPushButton*>("PeopleTrainProfiles");
+        const auto* peopleFocus = window.findChild<QToolButton*>("PeopleFocus");
+        const bool peopleControlsPresent =
+            window.findChild<QLineEdit*>("PeopleDatabasePath") != nullptr &&
+            window.findChild<QTableWidget*>("PeopleTable") != nullptr &&
+            window.findChild<QTableWidget*>("PeopleMemberTable") != nullptr &&
+            peopleTrain != nullptr && peopleTrain->text() == translatedText("Train Identity Profiles", language) &&
+            peopleFocus != nullptr && peopleFocus->text() == translatedText("Focus on Face", language);
         const bool searchControlsPresent =
             window.findChild<QLineEdit*>("SearchDatabasePath") != nullptr &&
             window.findChild<QPushButton*>("SearchOpenDatabase") != nullptr &&
@@ -7429,7 +7535,7 @@ int main(int argc, char** argv) {
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
-                legacyActionPresent && libraryControlsPresent && searchControlsPresent &&
+                legacyActionPresent && libraryControlsPresent && peopleControlsPresent && searchControlsPresent &&
                 compareControlsPresent && cameraControlsPresent) {
                 return 0;
             }

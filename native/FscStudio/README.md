@@ -31,6 +31,7 @@ continuing that prototype.
 - Library supports selected-face and batch metadata edits for person, tags, review state, ignored state, and notes through native SQLite writes.
 - Library image and recursive-folder imports run native ONNX analysis on a worker thread, commit accepted faces in batches of 50, and coalesce preview painting to one update per 50 ms so visual progress does not serialize inference or database writes.
 - Library mirrors the Python page structure with a full-width Database/filter band, a horizontally scrollable face table, and a 430--500 px visual/detail column. Hidden tabs no longer force the main window above the requested size, so the page renders without clipping at 1180x760 and wider desktop sizes.
+- People mirrors the Python three-column workflow for identity-health summaries, person members, representative/member preview, rename/notes, merge, and assignment clearing. Identity Gallery rebuilding runs on a worker connection and refreshes the cached Camera/Search state without blocking the window.
 - Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, an optional 68-point landmark overlay in Textured mode, and local eyelid/iris triangulation so the 468--477 MediaPipe iris points retain their textured eyeballs.
 - Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
 - Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
@@ -115,6 +116,7 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --ui-language-smoke zh
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --library-import-ui-smoke D:\FSC\native\FscStudio\out\probe\library-import-smoke.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg cpu
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --library-mesh-ui-smoke D:\FSC\native\FscStudio\out\probe\library-mesh-smoke.fscdb 1
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --people-training-ui-smoke D:\FSC\native\FscStudio\out\probe\people-training-smoke.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --page-render-smoke D:\FSC\new_full.fscdb Library D:\FSC\native\FscStudio\out\probe\library.png 1180 760
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --overview-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
