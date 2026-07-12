@@ -377,9 +377,15 @@ const TranslationTable& uiTranslations() {
             {"Strict", "严格"}, {"Balanced", "均衡"}, {"Broad", "宽松"},
             {"Overview", "概览"}, {"Library", "人脸库"}, {"People", "人物"}, {"Search", "搜索"},
             {"Camera", "摄像头"}, {"Review", "复核"}, {"Clusters", "聚类"}, {"Compare", "比对"},
-            {"Runtime", "运行环境"}, {"Ready", "就绪"}, {"Browse", "浏览"}, {"Import Image", "导入图片"},
+            {"Runtime", "运行环境"}, {"Ready", "就绪"}, {"Browse", "浏览"},
             {"Import Folder", "导入文件夹"}, {"Export CSV", "导出 CSV"}, {"Reload", "重新加载"},
             {"New", "新建"}, {"Open", "打开"}, {"Add Images", "添加图片"}, {"Add Folder", "添加文件夹"},
+            {"Workspace", "工作区"}, {"New Database", "新建数据库"}, {"Open / Convert", "打开或转换"},
+            {"Import Images", "导入图片"}, {"Refresh", "刷新"}, {"Database Metrics", "数据库指标"},
+            {"Metric", "指标"}, {"Value", "值"}, {"Attention", "待处理事项"}, {"Queue", "队列"}, {"Count", "数量"},
+            {"Review Queue", "复核队列"}, {"Top People", "主要人物"}, {"Top Tags", "常用标签"},
+            {"Average Quality", "平均质量"}, {"Quality Range", "质量范围"}, {"Model", "模型"}, {"Format", "格式"},
+            {"Needs review", "需要复核"}, {"Duplicate image groups", "重复图像组"},
             {"File", "文件"}, {"View", "视图"}, {"No database loaded", "未加载数据库"},
             {"Name", "名称"}, {"Tags", "标签"}, {"Ignored", "已忽略"}, {"Dupes", "重复数"},
             {"Quality", "质量"}, {"Source", "来源"}, {"Notes", "备注"},
@@ -390,7 +396,7 @@ const TranslationTable& uiTranslations() {
             {"Samples", "样本"}, {"Exemplars", "代表样本"}, {"Accept", "接受阈值"},
             {"Health", "健康度"}, {"Scorer", "评分器"}, {"No person selected", "未选择人物"},
             {"Identity profile: not trained", "身份模板：未训练"},
-            {"Queue", "复核队列"}, {"Mark Reviewed", "标记为已复核"},
+            {"Mark Reviewed", "标记为已复核"},
             {"Ignore / Restore", "忽略或恢复"}, {"Limit", "数量上限"}, {"Reason", "原因"},
             {"Edit", "编辑"}, {"AI Suggested Person", "AI 建议人物"},
             {"AI Suggested Person: not checked", "AI 建议人物：尚未检查"},
@@ -425,9 +431,15 @@ const TranslationTable& uiTranslations() {
             {"Strict", "厳格"}, {"Balanced", "標準"}, {"Broad", "広め"},
             {"Overview", "概要"}, {"Library", "顔ライブラリ"}, {"People", "人物"}, {"Search", "検索"},
             {"Camera", "カメラ"}, {"Review", "レビュー"}, {"Clusters", "クラスタ"}, {"Compare", "比較"},
-            {"Runtime", "実行環境"}, {"Ready", "準備完了"}, {"Browse", "参照"}, {"Import Image", "画像を追加"},
+            {"Runtime", "実行環境"}, {"Ready", "準備完了"}, {"Browse", "参照"},
             {"Import Folder", "フォルダーを追加"}, {"Export CSV", "CSVを書き出す"}, {"Reload", "再読み込み"},
             {"New", "新規"}, {"Open", "開く"}, {"Add Images", "画像を追加"}, {"Add Folder", "フォルダーを追加"},
+            {"Workspace", "ワークスペース"}, {"New Database", "新規データベース"}, {"Open / Convert", "開く／変換"},
+            {"Import Images", "画像を取り込む"}, {"Refresh", "更新"}, {"Database Metrics", "データベース指標"},
+            {"Metric", "指標"}, {"Value", "値"}, {"Attention", "要対応"}, {"Queue", "キュー"}, {"Count", "件数"},
+            {"Review Queue", "レビューキュー"}, {"Top People", "主な人物"}, {"Top Tags", "主なタグ"},
+            {"Average Quality", "平均品質"}, {"Quality Range", "品質範囲"}, {"Model", "モデル"}, {"Format", "形式"},
+            {"Needs review", "要レビュー"}, {"Duplicate image groups", "重複画像グループ"},
             {"File", "ファイル"}, {"View", "表示"}, {"No database loaded", "データベース未読込"},
             {"Name", "名前"}, {"Tags", "タグ"}, {"Ignored", "除外"}, {"Dupes", "重複数"},
             {"Quality", "品質"}, {"Source", "ソース"}, {"Notes", "メモ"},
@@ -438,7 +450,7 @@ const TranslationTable& uiTranslations() {
             {"Samples", "サンプル"}, {"Exemplars", "代表例"}, {"Accept", "受入値"},
             {"Health", "健全性"}, {"Scorer", "スコアラー"}, {"No person selected", "人物未選択"},
             {"Identity profile: not trained", "識別プロファイル：未学習"},
-            {"Queue", "レビューキュー"}, {"Mark Reviewed", "レビュー済みにする"},
+            {"Mark Reviewed", "レビュー済みにする"},
             {"Ignore / Restore", "除外／復元"}, {"Limit", "上限"}, {"Reason", "理由"},
             {"Edit", "編集"}, {"AI Suggested Person", "AI 推薦人物"},
             {"AI Suggested Person: not checked", "AI 推薦人物：未確認"},
@@ -473,9 +485,15 @@ const TranslationTable& uiTranslations() {
             {"Strict", "엄격"}, {"Balanced", "균형"}, {"Broad", "넓게"},
             {"Overview", "개요"}, {"Library", "얼굴 라이브러리"}, {"People", "인물"}, {"Search", "검색"},
             {"Camera", "카메라"}, {"Review", "검토"}, {"Clusters", "클러스터"}, {"Compare", "비교"},
-            {"Runtime", "실행 환경"}, {"Ready", "준비됨"}, {"Browse", "찾아보기"}, {"Import Image", "이미지 가져오기"},
+            {"Runtime", "실행 환경"}, {"Ready", "준비됨"}, {"Browse", "찾아보기"},
             {"Import Folder", "폴더 가져오기"}, {"Export CSV", "CSV 내보내기"}, {"Reload", "새로 고침"},
             {"New", "새로 만들기"}, {"Open", "열기"}, {"Add Images", "이미지 추가"}, {"Add Folder", "폴더 추가"},
+            {"Workspace", "작업 공간"}, {"New Database", "새 데이터베이스"}, {"Open / Convert", "열기 / 변환"},
+            {"Import Images", "이미지 가져오기"}, {"Refresh", "새로 고침"}, {"Database Metrics", "데이터베이스 지표"},
+            {"Metric", "지표"}, {"Value", "값"}, {"Attention", "확인 필요"}, {"Queue", "대기열"}, {"Count", "수"},
+            {"Review Queue", "검토 대기열"}, {"Top People", "주요 인물"}, {"Top Tags", "주요 태그"},
+            {"Average Quality", "평균 품질"}, {"Quality Range", "품질 범위"}, {"Model", "모델"}, {"Format", "형식"},
+            {"Needs review", "검토 필요"}, {"Duplicate image groups", "중복 이미지 그룹"},
             {"File", "파일"}, {"View", "보기"}, {"No database loaded", "데이터베이스가 열리지 않음"},
             {"Name", "이름"}, {"Tags", "태그"}, {"Ignored", "제외됨"}, {"Dupes", "중복 수"},
             {"Quality", "품질"}, {"Source", "원본"}, {"Notes", "메모"},
@@ -486,7 +504,7 @@ const TranslationTable& uiTranslations() {
             {"Samples", "샘플"}, {"Exemplars", "대표 샘플"}, {"Accept", "허용값"},
             {"Health", "상태"}, {"Scorer", "평가기"}, {"No person selected", "선택된 인물 없음"},
             {"Identity profile: not trained", "식별 프로필: 학습 안 됨"},
-            {"Queue", "검토 대기열"}, {"Mark Reviewed", "검토 완료로 표시"},
+            {"Mark Reviewed", "검토 완료로 표시"},
             {"Ignore / Restore", "제외 / 복원"}, {"Limit", "최대 수"}, {"Reason", "사유"},
             {"Edit", "편집"}, {"AI Suggested Person", "AI 추천 인물"},
             {"AI Suggested Person: not checked", "AI 추천 인물: 확인 안 됨"},
@@ -2363,6 +2381,9 @@ private:
             }
         }
         applyTranslatedStaticText();
+        if (database_) {
+            loadOverview();
+        }
         statusBar()->showMessage(trUi("Ready"));
     }
 
@@ -2486,19 +2507,29 @@ private:
     void buildOverviewTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(8);
+        layout->setContentsMargins(24, 22, 24, 22);
+        layout->setSpacing(14);
+
+        auto* title = new QLabel("Overview", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
 
         auto* workspace = new QGroupBox("Workspace", page);
         auto* workspaceLayout = new QGridLayout(workspace);
         overviewDatabasePathEdit_ = new QLineEdit(workspace);
+        overviewDatabasePathEdit_->setObjectName("OverviewDatabasePath");
         overviewDatabasePathEdit_->setReadOnly(true);
         overviewDatabasePathEdit_->setPlaceholderText("No database loaded");
         auto* newButton = new QPushButton("New Database", workspace);
-        auto* openButton = new QPushButton("Open Database", workspace);
-        auto* importButton = new QPushButton("Import Image", workspace);
+        newButton->setObjectName("OverviewNewDatabase");
+        auto* openButton = new QPushButton("Open / Convert", workspace);
+        openButton->setObjectName("OverviewOpenDatabase");
+        auto* importButton = new QPushButton("Import Images", workspace);
+        importButton->setObjectName("OverviewImportImages");
         auto* folderButton = new QPushButton("Import Folder", workspace);
+        folderButton->setObjectName("OverviewImportFolder");
         auto* refreshButton = new QPushButton("Refresh", workspace);
+        refreshButton->setObjectName("OverviewRefresh");
         workspaceLayout->addWidget(new QLabel("Database", workspace), 0, 0);
         workspaceLayout->addWidget(overviewDatabasePathEdit_, 0, 1, 1, 5);
         workspaceLayout->addWidget(newButton, 1, 0);
@@ -2512,22 +2543,34 @@ private:
         auto* metricsBox = new QGroupBox("Database Metrics", page);
         auto* metricsLayout = new QVBoxLayout(metricsBox);
         overviewMetricsTable_ = new QTableWidget(0, 2, metricsBox);
+        overviewMetricsTable_->setObjectName("OverviewMetricsTable");
         overviewMetricsTable_->setHorizontalHeaderLabels({"Metric", "Value"});
         fitTable(overviewMetricsTable_);
+        overviewMetricsTable_->setSelectionMode(QAbstractItemView::NoSelection);
+        overviewMetricsTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        overviewMetricsTable_->setColumnWidth(0, 150);
         metricsLayout->addWidget(overviewMetricsTable_);
         upper->addWidget(metricsBox, 1);
 
         auto* attentionBox = new QGroupBox("Attention", page);
         auto* attentionLayout = new QVBoxLayout(attentionBox);
         overviewAttentionTable_ = new QTableWidget(0, 2, attentionBox);
+        overviewAttentionTable_->setObjectName("OverviewAttentionTable");
         overviewAttentionTable_->setHorizontalHeaderLabels({"Queue", "Count"});
         fitTable(overviewAttentionTable_);
+        overviewAttentionTable_->setSelectionMode(QAbstractItemView::NoSelection);
+        overviewAttentionTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        overviewAttentionTable_->setColumnWidth(0, 190);
         attentionLayout->addWidget(overviewAttentionTable_);
         auto* attentionActions = new QHBoxLayout();
         auto* reviewButton = new QPushButton("Review Queue", attentionBox);
+        reviewButton->setObjectName("OverviewReviewQueue");
         auto* peopleButton = new QPushButton("People", attentionBox);
+        peopleButton->setObjectName("OverviewPeople");
         auto* searchButton = new QPushButton("Search", attentionBox);
+        searchButton->setObjectName("OverviewSearch");
         auto* clustersButton = new QPushButton("Clusters", attentionBox);
+        clustersButton->setObjectName("OverviewClusters");
         attentionActions->addWidget(reviewButton);
         attentionActions->addWidget(peopleButton);
         attentionActions->addWidget(searchButton);
@@ -2540,16 +2583,25 @@ private:
         auto* peopleBox = new QGroupBox("Top People", page);
         auto* peopleLayout = new QVBoxLayout(peopleBox);
         overviewPeopleTable_ = new QTableWidget(0, 3, peopleBox);
+        overviewPeopleTable_->setObjectName("OverviewPeopleTable");
         overviewPeopleTable_->setHorizontalHeaderLabels({"Person", "Faces", "Review"});
         fitTable(overviewPeopleTable_);
+        overviewPeopleTable_->setSelectionMode(QAbstractItemView::NoSelection);
+        overviewPeopleTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        overviewPeopleTable_->setColumnWidth(0, 180);
+        overviewPeopleTable_->setColumnWidth(1, 70);
         peopleLayout->addWidget(overviewPeopleTable_);
         lower->addWidget(peopleBox, 1);
 
         auto* tagsBox = new QGroupBox("Top Tags", page);
         auto* tagsLayout = new QVBoxLayout(tagsBox);
         overviewTagsTable_ = new QTableWidget(0, 2, tagsBox);
+        overviewTagsTable_->setObjectName("OverviewTagsTable");
         overviewTagsTable_->setHorizontalHeaderLabels({"Tag", "Faces"});
         fitTable(overviewTagsTable_);
+        overviewTagsTable_->setSelectionMode(QAbstractItemView::NoSelection);
+        overviewTagsTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        overviewTagsTable_->setColumnWidth(0, 190);
         tagsLayout->addWidget(overviewTagsTable_);
         lower->addWidget(tagsBox, 1);
         layout->addLayout(lower, 1);
@@ -3829,7 +3881,7 @@ private:
     void loadOverview() {
         const auto stats = database_->statistics();
         if (overviewDatabasePathEdit_ != nullptr) {
-            overviewDatabasePathEdit_->setText(qs(database_->path().string()));
+            overviewDatabasePathEdit_->setText(QString::fromStdWString(database_->path().wstring()));
         }
         const auto setRows = [](QTableWidget* table, const std::vector<std::pair<QString, QString>>& rows) {
             if (table == nullptr) {
@@ -3842,18 +3894,20 @@ private:
             }
         };
         setRows(overviewMetricsTable_, {
-            {"Faces", QString::number(stats.faceCount)},
-            {"People", QString::number(stats.peopleCount)},
-            {"Tags", QString::number(stats.tagCount)},
-            {"Average Quality", QString::number(stats.averageQuality, 'f', 3)},
-            {"Model", qs(stats.modelName)},
-            {"Format", QString("v%1").arg(qs(stats.formatVersion))},
-            {"Metric", qs(stats.metric)},
+            {trUi("Faces"), QString::number(stats.faceCount)},
+            {trUi("People"), QString::number(stats.peopleCount)},
+            {trUi("Tags"), QString::number(stats.tagCount)},
+            {trUi("Average Quality"), QString::number(stats.averageQuality, 'f', 3)},
+            {trUi("Quality Range"), QString("%1 - %2")
+                                        .arg(stats.minimumQuality, 0, 'f', 3)
+                                        .arg(stats.maximumQuality, 0, 'f', 3)},
+            {trUi("Model"), qs(stats.modelName)},
+            {trUi("Format"), QString("v%1").arg(qs(stats.formatVersion))},
         });
         setRows(overviewAttentionTable_, {
-            {"Needs review", QString::number(stats.reviewCount)},
-            {"Ignored", QString::number(stats.ignoredCount)},
-            {"Duplicate image groups", QString::number(stats.duplicateImageGroupCount)},
+            {trUi("Needs review"), QString::number(stats.reviewCount)},
+            {trUi("Ignored"), QString::number(stats.ignoredCount)},
+            {trUi("Duplicate image groups"), QString::number(stats.duplicateImageGroupCount)},
         });
 
         if (overviewPeopleTable_ != nullptr) {
@@ -8670,6 +8724,20 @@ int main(int argc, char** argv) {
             window.findChild<QTableWidget*>("LibraryFaceTable") != nullptr &&
             window.findChild<QTabWidget*>("LibraryVisualTabs") != nullptr &&
             libraryFocus != nullptr && libraryFocus->text() == translatedText("Focus on Face", language);
+        const auto* overviewNew = window.findChild<QPushButton*>("OverviewNewDatabase");
+        const auto* overviewOpen = window.findChild<QPushButton*>("OverviewOpenDatabase");
+        const auto* overviewImport = window.findChild<QPushButton*>("OverviewImportImages");
+        const auto* overviewRefresh = window.findChild<QPushButton*>("OverviewRefresh");
+        const bool overviewControlsPresent =
+            window.findChild<QLineEdit*>("OverviewDatabasePath") != nullptr &&
+            window.findChild<QTableWidget*>("OverviewMetricsTable") != nullptr &&
+            window.findChild<QTableWidget*>("OverviewAttentionTable") != nullptr &&
+            window.findChild<QTableWidget*>("OverviewPeopleTable") != nullptr &&
+            window.findChild<QTableWidget*>("OverviewTagsTable") != nullptr &&
+            overviewNew != nullptr && overviewNew->text() == translatedText("New Database", language) &&
+            overviewOpen != nullptr && overviewOpen->text() == translatedText("Open / Convert", language) &&
+            overviewImport != nullptr && overviewImport->text() == translatedText("Import Images", language) &&
+            overviewRefresh != nullptr && overviewRefresh->text() == translatedText("Refresh", language);
         const auto* peopleTrain = window.findChild<QPushButton*>("PeopleTrainProfiles");
         const auto* peopleFocus = window.findChild<QToolButton*>("PeopleFocus");
         const bool peopleControlsPresent =
@@ -8740,11 +8808,30 @@ int main(int argc, char** argv) {
             runtimeRefreshDatabase != nullptr && runtimeRefreshDatabase->text() == translatedText("Refresh Database Stats", language) &&
             runtimeIntegrity != nullptr && runtimeIntegrity->text() == translatedText("Check Integrity", language) &&
             runtimeLegacy != nullptr && runtimeLegacy->text() == translatedText("Convert Legacy DTB", language);
+        if (!legacyActionPresent) return 10;
+        if (!overviewControlsPresent) {
+            if (window.findChild<QLineEdit*>("OverviewDatabasePath") == nullptr) return 111;
+            if (window.findChild<QTableWidget*>("OverviewMetricsTable") == nullptr) return 112;
+            if (window.findChild<QTableWidget*>("OverviewAttentionTable") == nullptr) return 113;
+            if (window.findChild<QTableWidget*>("OverviewPeopleTable") == nullptr) return 114;
+            if (window.findChild<QTableWidget*>("OverviewTagsTable") == nullptr) return 115;
+            if (overviewNew == nullptr || overviewNew->text() != translatedText("New Database", language)) return 116;
+            if (overviewOpen == nullptr || overviewOpen->text() != translatedText("Open / Convert", language)) return 117;
+            if (overviewImport == nullptr || overviewImport->text() != translatedText("Import Images", language)) return 118;
+            if (overviewRefresh == nullptr || overviewRefresh->text() != translatedText("Refresh", language)) return 119;
+            return 11;
+        }
+        if (!libraryControlsPresent) return 12;
+        if (!peopleControlsPresent) return 13;
+        if (!reviewControlsPresent) return 14;
+        if (!searchControlsPresent) return 15;
+        if (!clustersControlsPresent) return 16;
+        if (!compareControlsPresent) return 17;
+        if (!cameraControlsPresent) return 18;
+        if (!runtimeControlsPresent) return 19;
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
-                list->item(0)->text() == translatedText("Overview", language) &&
-                legacyActionPresent && libraryControlsPresent && peopleControlsPresent && reviewControlsPresent && searchControlsPresent &&
-                clustersControlsPresent && compareControlsPresent && cameraControlsPresent && runtimeControlsPresent) {
+                list->item(0)->text() == translatedText("Overview", language)) {
                 return 0;
             }
         }
@@ -8770,7 +8857,14 @@ int main(int argc, char** argv) {
             }
             return false;
         };
-        return hasRows("Metric", "Value") && hasRows("Queue", "Count") ? 0 : 3;
+        bool hasQualityRange = false;
+        if (const auto* metrics = window.findChild<QTableWidget*>("OverviewMetricsTable")) {
+            for (int row = 0; row < metrics->rowCount(); ++row) {
+                hasQualityRange = hasQualityRange ||
+                    (metrics->item(row, 0) != nullptr && metrics->item(row, 0)->text() == "Quality Range");
+            }
+        }
+        return hasRows("Metric", "Value") && hasRows("Queue", "Count") && hasQualityRange ? 0 : 3;
     }
 
     if (argc >= 5 && std::string(argv[1]) == "--mesh-render-smoke") {

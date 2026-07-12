@@ -14,6 +14,8 @@ struct DatabaseStatistics {
     int64_t ignoredCount = 0;
     int64_t duplicateImageGroupCount = 0;
     double averageQuality = 0.0;
+    double minimumQuality = 0.0;
+    double maximumQuality = 0.0;
     std::string formatVersion;
     std::string metric;
     std::string modelName;

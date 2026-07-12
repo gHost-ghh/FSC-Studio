@@ -888,9 +888,14 @@ DatabaseStatistics Database::statistics() const {
         }
     }
     {
-        Statement statement(db_, "SELECT COALESCE(AVG(quality_score), 0.0) FROM faces");
+        Statement statement(
+            db_,
+            "SELECT COALESCE(AVG(quality_score), 0.0), "
+            "COALESCE(MIN(quality_score), 0.0), COALESCE(MAX(quality_score), 0.0) FROM faces");
         if (sqlite3_step(statement.get()) == SQLITE_ROW) {
             stats.averageQuality = sqlite3_column_double(statement.get(), 0);
+            stats.minimumQuality = sqlite3_column_double(statement.get(), 1);
+            stats.maximumQuality = sqlite3_column_double(statement.get(), 2);
         }
     }
     return stats;

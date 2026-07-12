@@ -155,6 +155,9 @@ void databasePersonActionsRoundTrip() {
         assert(stats.faceCount == 4);
         assert(stats.tagCount == 2);
         assert(stats.duplicateImageGroupCount == 1);
+        assert(std::abs(stats.averageQuality - 0.8) < 1e-9);
+        assert(std::abs(stats.minimumQuality - 0.8) < 1e-9);
+        assert(std::abs(stats.maximumQuality - 0.8) < 1e-9);
         const auto tags = database.loadTagSummaries();
         assert(tags.size() == 2);
         assert(tags.front().name == "alpha" && tags.front().faceCount == 2);
