@@ -2,6 +2,7 @@
 
 #include "fsc/core/Database.hpp"
 #include "fsc/core/FileHash.hpp"
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/vision/InsightFaceEngine.hpp"
 
 #include <algorithm>
@@ -700,7 +701,7 @@ private:
 
 std::vector<std::uint8_t> readFile(const std::filesystem::path& sourcePath) {
     if (!std::filesystem::is_regular_file(sourcePath)) {
-        throw std::runtime_error("Legacy DTB source file does not exist: " + sourcePath.string());
+        throw std::runtime_error("Legacy DTB source file does not exist: " + fsc::core::pathToUtf8(sourcePath));
     }
     const auto size = std::filesystem::file_size(sourcePath);
     if (size == 0 || size > kMaxPickleBytes) {
@@ -708,7 +709,7 @@ std::vector<std::uint8_t> readFile(const std::filesystem::path& sourcePath) {
     }
     std::ifstream file(sourcePath, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Unable to open legacy DTB source file: " + sourcePath.string());
+        throw std::runtime_error("Unable to open legacy DTB source file: " + fsc::core::pathToUtf8(sourcePath));
     }
     std::vector<std::uint8_t> data(static_cast<size_t>(size));
     file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
@@ -757,12 +758,12 @@ std::filesystem::path normalizedOutputPath(std::filesystem::path outputPath) {
 void writePpm(const std::filesystem::path& outputPath, const fsc::vision::RgbImage& image) {
     std::ofstream file(outputPath, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Unable to create converted legacy image: " + outputPath.string());
+        throw std::runtime_error("Unable to create converted legacy image: " + fsc::core::pathToUtf8(outputPath));
     }
     file << "P6\n" << image.width << ' ' << image.height << "\n255\n";
     file.write(reinterpret_cast<const char*>(image.pixels.data()), static_cast<std::streamsize>(image.pixels.size()));
     if (!file) {
-        throw std::runtime_error("Unable to write converted legacy image: " + outputPath.string());
+        throw std::runtime_error("Unable to write converted legacy image: " + fsc::core::pathToUtf8(outputPath));
     }
 }
 
@@ -813,7 +814,7 @@ fsc::core::FaceInsertRecord recordFromLegacyFace(
     bool duplicate) {
     fsc::core::FaceInsertRecord record;
     record.fileName = originalFileName;
-    record.sourcePath = extractedImagePath.string();
+    record.sourcePath = fsc::core::pathToUtf8(extractedImagePath);
     record.embedding = face.embedding;
     record.embeddingDim = static_cast<int>(face.embedding.size());
     record.bbox = {
@@ -891,7 +892,9 @@ LegacyConversionSummary convertLegacyDtb(
     LegacyConversionSummary summary;
     summary.sourcePath = sourcePath;
     summary.outputPath = outputPath;
-    summary.imageDirectory = outputPath.parent_path() / (outputPath.stem().string() + "_legacy_images");
+    summary.imageDirectory = fsc::core::pathWithSuffix(
+        outputPath.parent_path() / outputPath.stem(),
+        "_legacy_images");
     summary.rowsTotal = options.limit > 0 ? std::min<int>(options.limit, static_cast<int>(images.size())) : static_cast<int>(images.size());
     if (summary.rowsTotal == 0) {
         throw std::runtime_error("Legacy DTB contains no image rows to convert.");

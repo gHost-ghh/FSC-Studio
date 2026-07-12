@@ -1,5 +1,6 @@
 #include "fsc/core/Database.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/VectorMath.hpp"
 
 #include <nlohmann/json.hpp>
@@ -763,14 +764,15 @@ void Database::createEmpty(std::filesystem::path path, bool replace) {
     if (replace) {
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
-        std::filesystem::remove(path.string() + "-wal", ignored);
-        std::filesystem::remove(path.string() + "-shm", ignored);
+        std::filesystem::remove(pathWithSuffix(path, "-wal"), ignored);
+        std::filesystem::remove(pathWithSuffix(path, "-shm"), ignored);
     } else if (std::filesystem::exists(path)) {
-        throw std::runtime_error("Database already exists: " + path.string());
+        throw std::runtime_error("Database already exists: " + pathToUtf8(path));
     }
 
     sqlite3* db = nullptr;
-    const int code = sqlite3_open_v2(path.string().c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+    const auto sqlitePath = pathToUtf8(path);
+    const int code = sqlite3_open_v2(sqlitePath.c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
     if (code != SQLITE_OK) {
         const std::string message = db == nullptr ? "Failed to create SQLite database." : sqlite3_errmsg(db);
         if (db != nullptr) {
@@ -796,7 +798,8 @@ void Database::createEmpty(std::filesystem::path path, bool replace) {
 }
 
 Database::Database(std::filesystem::path path) : path_(std::move(path)) {
-    const int code = sqlite3_open_v2(path_.string().c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr);
+    const auto sqlitePath = pathToUtf8(path_);
+    const int code = sqlite3_open_v2(sqlitePath.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr);
     if (code != SQLITE_OK) {
         const std::string message = db_ == nullptr ? "Failed to open SQLite database." : sqlite3_errmsg(db_);
         if (db_ != nullptr) {
@@ -1258,7 +1261,12 @@ MaintenanceResult Database::backupTo(const std::filesystem::path& outputPath) co
     }
 
     sqlite3* destination = nullptr;
-    const int openCode = sqlite3_open_v2(output.string().c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+    const auto sqliteOutputPath = pathToUtf8(output);
+    const int openCode = sqlite3_open_v2(
+        sqliteOutputPath.c_str(),
+        &destination,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+        nullptr);
     if (openCode != SQLITE_OK) {
         std::string message = destination == nullptr ? "Failed to open backup database." : sqlite3_errmsg(destination);
         if (destination != nullptr) {
@@ -1285,7 +1293,7 @@ MaintenanceResult Database::backupTo(const std::filesystem::path& outputPath) co
     MaintenanceResult result;
     result.action = "backup";
     result.ok = true;
-    result.outputPath = output.string();
+    result.outputPath = pathToUtf8(output);
     result.message = "Backup created: " + result.outputPath;
     return result;
 }

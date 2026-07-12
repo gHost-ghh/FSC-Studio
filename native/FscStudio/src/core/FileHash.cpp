@@ -1,5 +1,7 @@
 #include "fsc/core/FileHash.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
+
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -57,7 +59,7 @@ std::string sha256File(const std::filesystem::path& path) {
 #ifdef _WIN32
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Failed to open file for SHA-256: " + path.string());
+        throw std::runtime_error("Failed to open file for SHA-256: " + pathToUtf8(path));
     }
 
     AlgorithmHandle algorithm;

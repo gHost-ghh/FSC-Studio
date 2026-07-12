@@ -1,5 +1,6 @@
 #include "fsc/vision/InsightFaceEngine.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/VectorMath.hpp"
 
 #include <onnxruntime_cxx_api.h>
@@ -334,7 +335,7 @@ public:
           env_(ORT_LOGGING_LEVEL_WARNING, "FSC Studio Native InsightFace") {
         const auto missing = models_.missingFiles();
         if (!missing.empty()) {
-            throw std::runtime_error("Missing InsightFace model: " + missing.front().string());
+            throw std::runtime_error("Missing InsightFace model: " + fsc::core::pathToUtf8(missing.front()));
         }
 
         if (mode_ == RuntimeMode::Auto) {

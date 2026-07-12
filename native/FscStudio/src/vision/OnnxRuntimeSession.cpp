@@ -1,5 +1,7 @@
 #include "fsc/vision/OnnxRuntimeSession.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
+
 #include <onnxruntime_cxx_api.h>
 #ifdef FSC_ONNXRUNTIME_HAS_DML
 #include <dml_provider_factory.h>
@@ -112,7 +114,7 @@ OnnxSessionInfo::ValueInfo valueInfo(
 
 OnnxSessionInfo inspectOnnxModel(const std::filesystem::path& modelPath, RuntimeMode mode) {
     if (!std::filesystem::exists(modelPath)) {
-        throw std::runtime_error("ONNX model file does not exist: " + modelPath.string());
+        throw std::runtime_error("ONNX model file does not exist: " + fsc::core::pathToUtf8(modelPath));
     }
 
     if (mode == RuntimeMode::Auto) {

@@ -1,5 +1,7 @@
 #include "fsc/mesh/FaceMesh.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -88,12 +90,7 @@ using FaceLandmarkerCloseResultFn = void (*)(FaceLandmarkerResultC*);
 using FaceLandmarkerCloseFn = int (*)(void*, char**);
 
 std::string utf8Path(const std::filesystem::path& path) {
-#if defined(_WIN32)
-    const auto value = path.u8string();
-    return {value.begin(), value.end()};
-#else
-    return path.string();
-#endif
+    return fsc::core::pathToUtf8(path);
 }
 
 std::filesystem::path processDirectory() {

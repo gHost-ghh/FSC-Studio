@@ -1,6 +1,7 @@
 #include "fsc/core/Database.hpp"
 #include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/Search.hpp"
 #ifdef FSC_ENABLE_ONNX
 #include "fsc/legacy/LegacyDtb.hpp"
@@ -127,8 +128,8 @@ FaceInsertRecord insertRecordFromFace(
     const std::string& imageHash,
     bool duplicate) {
     FaceInsertRecord record;
-    record.fileName = imagePath.filename().string();
-    record.sourcePath = imagePath.string();
+    record.fileName = pathToUtf8(imagePath.filename());
+    record.sourcePath = pathToUtf8(imagePath);
     record.embedding = face.embedding;
     record.embeddingDim = static_cast<int>(face.embedding.size());
     record.bbox = {
@@ -191,8 +192,8 @@ int main(int argc, char** argv) {
                 std::cout << '[' << current << '/' << total << "] " << message << "\n";
             };
             const auto summary = fsc::legacy::convertLegacyDtb(argv[3], databasePath, options);
-            std::cout << "output=" << summary.outputPath.string() << "\n";
-            std::cout << "image_directory=" << summary.imageDirectory.string() << "\n";
+            std::cout << "output=" << pathToUtf8(summary.outputPath) << "\n";
+            std::cout << "image_directory=" << pathToUtf8(summary.imageDirectory) << "\n";
             std::cout << "saved=" << summary.facesSaved << "\n";
             std::cout << "skipped=" << summary.skippedRows << "\n";
             std::cout << "total=" << summary.rowsTotal << "\n";
@@ -204,7 +205,7 @@ int main(int argc, char** argv) {
             Database::createEmpty(databasePath, replace);
             Database created(databasePath);
             const auto stats = created.statistics();
-            std::cout << "created=" << databasePath.string() << "\n";
+            std::cout << "created=" << pathToUtf8(databasePath) << "\n";
             std::cout << "format_version=" << stats.formatVersion << "\n";
             std::cout << "metric=" << stats.metric << "\n";
             std::cout << "model=" << stats.modelName << "\n";

@@ -49,6 +49,7 @@ endif()
 add_library(FscCore STATIC
     src/core/FileHash.cpp
     src/core/IdentityGallery.cpp
+    src/core/PathEncoding.cpp
     src/core/Search.cpp
     src/core/VectorMath.cpp
 )
@@ -196,6 +197,9 @@ if(FSC_BUILD_QT_APP)
 
     add_executable(FscStudioQt WIN32 apps/FscAppQt/main.cpp)
     target_link_libraries(FscStudioQt PRIVATE FscCore FscVision FscMesh Qt6::Widgets Qt6::Concurrent)
+    if(WIN32)
+        target_link_libraries(FscStudioQt PRIVATE Shell32)
+    endif()
     if(TARGET FscLegacy)
         target_link_libraries(FscStudioQt PRIVATE FscLegacy)
     endif()

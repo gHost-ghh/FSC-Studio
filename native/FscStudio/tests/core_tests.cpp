@@ -1,5 +1,7 @@
 #include "fsc/core/IdentityGallery.hpp"
 #include "fsc/core/Database.hpp"
+#include "fsc/core/FileHash.hpp"
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
 #include "fsc/mesh/FaceMesh.hpp"
@@ -211,8 +213,58 @@ void databasePersonActionsRoundTrip() {
         assert(preview->embedding.empty());
     }
     std::filesystem::remove(path);
-    std::filesystem::remove(path.string() + "-wal");
-    std::filesystem::remove(path.string() + "-shm");
+    std::filesystem::remove(pathWithSuffix(path, "-wal"));
+    std::filesystem::remove(pathWithSuffix(path, "-shm"));
+}
+
+void databaseUnicodePathsRoundTrip() {
+    const auto suffix = std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root = std::filesystem::temp_directory_path() /
+        pathFromUtf8("fsc_\xE4\xBA\xBA\xE8\x84\xB8_\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E_\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4_" + suffix);
+    const auto databasePath = root /
+        pathFromUtf8("\xE6\x95\xB0\xE6\x8D\xAE\xE5\xBA\x93_\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E_\xEC\x96\xBC\xEA\xB5\xB4.fscdb");
+    const auto backupPath = root /
+        pathFromUtf8("\xE5\xA4\x87\xE4\xBB\xBD_\xE4\xBA\xBA\xE8\x84\xB8_\xEB\xB0\xB1\xEC\x97\x85.fscdb");
+    const auto imagePath = root /
+        pathFromUtf8("\xE7\x85\xA7\xE7\x89\x87_\xE9\xA1\x94_\xEC\x96\xBC\xEA\xB5\xB4.jpg");
+
+    assert(pathFromUtf8(pathToUtf8(databasePath)) == databasePath);
+    std::filesystem::create_directories(root);
+    {
+        std::ofstream image(imagePath, std::ios::binary);
+        image << "unicode-path-hash-smoke";
+    }
+    assert(!sha256File(imagePath).empty());
+    Database::createEmpty(databasePath, true);
+    {
+        Database database(databasePath);
+        FaceInsertRecord record;
+        record.fileName = pathToUtf8(imagePath.filename());
+        record.sourcePath = pathToUtf8(imagePath);
+        record.embedding = normalize(std::vector<float>{0.0f, 1.0f, 0.0f});
+        record.embeddingDim = static_cast<int>(record.embedding.size());
+        record.bbox = {2.0, 3.0, 20.0, 24.0};
+        record.detectionScore = 0.91;
+        record.qualityScore = 0.82;
+        record.imageHash = "unicode-path-smoke";
+        const auto faceId = database.insertFace(record);
+        const auto personId = database.upsertPerson("\xE6\x9D\x8E\xE9\x9B\xB7_\xE5\xB1\xB1\xE7\x94\xB0_\xEA\xB9\x80");
+        database.assignFaceToPerson(faceId, personId);
+        const auto result = database.backupTo(backupPath);
+        assert(result.ok);
+        assert(result.outputPath == pathToUtf8(std::filesystem::absolute(backupPath)));
+    }
+    {
+        Database backup(backupPath);
+        const auto faces = backup.loadFaces(true);
+        assert(faces.size() == 1);
+        assert(faces.front().fileName == pathToUtf8(imagePath.filename()));
+        assert(faces.front().sourcePath == pathToUtf8(imagePath));
+        assert(!faces.front().personName.empty());
+        assert(backup.checkIntegrity().ok);
+    }
+    std::filesystem::remove_all(root);
 }
 
 #ifdef FSC_ENABLE_ONNX
@@ -335,6 +387,7 @@ int main() {
     modelPathResolutionUsesBuffaloRoot();
     mediaPipeMeshValidationRejectsSyntheticFallbacks();
     databasePersonActionsRoundTrip();
+    databaseUnicodePathsRoundTrip();
 #ifdef FSC_ENABLE_ONNX
     legacyDtbReaderLoadsTrustedEmbeddedImage();
 #endif

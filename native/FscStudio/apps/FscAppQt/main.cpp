@@ -1,6 +1,7 @@
 #include "fsc/core/Database.hpp"
 #include "fsc/core/FileHash.hpp"
 #include "fsc/core/IdentityGallery.hpp"
+#include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/Search.hpp"
 #include "fsc/core/VectorMath.hpp"
 #ifdef FSC_ENABLE_ONNX
@@ -67,6 +68,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 #ifdef FSC_ENABLE_OPENCV
@@ -102,13 +104,35 @@ QString qs(const std::string& value) {
     return QString::fromUtf8(value.c_str());
 }
 
+std::string utf8FromQString(const QString& value) {
+    const auto encoded = value.toUtf8();
+    return {encoded.constData(), static_cast<size_t>(encoded.size())};
+}
+
 std::filesystem::path pathFrom(const QString& value) {
     return std::filesystem::path(value.toStdWString());
 }
 
+QString commandLineArgument(int argc, char** argv, int index) {
+    if (index < 0 || index >= argc) {
+        return {};
+    }
+#ifdef _WIN32
+    int wideArgumentCount = 0;
+    auto** wideArguments = CommandLineToArgvW(GetCommandLineW(), &wideArgumentCount);
+    if (wideArguments != nullptr) {
+        const QString result = index < wideArgumentCount
+            ? QString::fromWCharArray(wideArguments[index])
+            : QString{};
+        LocalFree(wideArguments);
+        return result;
+    }
+#endif
+    return QString::fromLocal8Bit(argv[index]);
+}
+
 std::string utf8FromPath(const std::filesystem::path& value) {
-    const auto bytes = QString::fromStdWString(value.wstring()).toUtf8();
-    return std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+    return fsc::core::pathToUtf8(value);
 }
 
 QImage previewImageFromRgb(const fsc::vision::RgbImage& image) {
@@ -7595,11 +7619,13 @@ private:
             return;
         }
         try {
-            const auto defaultPath = database_->path().parent_path() / (database_->path().stem().string() + "_faces.csv");
+            const auto defaultPath = fsc::core::pathWithSuffix(
+                database_->path().parent_path() / database_->path().stem(),
+                "_faces.csv");
             const QString path = QFileDialog::getSaveFileName(
                 this,
                 "Export Library CSV",
-                qs(defaultPath.string()),
+                QString::fromStdWString(defaultPath.wstring()),
                 "CSV Files (*.csv);;All Files (*)");
             if (path.isEmpty()) {
                 return;
@@ -7889,7 +7915,7 @@ int main(int argc, char** argv) {
     configureDeployedQtRuntime(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "--smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto stats = database.statistics();
             return stats.formatVersion.empty() ? 1 : 0;
         } catch (...) {
@@ -7898,16 +7924,16 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--library-export-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
-            const int count = writeFacesCsv(database.loadFaces(true), pathFrom(QString::fromLocal8Bit(argv[3])));
-            return count > 0 && std::filesystem::exists(pathFrom(QString::fromLocal8Bit(argv[3]))) ? 0 : 1;
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
+            const int count = writeFacesCsv(database.loadFaces(true), pathFrom(commandLineArgument(argc, argv, 3)));
+            return count > 0 && std::filesystem::exists(pathFrom(commandLineArgument(argc, argv, 3))) ? 0 : 1;
         } catch (...) {
             return 1;
         }
     }
     if (argc >= 4 && std::string(argv[1]) == "--review-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             database.updateFaceReview(faceId, "reviewed", false, "qt-review-smoke");
             const auto face = database.loadFace(faceId);
@@ -7918,7 +7944,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--review-action-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto personId = database.upsertPerson("NativeReviewSmoke", "review smoke");
             database.assignFaceToPerson(faceId, personId);
@@ -7942,7 +7968,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--people-action-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto sourceId = database.upsertPerson("NativePeopleSmokeSource", "source notes");
             const auto targetId = database.upsertPerson("NativePeopleSmokeTarget", "target notes");
@@ -7967,7 +7993,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && std::string(argv[1]) == "--cluster-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             (void)buildClusters(database.loadFaces(false), 0.62, 2);
             return 0;
         } catch (...) {
@@ -7976,8 +8002,8 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--cluster-action-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
-            const auto personName = std::string(argv[3]);
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
+            const auto personName = utf8FromQString(commandLineArgument(argc, argv, 3));
             auto clusters = buildClusters(database.loadFaces(false), 0.55, 2, 0.0, false, 5000);
             if (clusters.empty()) {
                 return 2;
@@ -8001,7 +8027,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--mesh-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto face = database.loadFace(faceId);
             if (!face.has_value()) {
@@ -8014,7 +8040,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--library-visual-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto face = database.loadFace(faceId);
             if (!face.has_value() || face->landmarks3d.empty()) {
@@ -8027,7 +8053,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--mesh-generate-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto face = database.loadFace(faceId);
             if (!face.has_value() || face->sourcePath.empty() || !std::filesystem::is_regular_file(face->sourcePath)) {
@@ -8046,7 +8072,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--metadata-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             database.setFaceTags(faceId, "native-smoke, parity", false);
             database.updateFaceReview(faceId, "open", false, "native metadata smoke");
@@ -8065,10 +8091,10 @@ int main(int argc, char** argv) {
     }
     if (argc >= 6 && std::string(argv[1]) == "--search-action-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto queryFaceId = std::strtoll(argv[3], nullptr, 10);
             const auto assignFaceId = std::strtoll(argv[4], nullptr, 10);
-            const auto personName = std::string(argv[5]);
+            const auto personName = utf8FromQString(commandLineArgument(argc, argv, 5));
             const auto query = database.loadFace(queryFaceId);
             if (!query.has_value()) {
                 return 1;
@@ -8088,9 +8114,9 @@ int main(int argc, char** argv) {
     }
     if (argc >= 5 && std::string(argv[1]) == "--camera-action-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
-            const std::string personName = argv[4];
+            const std::string personName = utf8FromQString(commandLineArgument(argc, argv, 4));
             const auto personId = database.upsertPerson(personName);
             database.assignFaceToPerson(faceId, personId);
             database.updateFaceReview(faceId, "reviewed", false, "native camera action smoke");
@@ -8103,7 +8129,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--search-filter-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const std::string personName = "NativeSearchFilterSmoke";
             const std::string tagName = "native-filter-smoke";
@@ -8127,8 +8153,8 @@ int main(int argc, char** argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--maintenance-smoke") {
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
-            const auto backupPath = pathFrom(QString::fromLocal8Bit(argv[3]));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
+            const auto backupPath = pathFrom(commandLineArgument(argc, argv, 3));
             const auto integrity = database.checkIntegrity();
             const auto checkpoint = database.checkpointWal(true);
             const auto backup = database.backupTo(backupPath);
@@ -8163,11 +8189,11 @@ int main(int argc, char** argv) {
     if (argc >= 5 && std::string(argv[1]) == "--camera-result-smoke") {
         try {
             const auto mode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Cpu;
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[3])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 3)));
             fsc::vision::InsightFaceEngine engine(
-                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(QString::fromLocal8Bit(argv[2]))),
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(commandLineArgument(argc, argv, 2))),
                 mode);
-            const auto image = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[4])));
+            const auto image = fsc::vision::loadImageRgb(pathFrom(commandLineArgument(argc, argv, 4)));
             const auto face = bestFace(engine.analyze(image, 0.50f, 10));
             const auto identity = fsc::core::identifyPerson(database.loadIdentityProfiles(), face.embedding, fsc::core::IdentityMode::Strict, 5);
             const auto hits = fsc::core::searchFaces(database.loadFaces(false), face.embedding, 3, 0.35, false);
@@ -8181,10 +8207,10 @@ int main(int argc, char** argv) {
         try {
             const auto mode = argc >= 6 ? fsc::vision::parseRuntimeMode(argv[5]) : fsc::vision::RuntimeMode::Cpu;
             fsc::vision::InsightFaceEngine engine(
-                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(QString::fromLocal8Bit(argv[2]))),
+                fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(commandLineArgument(argc, argv, 2))),
                 mode);
-            const auto imageA = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[3])));
-            const auto imageB = fsc::vision::loadImageRgb(pathFrom(QString::fromLocal8Bit(argv[4])));
+            const auto imageA = fsc::vision::loadImageRgb(pathFrom(commandLineArgument(argc, argv, 3)));
+            const auto imageB = fsc::vision::loadImageRgb(pathFrom(commandLineArgument(argc, argv, 4)));
             const auto faceA = bestFace(engine.analyze(imageA, 0.50f, 10));
             const auto faceB = bestFace(engine.analyze(imageB, 0.50f, 10));
             const double cosine = fsc::core::dot(faceA.embedding, faceB.embedding);
@@ -8200,10 +8226,10 @@ int main(int argc, char** argv) {
     if (argc >= 5 && std::string(argv[1]) == "--camera-live-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
-        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
-        window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
+        const QString runtimeMode = argc >= 6 ? commandLineArgument(argc, argv, 5) : QString("cpu");
+        window.openDatabasePath(commandLineArgument(argc, argv, 2));
         window.startCameraLiveSmoke(
-            QString::fromLocal8Bit(argv[3]),
+            commandLineArgument(argc, argv, 3),
             std::atoi(argv[4]),
             runtimeMode);
         int outcome = 5;
@@ -8219,11 +8245,11 @@ int main(int argc, char** argv) {
     if (argc >= 5 && std::string(argv[1]) == "--camera-ui-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
-        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
-        window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
+        const QString runtimeMode = argc >= 6 ? commandLineArgument(argc, argv, 5) : QString("cpu");
+        window.openDatabasePath(commandLineArgument(argc, argv, 2));
         window.startCameraFrameSmoke(
-            QString::fromLocal8Bit(argv[3]),
-            QString::fromLocal8Bit(argv[4]),
+            commandLineArgument(argc, argv, 3),
+            commandLineArgument(argc, argv, 4),
             runtimeMode);
         int outcome = 5;
         QTimer poll;
@@ -8245,18 +8271,18 @@ int main(int argc, char** argv) {
 
     if (argc >= 5 && std::string(argv[1]) == "--library-import-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
         try {
             fsc::core::Database::createEmpty(pathFrom(databasePath), true);
         } catch (...) {
             return 2;
         }
         MainWindow window;
-        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
+        const QString runtimeMode = argc >= 6 ? commandLineArgument(argc, argv, 5) : QString("cpu");
         window.startLibraryImportSmoke(
             databasePath,
-            QString::fromLocal8Bit(argv[3]),
-            QString::fromLocal8Bit(argv[4]),
+            commandLineArgument(argc, argv, 3),
+            commandLineArgument(argc, argv, 4),
             runtimeMode);
         int outcome = 5;
         QTimer poll;
@@ -8284,11 +8310,11 @@ int main(int argc, char** argv) {
     if (argc >= 5 && std::string(argv[1]) == "--compare-ui-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
-        const QString runtimeMode = argc >= 6 ? QString::fromLocal8Bit(argv[5]) : QString("cpu");
+        const QString runtimeMode = argc >= 6 ? commandLineArgument(argc, argv, 5) : QString("cpu");
         window.startCompareSmoke(
-            QString::fromLocal8Bit(argv[2]),
-            QString::fromLocal8Bit(argv[3]),
-            QString::fromLocal8Bit(argv[4]),
+            commandLineArgument(argc, argv, 2),
+            commandLineArgument(argc, argv, 3),
+            commandLineArgument(argc, argv, 4),
             runtimeMode);
         int outcome = 5;
         QTimer poll;
@@ -8310,10 +8336,10 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "--search-query-ui-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
-        const QString runtimeMode = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString("cpu");
+        const QString runtimeMode = argc >= 5 ? commandLineArgument(argc, argv, 4) : QString("cpu");
         window.startSearchQuerySmoke(
-            QString::fromLocal8Bit(argv[2]),
-            QString::fromLocal8Bit(argv[3]),
+            commandLineArgument(argc, argv, 2),
+            commandLineArgument(argc, argv, 3),
             runtimeMode);
         int outcome = 5;
         QTimer poll;
@@ -8335,7 +8361,7 @@ int main(int argc, char** argv) {
 
     if (argc >= 4 && std::string(argv[1]) == "--library-mesh-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
         const int64_t faceId = std::strtoll(argv[3], nullptr, 10);
         try {
             fsc::core::Database database(pathFrom(databasePath));
@@ -8371,7 +8397,7 @@ int main(int argc, char** argv) {
 
     if (argc >= 3 && std::string(argv[1]) == "--people-training-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
         MainWindow window;
         window.startPeopleTrainingSmoke(databasePath);
         int outcome = 5;
@@ -8399,7 +8425,7 @@ int main(int argc, char** argv) {
 
     if (argc >= 4 && std::string(argv[1]) == "--review-ai-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
         const int64_t faceId = std::strtoll(argv[3], nullptr, 10);
         try {
             fsc::core::Database database(pathFrom(databasePath));
@@ -8455,7 +8481,7 @@ int main(int argc, char** argv) {
 
     if (argc >= 5 && std::string(argv[1]) == "--review-suggestion-switch-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
         const int64_t firstFaceId = std::strtoll(argv[3], nullptr, 10);
         const int64_t finalFaceId = std::strtoll(argv[4], nullptr, 10);
         try {
@@ -8503,7 +8529,7 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--clusters-ui-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
-        window.startClusterBuildSmoke(QString::fromLocal8Bit(argv[2]));
+        window.startClusterBuildSmoke(commandLineArgument(argc, argv, 2));
         int outcome = 5;
         QTimer poll;
         QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
@@ -8524,8 +8550,8 @@ int main(int argc, char** argv) {
 
     if (argc >= 4 && std::string(argv[1]) == "--clusters-assign-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
-        const QString personName = QString::fromLocal8Bit(argv[3]);
+        const QString databasePath = commandLineArgument(argc, argv, 2);
+        const QString personName = commandLineArgument(argc, argv, 3);
         MainWindow window;
         window.startClusterBuildSmoke(databasePath);
         int outcome = 5;
@@ -8581,15 +8607,15 @@ int main(int argc, char** argv) {
         QApplication uiApp(argc, argv);
         MainWindow window;
         window.startRuntimeProbeSmoke(
-            QString::fromLocal8Bit(argv[2]),
-            QString::fromLocal8Bit(argv[3]));
+            commandLineArgument(argc, argv, 2),
+            commandLineArgument(argc, argv, 3));
         int outcome = 5;
         QTimer poll;
         QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
             if (!window.runtimeProbeSmokeFinished()) {
                 return;
             }
-            const QString expectedProvider = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString();
+            const QString expectedProvider = argc >= 5 ? commandLineArgument(argc, argv, 4) : QString();
             const bool providerMatches = expectedProvider.isEmpty() ||
                 window.runtimeActualProviderForSmoke().contains(expectedProvider, Qt::CaseInsensitive);
             outcome = window.runtimeProbeSmokeReady() && providerMatches ? 0 : 4;
@@ -8606,9 +8632,9 @@ int main(int argc, char** argv) {
 
     if (argc >= 4 && std::string(argv[1]) == "--runtime-maintenance-ui-smoke") {
         QApplication uiApp(argc, argv);
-        const QString databasePath = QString::fromLocal8Bit(argv[2]);
-        const QString action = QString::fromLocal8Bit(argv[3]);
-        const QString outputPath = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString();
+        const QString databasePath = commandLineArgument(argc, argv, 2);
+        const QString action = commandLineArgument(argc, argv, 3);
+        const QString outputPath = argc >= 5 ? commandLineArgument(argc, argv, 4) : QString();
         MainWindow window;
         window.startRuntimeMaintenanceSmoke(databasePath, action, outputPath);
         int outcome = 5;
@@ -8635,17 +8661,17 @@ int main(int argc, char** argv) {
         QApplication uiApp(argc, argv);
         MainWindow window;
         window.startRuntimeLegacySmoke(
-            QString::fromLocal8Bit(argv[2]),
-            QString::fromLocal8Bit(argv[3]),
-            QString::fromLocal8Bit(argv[4]),
-            QString::fromLocal8Bit(argv[5]));
+            commandLineArgument(argc, argv, 2),
+            commandLineArgument(argc, argv, 3),
+            commandLineArgument(argc, argv, 4),
+            commandLineArgument(argc, argv, 5));
         int outcome = 5;
         QTimer poll;
         QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
             if (!window.runtimeLegacySmokeFinished()) {
                 return;
             }
-            outcome = window.runtimeLegacySmokeReady() && QFileInfo::exists(QString::fromLocal8Bit(argv[3])) ? 0 : 4;
+            outcome = window.runtimeLegacySmokeReady() && QFileInfo::exists(commandLineArgument(argc, argv, 3)) ? 0 : 4;
             uiApp.quit();
         });
         poll.start(20);
@@ -8664,12 +8690,12 @@ int main(int argc, char** argv) {
         window.resize(
             argc >= 6 ? std::max(900, std::atoi(argv[5])) : 1600,
             argc >= 7 ? std::max(650, std::atoi(argv[6])) : 1000);
-        window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
-        window.selectPageForSmoke(QString::fromLocal8Bit(argv[3]));
+        window.openDatabasePath(commandLineArgument(argc, argv, 2));
+        window.selectPageForSmoke(commandLineArgument(argc, argv, 3));
         window.show();
         int outcome = 2;
         QTimer::singleShot(800, &uiApp, [&] {
-            const std::filesystem::path outputPath = pathFrom(QString::fromLocal8Bit(argv[4]));
+            const std::filesystem::path outputPath = pathFrom(commandLineArgument(argc, argv, 4));
             if (outputPath.has_parent_path()) {
                 std::filesystem::create_directories(outputPath.parent_path());
             }
@@ -8681,7 +8707,7 @@ int main(int argc, char** argv) {
     }
 
     if (argc >= 2 && std::string(argv[1]) == "--ui-language-smoke") {
-        const QString language = argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString("zh");
+        const QString language = argc >= 3 ? commandLineArgument(argc, argv, 2) : QString("zh");
         QApplication uiApp(argc, argv);
         MainWindow window;
         QComboBox* languageSelector = nullptr;
@@ -8842,7 +8868,7 @@ int main(int argc, char** argv) {
         QApplication uiApp(argc, argv);
         MainWindow window;
         try {
-            window.openDatabasePath(QString::fromLocal8Bit(argv[2]));
+            window.openDatabasePath(commandLineArgument(argc, argv, 2));
         } catch (...) {
             return 2;
         }
@@ -8870,7 +8896,7 @@ int main(int argc, char** argv) {
     if (argc >= 5 && std::string(argv[1]) == "--mesh-render-smoke") {
         QApplication renderApp(argc, argv);
         try {
-            fsc::core::Database database(pathFrom(QString::fromLocal8Bit(argv[2])));
+            fsc::core::Database database(pathFrom(commandLineArgument(argc, argv, 2)));
             const auto faceId = std::strtoll(argv[3], nullptr, 10);
             const auto face = database.loadFace(faceId);
             if (!face.has_value() || !fsc::mesh::isMediaPipeFaceMesh(face->faceMesh3d)) {
@@ -8905,7 +8931,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            const auto outputPath = pathFrom(QString::fromLocal8Bit(argv[4]));
+            const auto outputPath = pathFrom(commandLineArgument(argc, argv, 4));
             if (!outputPath.parent_path().empty()) {
                 std::filesystem::create_directories(outputPath.parent_path());
             }
@@ -8922,7 +8948,7 @@ int main(int argc, char** argv) {
     MainWindow window;
     window.show();
     if (argc > 1) {
-        window.openDatabasePath(QString::fromLocal8Bit(argv[1]));
+        window.openDatabasePath(commandLineArgument(argc, argv, 1));
     }
     return app.exec();
 }

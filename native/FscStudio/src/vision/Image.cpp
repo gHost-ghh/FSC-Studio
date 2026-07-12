@@ -1,5 +1,7 @@
 #include "fsc/vision/Image.hpp"
 
+#include "fsc/core/PathEncoding.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -75,7 +77,7 @@ struct ComInitializer {
 RgbImage loadPpmRgb(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) {
-        throw std::runtime_error("Failed to open PPM image: " + path.string());
+        throw std::runtime_error("Failed to open PPM image: " + fsc::core::pathToUtf8(path));
     }
 
     const auto magic = nextToken(stream);
