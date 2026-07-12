@@ -389,6 +389,12 @@ const TranslationTable& uiTranslations() {
             {"Samples", "样本"}, {"Exemplars", "代表样本"}, {"Accept", "接受阈值"},
             {"Health", "健康度"}, {"Scorer", "评分器"}, {"No person selected", "未选择人物"},
             {"Identity profile: not trained", "身份模板：未训练"},
+            {"Queue", "复核队列"}, {"Mark Reviewed", "标记为已复核"},
+            {"Ignore / Restore", "忽略或恢复"}, {"Limit", "数量上限"}, {"Reason", "原因"},
+            {"Edit", "编辑"}, {"AI Suggested Person", "AI 建议人物"},
+            {"AI Suggested Person: not checked", "AI 建议人物：尚未检查"},
+            {"AI Suggested Person: unknown", "AI 建议人物：未知"}, {"Checking identity profiles...", "正在检查身份模板..."},
+            {"Confirm AI Person", "确认 AI 人物"}, {"Reject AI Suggestion", "拒绝 AI 建议"},
             {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
             {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
@@ -421,6 +427,12 @@ const TranslationTable& uiTranslations() {
             {"Samples", "サンプル"}, {"Exemplars", "代表例"}, {"Accept", "受入値"},
             {"Health", "健全性"}, {"Scorer", "スコアラー"}, {"No person selected", "人物未選択"},
             {"Identity profile: not trained", "識別プロファイル：未学習"},
+            {"Queue", "レビューキュー"}, {"Mark Reviewed", "レビュー済みにする"},
+            {"Ignore / Restore", "除外／復元"}, {"Limit", "上限"}, {"Reason", "理由"},
+            {"Edit", "編集"}, {"AI Suggested Person", "AI 推薦人物"},
+            {"AI Suggested Person: not checked", "AI 推薦人物：未確認"},
+            {"AI Suggested Person: unknown", "AI 推薦人物：不明"}, {"Checking identity profiles...", "識別プロファイルを確認中..."},
+            {"Confirm AI Person", "AI 人物を確定"}, {"Reject AI Suggestion", "AI 推薦を拒否"},
             {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
             {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
@@ -453,6 +465,12 @@ const TranslationTable& uiTranslations() {
             {"Samples", "샘플"}, {"Exemplars", "대표 샘플"}, {"Accept", "허용값"},
             {"Health", "상태"}, {"Scorer", "평가기"}, {"No person selected", "선택된 인물 없음"},
             {"Identity profile: not trained", "식별 프로필: 학습 안 됨"},
+            {"Queue", "검토 대기열"}, {"Mark Reviewed", "검토 완료로 표시"},
+            {"Ignore / Restore", "제외 / 복원"}, {"Limit", "최대 수"}, {"Reason", "사유"},
+            {"Edit", "편집"}, {"AI Suggested Person", "AI 추천 인물"},
+            {"AI Suggested Person: not checked", "AI 추천 인물: 확인 안 됨"},
+            {"AI Suggested Person: unknown", "AI 추천 인물: 알 수 없음"}, {"Checking identity profiles...", "식별 프로필 확인 중..."},
+            {"Confirm AI Person", "AI 인물 확인"}, {"Reject AI Suggestion", "AI 추천 거부"},
             {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
             {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
@@ -1741,6 +1759,45 @@ public:
         return peopleTrainingSmokeStarted_ && !peopleTrainingActive_;
     }
 
+    void startReviewAiSmoke(const QString& databasePath, int64_t faceId) {
+        openDatabasePath(databasePath);
+        reviewSuggestionSmokeStarted_ = true;
+        selectReviewFaceForSmoke(faceId);
+    }
+
+    void selectReviewFaceForSmoke(int64_t faceId) {
+        if (reviewTable_ == nullptr) {
+            return;
+        }
+        for (int row = 0; row < reviewTable_->rowCount(); ++row) {
+            const auto* idItem = reviewTable_->item(row, 0);
+            if (idItem != nullptr && idItem->text().toLongLong() == faceId) {
+                reviewTable_->selectRow(row);
+                return;
+            }
+        }
+    }
+
+    [[nodiscard]] bool reviewSuggestionSmokeFinished() const noexcept {
+        return reviewSuggestionSmokeStarted_ && reviewSuggestionTasksActive_ == 0;
+    }
+
+    [[nodiscard]] bool reviewSuggestionSmokeReady() const noexcept {
+        return reviewSuggestedPersonId_ > 0;
+    }
+
+    [[nodiscard]] int64_t reviewSuggestedPersonIdForSmoke() const noexcept {
+        return reviewSuggestedPersonId_;
+    }
+
+    void confirmReviewAiSmoke() {
+        confirmReviewSuggestion();
+    }
+
+    [[nodiscard]] bool reviewConfirmSmokeFinished() const noexcept {
+        return !reviewConfirmActive_;
+    }
+
 #ifdef FSC_ENABLE_ONNX
     void startLibraryImportSmoke(
         const QString& databasePath,
@@ -1914,6 +1971,21 @@ private:
         uint64_t token = 0;
         QString databasePath;
         fsc::core::IdentityTrainingSummary summary;
+        QString error;
+    };
+
+    struct ReviewSuggestionTaskResult {
+        int generation = 0;
+        int64_t faceId = 0;
+        fsc::core::IdentityResult identity;
+        QString error;
+    };
+
+    struct ReviewConfirmTaskResult {
+        uint64_t token = 0;
+        QString databasePath;
+        int64_t faceId = 0;
+        QString personName;
         QString error;
     };
 
@@ -2658,13 +2730,17 @@ private:
     void buildReviewTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(24, 22, 24, 22);
+        layout->setSpacing(14);
+        auto* title = new QLabel("Review", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
 
-        auto* controls = new QWidget(page);
+        auto* controls = new QGroupBox("Queue", page);
         auto* controlsLayout = new QGridLayout(controls);
-        controlsLayout->setContentsMargins(0, 0, 0, 0);
         reviewDatabaseEdit_ = new QLineEdit(controls);
         reviewDatabaseEdit_->setReadOnly(true);
+        reviewDatabaseEdit_->setObjectName("ReviewDatabasePath");
         reviewFilterEdit_ = new QLineEdit(controls);
         reviewFilterEdit_->setPlaceholderText("name, path, person, tag, notes");
         reviewLimitSpin_ = new QSpinBox(controls);
@@ -2691,20 +2767,44 @@ private:
 
         auto* splitter = new QSplitter(Qt::Horizontal, page);
         reviewTable_ = new QTableWidget(splitter);
+        reviewTable_->setObjectName("ReviewTable");
         reviewTable_->setColumnCount(8);
         reviewTable_->setHorizontalHeaderLabels({"ID", "Name", "Reason", "Person", "Tags", "Quality", "Dupes", "Notes"});
         fitTable(reviewTable_);
         reviewTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         reviewTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        reviewTable_->setMinimumSize(0, 0);
+        reviewTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        reviewTable_->setColumnWidth(0, 70);
+        reviewTable_->setColumnWidth(1, 190);
+        reviewTable_->setColumnWidth(2, 180);
+        reviewTable_->setColumnWidth(3, 130);
+        reviewTable_->setColumnWidth(4, 160);
+        reviewTable_->setColumnWidth(5, 80);
+        reviewTable_->setColumnWidth(6, 60);
         auto* detailPanel = new QWidget(splitter);
+        detailPanel->setMinimumWidth(300);
+        detailPanel->setMaximumWidth(430);
         auto* detailLayout = new QVBoxLayout(detailPanel);
-        detailLayout->setContentsMargins(8, 0, 0, 0);
-        reviewFocusButton_ = new QPushButton("Focus on Face", detailPanel);
-        reviewFocusButton_->setMaximumWidth(132);
-        reviewPreviewLabel_ = new QLabel("Select a review item", detailPanel);
+        detailLayout->setContentsMargins(0, 0, 0, 0);
+        detailLayout->setSpacing(10);
+        auto* previewOverlay = new QWidget(detailPanel);
+        auto* previewOverlayLayout = new QGridLayout(previewOverlay);
+        previewOverlayLayout->setContentsMargins(0, 0, 0, 0);
+        reviewPreviewLabel_ = new QLabel("Select a review item", previewOverlay);
         reviewPreviewLabel_->setAlignment(Qt::AlignCenter);
-        reviewPreviewLabel_->setMinimumWidth(320);
+        reviewPreviewLabel_->setMinimumSize(180, 180);
         reviewPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
+        reviewFocusButton_ = new QToolButton(previewOverlay);
+        reviewFocusButton_->setObjectName("ReviewFocus");
+        reviewFocusButton_->setText("Focus on Face");
+        reviewFocusButton_->setMaximumWidth(132);
+        reviewFocusButton_->setStyleSheet(
+            "QToolButton{background:rgba(250,252,255,225);color:#152235;border:1px solid #9eb1c7;"
+            "padding:3px 7px;font-weight:600;}"
+            "QToolButton:hover{background:#ffffff;border-color:#4a90c2;}");
+        previewOverlayLayout->addWidget(reviewPreviewLabel_, 0, 0);
+        previewOverlayLayout->addWidget(reviewFocusButton_, 0, 0, Qt::AlignLeft | Qt::AlignTop);
         auto* editor = new QGroupBox("Edit", detailPanel);
         auto* form = new QFormLayout(editor);
         reviewPersonEdit_ = new QLineEdit(editor);
@@ -2716,7 +2816,9 @@ private:
         reviewNotesEdit_->setMinimumHeight(96);
         reviewSuggestionLabel_ = new QLabel("AI Suggested Person: not checked", editor);
         reviewSuggestionLabel_->setWordWrap(true);
-        auto* confirmSuggestionButton = new QPushButton("Confirm AI Person", editor);
+        reviewSuggestionLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        reviewConfirmSuggestionButton_ = new QPushButton("Confirm AI Person", editor);
+        reviewConfirmSuggestionButton_->setObjectName("ReviewConfirmSuggestion");
         auto* rejectSuggestionButton = new QPushButton("Reject AI Suggestion", editor);
         form->addRow("Person", reviewPersonEdit_);
         form->addRow("Tags", reviewTagsEdit_);
@@ -2724,16 +2826,16 @@ private:
         form->addRow("", reviewIgnoredCheck_);
         form->addRow("Notes", reviewNotesEdit_);
         form->addRow("AI Suggested Person", reviewSuggestionLabel_);
-        form->addRow("", confirmSuggestionButton);
+        form->addRow("", reviewConfirmSuggestionButton_);
         form->addRow("", rejectSuggestionButton);
-        detailLayout->addWidget(reviewFocusButton_, 0, Qt::AlignLeft);
-        detailLayout->addWidget(reviewPreviewLabel_, 1);
+        detailLayout->addWidget(previewOverlay, 1);
         detailLayout->addWidget(editor);
         detailLayout->addStretch();
         splitter->addWidget(reviewTable_);
         splitter->addWidget(detailPanel);
-        splitter->setStretchFactor(0, 3);
-        splitter->setStretchFactor(1, 2);
+        splitter->setStretchFactor(0, 2);
+        splitter->setStretchFactor(1, 1);
+        splitter->setSizes({640, 320});
         layout->addWidget(splitter, 1);
         addMainTab(page, "Review");
 
@@ -2749,7 +2851,7 @@ private:
             }
             loadReview();
         });
-        connect(reviewFocusButton_, &QPushButton::clicked, this, [this] {
+        connect(reviewFocusButton_, &QToolButton::clicked, this, [this] {
             reviewFocusOnFace_ = !reviewFocusOnFace_;
             if (currentReviewFaceId_ > 0) {
                 updateReviewDetail(static_cast<int>(currentReviewFaceId_), false);
@@ -2758,7 +2860,7 @@ private:
         connect(saveButton, &QPushButton::clicked, this, [this] { saveReviewMetadata(); });
         connect(reviewedButton, &QPushButton::clicked, this, [this] { applyReviewState("reviewed", false); });
         connect(ignoredButton, &QPushButton::clicked, this, [this] { toggleReviewIgnored(); });
-        connect(confirmSuggestionButton, &QPushButton::clicked, this, [this] { confirmReviewSuggestion(); });
+        connect(reviewConfirmSuggestionButton_, &QPushButton::clicked, this, [this] { confirmReviewSuggestion(); });
         connect(rejectSuggestionButton, &QPushButton::clicked, this, [this] { rejectReviewSuggestion(); });
     }
 
@@ -4222,7 +4324,7 @@ private:
             return;
         }
         if (reviewDatabaseEdit_ != nullptr) {
-            reviewDatabaseEdit_->setText(qs(database_->path().string()));
+            reviewDatabaseEdit_->setText(QString::fromStdWString(database_->path().wstring()));
         }
         const QString textFilter = reviewFilterEdit_ == nullptr ? QString() : reviewFilterEdit_->text().trimmed();
         const int limit = reviewLimitSpin_ == nullptr ? 500 : reviewLimitSpin_->value();
@@ -4257,16 +4359,20 @@ private:
             reviewTable_->setItem(row, 6, item(record.duplicateCount > 1 ? QString::number(record.duplicateCount) : ""));
             reviewTable_->setItem(row, 7, item(qs(record.notes)));
         }
-        reviewTable_->resizeColumnsToContents();
         currentReviewFaceId_ = 0;
         reviewSuggestedPersonId_ = 0;
         reviewSuggestedPersonName_.clear();
+        reviewFocusOnFace_ = false;
+        if (reviewFocusButton_ != nullptr) {
+            reviewFocusButton_->setText(trUi("Focus on Face"));
+            reviewFocusButton_->setEnabled(false);
+        }
         if (reviewPreviewLabel_ != nullptr) {
             reviewPreviewLabel_->setText(reviewRows_.empty() ? "No review items" : "Select a review item");
             reviewPreviewLabel_->setPixmap(QPixmap());
         }
         if (reviewSuggestionLabel_ != nullptr) {
-            reviewSuggestionLabel_->setText("AI Suggested Person: not checked");
+            reviewSuggestionLabel_->setText(trUi("AI Suggested Person: not checked"));
         }
         statusBar()->showMessage(QString("Review queue: %1 item(s)").arg(reviewRows_.size()));
     }
@@ -4351,7 +4457,7 @@ private:
             reviewSuggestedPersonName_.clear();
         }
         if (refreshSuggestion && reviewSuggestionLabel_ != nullptr) {
-            reviewSuggestionLabel_->setText("AI Suggested Person: not checked");
+            reviewSuggestionLabel_->setText(trUi("AI Suggested Person: not checked"));
         }
         if (reviewPreviewLabel_ == nullptr || !database_) {
             return;
@@ -4364,7 +4470,8 @@ private:
                 return;
             }
             if (reviewFocusButton_ != nullptr) {
-                reviewFocusButton_->setText(reviewFocusOnFace_ ? "Full Image" : "Focus on Face");
+                reviewFocusButton_->setText(reviewFocusOnFace_ ? trUi("Full Image") : trUi("Focus on Face"));
+                reviewFocusButton_->setEnabled(true);
             }
             setDatabaseFacePreview(reviewPreviewLabel_, *face, "No preview", reviewFocusOnFace_);
             if (refreshSuggestion) {
@@ -4652,26 +4759,53 @@ private:
         if (reviewSuggestionLabel_ == nullptr || !database_) {
             return;
         }
-        try {
-            const auto result = fsc::core::identifyPerson(database_->loadIdentityProfiles(), face.embedding, selectedIdentityMode(), 3);
-            if (result.candidates.empty() || result.decision == "unknown") {
-                reviewSuggestionLabel_->setText("AI Suggested Person: unknown");
+        const int generation = ++reviewSuggestionGeneration_;
+        const int64_t faceId = face.id;
+        const std::vector<float> embedding = face.embedding;
+        const auto identityMode = selectedIdentityMode();
+        const auto profiles = cameraIdentityProfilesSnapshot_;
+        reviewSuggestionLabel_->setText(trUi("Checking identity profiles..."));
+        ++reviewSuggestionTasksActive_;
+
+        auto* watcher = new QFutureWatcher<ReviewSuggestionTaskResult>(this);
+        connect(watcher, &QFutureWatcher<ReviewSuggestionTaskResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            reviewSuggestionTasksActive_ = std::max(0, reviewSuggestionTasksActive_ - 1);
+            if (result.generation != reviewSuggestionGeneration_ || result.faceId != currentReviewFaceId_) {
                 return;
             }
-            const auto& candidate = result.candidates.front();
+            if (!result.error.isEmpty()) {
+                reviewSuggestionLabel_->setText(QString("AI Suggested Person: %1").arg(result.error));
+                return;
+            }
+            if (result.identity.candidates.empty() || result.identity.decision == "unknown") {
+                reviewSuggestionLabel_->setText(trUi("AI Suggested Person: unknown"));
+                return;
+            }
+            const auto& candidate = result.identity.candidates.front();
             reviewSuggestedPersonId_ = candidate.profile.personId;
             reviewSuggestedPersonName_ = candidate.profile.personName;
             reviewSuggestionLabel_->setText(
                 QString("%1 | %2 | score %3 | confidence %4% | margin %5 | evidence face %6")
                     .arg(qs(candidate.profile.personName))
-                    .arg(qs(result.decision))
+                    .arg(qs(result.identity.decision))
                     .arg(candidate.score, 0, 'f', 4)
                     .arg(candidate.confidence * 100.0, 0, 'f', 1)
                     .arg(candidate.margin, 0, 'f', 4)
                     .arg(candidate.evidenceFaceId));
-        } catch (const std::exception& ex) {
-            reviewSuggestionLabel_->setText(QString("AI Suggested Person: %1").arg(QString::fromUtf8(ex.what())));
-        }
+        });
+        watcher->setFuture(QtConcurrent::run([generation, faceId, embedding, identityMode, profiles] {
+            ReviewSuggestionTaskResult result;
+            result.generation = generation;
+            result.faceId = faceId;
+            try {
+                result.identity = fsc::core::identifyPerson(*profiles, embedding, identityMode, 3);
+            } catch (const std::exception& ex) {
+                result.error = QString::fromUtf8(ex.what());
+            }
+            return result;
+        }));
     }
 
     void suggestReviewPerson() {
@@ -4694,7 +4828,7 @@ private:
     }
 
     void confirmReviewSuggestion() {
-        if (!database_) {
+        if (!database_ || reviewConfirmActive_) {
             return;
         }
         try {
@@ -4703,16 +4837,58 @@ private:
                 throw std::runtime_error("Select a review row first.");
             }
             if (reviewSuggestedPersonId_ <= 0) {
-                suggestReviewPerson();
-            }
-            if (reviewSuggestedPersonId_ <= 0) {
                 throw std::runtime_error("No suggested person is available to confirm.");
             }
-            database_->assignFaceToPerson(faceId, reviewSuggestedPersonId_);
-            database_->updateFaceReview(faceId, "reviewed", false, "Confirmed native AI suggested person.");
-            database_->rebuildIdentityProfiles();
-            reloadAll();
-            statusBar()->showMessage("Suggested person confirmed and profiles retrained");
+            const uint64_t token = ++reviewConfirmToken_;
+            const QString databasePath = QString::fromStdWString(database_->path().wstring());
+            const int64_t personId = reviewSuggestedPersonId_;
+            const QString personName = qs(reviewSuggestedPersonName_);
+            reviewConfirmActive_ = true;
+            if (reviewConfirmSuggestionButton_ != nullptr) {
+                reviewConfirmSuggestionButton_->setEnabled(false);
+            }
+            statusBar()->showMessage("Confirming AI suggested person...");
+
+            auto* watcher = new QFutureWatcher<ReviewConfirmTaskResult>(this);
+            connect(watcher, &QFutureWatcher<ReviewConfirmTaskResult>::finished, this, [this, watcher] {
+                auto result = watcher->result();
+                watcher->deleteLater();
+                if (result.token != reviewConfirmToken_) {
+                    return;
+                }
+                reviewConfirmActive_ = false;
+                if (reviewConfirmSuggestionButton_ != nullptr) {
+                    reviewConfirmSuggestionButton_->setEnabled(true);
+                }
+                if (!result.error.isEmpty()) {
+                    showError(std::runtime_error(result.error.toUtf8().constData()));
+                    return;
+                }
+                if (database_ && QString::fromStdWString(database_->path().wstring()) == result.databasePath) {
+                    reloadAll();
+                }
+                statusBar()->showMessage(QString("Confirmed AI suggested person: %1.").arg(result.personName));
+            });
+            watcher->setFuture(QtConcurrent::run([token, databasePath, faceId, personId, personName] {
+                ReviewConfirmTaskResult result;
+                result.token = token;
+                result.databasePath = databasePath;
+                result.faceId = faceId;
+                result.personName = personName;
+                try {
+                    fsc::core::Database workerDatabase(pathFrom(databasePath));
+                    const auto face = workerDatabase.loadFace(faceId);
+                    if (!face.has_value()) {
+                        throw std::runtime_error("Face id not found.");
+                    }
+                    workerDatabase.assignFaceToPerson(faceId, personId);
+                    workerDatabase.updateFaceReview(faceId, "reviewed", false, face->notes);
+                    workerDatabase.rebuildIdentityProfiles();
+                } catch (const std::exception& ex) {
+                    result.error = QString::fromUtf8(ex.what());
+                }
+                return result;
+            }));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -6781,13 +6957,19 @@ private:
     QCheckBox* reviewIgnoredCheck_ = nullptr;
     QTextEdit* reviewNotesEdit_ = nullptr;
     QLabel* reviewPreviewLabel_ = nullptr;
-    QPushButton* reviewFocusButton_ = nullptr;
+    QToolButton* reviewFocusButton_ = nullptr;
     QLabel* reviewSuggestionLabel_ = nullptr;
+    QPushButton* reviewConfirmSuggestionButton_ = nullptr;
     int64_t reviewSuggestedPersonId_ = 0;
     std::string reviewSuggestedPersonName_;
     std::vector<fsc::core::FaceRecord> reviewRows_;
     int64_t currentReviewFaceId_ = 0;
     bool reviewFocusOnFace_ = false;
+    int reviewSuggestionGeneration_ = 0;
+    int reviewSuggestionTasksActive_ = 0;
+    bool reviewSuggestionSmokeStarted_ = false;
+    uint64_t reviewConfirmToken_ = 0;
+    bool reviewConfirmActive_ = false;
     QSpinBox* topKSpin_ = nullptr;
     QDoubleSpinBox* searchThresholdSpin_ = nullptr;
     QDoubleSpinBox* searchMinQualitySpin_ = nullptr;
@@ -7427,6 +7609,109 @@ int main(int argc, char** argv) {
         return outcome;
     }
 
+    if (argc >= 4 && std::string(argv[1]) == "--review-ai-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const int64_t faceId = std::strtoll(argv[3], nullptr, 10);
+        try {
+            fsc::core::Database database(pathFrom(databasePath));
+            const auto face = database.loadFace(faceId);
+            if (!face.has_value()) {
+                return 2;
+            }
+            database.updateFaceReview(faceId, "open", false, face->notes);
+        } catch (...) {
+            return 2;
+        }
+        MainWindow window;
+        window.startReviewAiSmoke(databasePath, faceId);
+        int outcome = 5;
+        int phase = 0;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (phase == 0) {
+                if (!window.reviewSuggestionSmokeFinished()) {
+                    return;
+                }
+                if (!window.reviewSuggestionSmokeReady()) {
+                    outcome = 4;
+                    uiApp.quit();
+                    return;
+                }
+                window.confirmReviewAiSmoke();
+                phase = 1;
+                return;
+            }
+            if (!window.reviewConfirmSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                const auto face = database.loadFace(faceId);
+                outcome = face.has_value() && face->personId > 0 && face->reviewState == "reviewed" && !face->ignored
+                    ? 0
+                    : 7;
+            } catch (...) {
+                outcome = 8;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
+    if (argc >= 5 && std::string(argv[1]) == "--review-suggestion-switch-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const int64_t firstFaceId = std::strtoll(argv[3], nullptr, 10);
+        const int64_t finalFaceId = std::strtoll(argv[4], nullptr, 10);
+        try {
+            fsc::core::Database database(pathFrom(databasePath));
+            for (const int64_t faceId : {firstFaceId, finalFaceId}) {
+                const auto face = database.loadFace(faceId);
+                if (!face.has_value()) {
+                    return 2;
+                }
+                database.updateFaceReview(faceId, "open", false, face->notes);
+            }
+        } catch (...) {
+            return 2;
+        }
+        MainWindow window;
+        window.startReviewAiSmoke(databasePath, firstFaceId);
+        window.selectReviewFaceForSmoke(finalFaceId);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.reviewSuggestionSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                const auto finalFace = database.loadFace(finalFaceId);
+                outcome = finalFace.has_value() && finalFace->personId > 0 &&
+                        window.reviewSuggestedPersonIdForSmoke() == finalFace->personId
+                    ? 0
+                    : 4;
+            } catch (...) {
+                outcome = 7;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
     if (argc >= 5 && std::string(argv[1]) == "--page-render-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
@@ -7501,6 +7786,13 @@ int main(int argc, char** argv) {
             window.findChild<QTableWidget*>("PeopleMemberTable") != nullptr &&
             peopleTrain != nullptr && peopleTrain->text() == translatedText("Train Identity Profiles", language) &&
             peopleFocus != nullptr && peopleFocus->text() == translatedText("Focus on Face", language);
+        const auto* reviewConfirm = window.findChild<QPushButton*>("ReviewConfirmSuggestion");
+        const auto* reviewFocus = window.findChild<QToolButton*>("ReviewFocus");
+        const bool reviewControlsPresent =
+            window.findChild<QLineEdit*>("ReviewDatabasePath") != nullptr &&
+            window.findChild<QTableWidget*>("ReviewTable") != nullptr &&
+            reviewConfirm != nullptr && reviewConfirm->text() == translatedText("Confirm AI Person", language) &&
+            reviewFocus != nullptr && reviewFocus->text() == translatedText("Focus on Face", language);
         const bool searchControlsPresent =
             window.findChild<QLineEdit*>("SearchDatabasePath") != nullptr &&
             window.findChild<QPushButton*>("SearchOpenDatabase") != nullptr &&
@@ -7535,7 +7827,7 @@ int main(int argc, char** argv) {
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
-                legacyActionPresent && libraryControlsPresent && peopleControlsPresent && searchControlsPresent &&
+                legacyActionPresent && libraryControlsPresent && peopleControlsPresent && reviewControlsPresent && searchControlsPresent &&
                 compareControlsPresent && cameraControlsPresent) {
                 return 0;
             }
