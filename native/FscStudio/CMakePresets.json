@@ -1,0 +1,261 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "msvc-debug",
+      "displayName": "MSVC Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/msvc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "ON",
+        "FSC_ENABLE_ONNX": "OFF",
+        "FSC_BUILD_QT_APP": "OFF"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "displayName": "MSVC Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/msvc-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "ON"
+      }
+    },
+    {
+      "name": "msvc-vs-debug",
+      "displayName": "MSVC Visual Studio Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "FSC_CORE_ONLY": "ON",
+        "FSC_ENABLE_ONNX": "OFF",
+        "FSC_BUILD_QT_APP": "OFF"
+      }
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "displayName": "MSVC Visual Studio DB/ONNX Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-db-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "OFF",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "displayName": "MSVC Visual Studio Qt Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-release",
+      "displayName": "MSVC Visual Studio Qt Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-release",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-debug",
+      "displayName": "MSVC Visual Studio Qt Camera Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-camera-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app;opencv",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_ENABLE_OPENCV": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-release",
+      "displayName": "MSVC Visual Studio Qt Camera Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-camera-release",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app;opencv",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_ENABLE_OPENCV": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime"
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-dml-release",
+      "displayName": "MSVC Visual Studio Qt Camera DirectML Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-camera-dml-release",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app;opencv",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_ENABLE_OPENCV": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime-directml-1.24.4-nuget"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc-debug",
+      "configurePreset": "msvc-debug"
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc-release"
+    },
+    {
+      "name": "msvc-vs-debug",
+      "configurePreset": "msvc-vs-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "configurePreset": "msvc-vs-db-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "configurePreset": "msvc-vs-qt-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-qt-release",
+      "configurePreset": "msvc-vs-qt-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-vs-qt-camera-debug",
+      "configurePreset": "msvc-vs-qt-camera-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-vs-qt-camera-release",
+      "configurePreset": "msvc-vs-qt-camera-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-vs-qt-camera-dml-release",
+      "configurePreset": "msvc-vs-qt-camera-dml-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc-debug",
+      "configurePreset": "msvc-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-debug",
+      "configurePreset": "msvc-vs-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-db-debug",
+      "configurePreset": "msvc-vs-db-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-debug",
+      "configurePreset": "msvc-vs-qt-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-release",
+      "configurePreset": "msvc-vs-qt-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-debug",
+      "configurePreset": "msvc-vs-qt-camera-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-release",
+      "configurePreset": "msvc-vs-qt-camera-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-dml-release",
+      "configurePreset": "msvc-vs-qt-camera-dml-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

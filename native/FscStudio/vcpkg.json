@@ -1,0 +1,47 @@
+{
+  "name": "fsc-studio-native",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "sqlite3",
+    "nlohmann-json"
+  ],
+  "features": {
+    "qt-app": {
+      "description": "Qt Widgets desktop shell dependencies.",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "default-features": false,
+          "features": [
+            "widgets",
+            "gui",
+            "concurrent",
+            "sql",
+            "jpeg",
+            "png"
+          ]
+        }
+      ]
+    },
+    "opencv": {
+      "description": "OpenCV image and camera dependencies for later native UI/camera work.",
+      "dependencies": [
+        {
+          "name": "opencv4",
+          "default-features": false,
+          "features": [
+            "dshow",
+            "msmf",
+            "thread"
+          ]
+        }
+      ]
+    },
+    "onnxruntime-vcpkg": {
+      "description": "Optional vcpkg ONNX Runtime package; the current checked path uses scripts/fetch-onnxruntime.ps1 instead.",
+      "dependencies": [
+        "onnxruntime"
+      ]
+    }
+  }
+}

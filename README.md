@@ -23,6 +23,7 @@ fsc_studio_services.py  Application service layer
 fsc_face_engine.py      InsightFace / ONNX Runtime integration
 fsc_face_database.py    SQLite .fscdb database layer
 pyproject.toml          Python dependency metadata
+native/FscStudio/       In-progress C++/Qt native Windows port
 ```
 
 ## Setup
@@ -90,6 +91,8 @@ powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant cp
 ```
 
 `universal` includes CPU and GPU ONNX Runtime overlays and asks the user which runtime to install after CUDA/NVIDIA detection. Generated installers are written under `release/`, which is intentionally ignored by Git.
+
+The native Windows migration lives under `native/FscStudio/`. Its current Qt shell can open existing `.fscdb` files, import single images or folders, filter Library records, export the filtered Library table as CSV, manage People records and Review metadata, and run native Search/Compare/Camera smoke checks without Python.
 
 ## Data Privacy
 
