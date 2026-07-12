@@ -414,7 +414,11 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "生成稠密网格"}, {"Save Metadata", "保存元数据"},
             {"Ignore in search", "在搜索中忽略"}, {"Append tags", "追加标签"},
             {"Apply to Selection", "应用到选中项"}, {"Selected", "选中"}, {"Batch", "批量"}, {"Activity", "活动"},
-            {"Legacy", "旧版"}, {"Convert Legacy DTB", "转换旧 DTB"},
+            {"Engine", "推理引擎"}, {"Mode", "模式"}, {"Build", "构建状态"}, {"Provider", "执行提供程序"}, {"Status", "状态"}, {"Auto", "自动"},
+            {"Model root", "模型目录"}, {"Load Runtime", "加载运行环境"}, {"Current Database", "当前数据库"},
+            {"Path", "路径"}, {"Stats", "统计"}, {"Refresh Database Stats", "刷新数据库统计"},
+            {"Maintenance", "数据库维护"}, {"Check Integrity", "检查完整性"}, {"Backup DB", "备份数据库"},
+            {"Checkpoint WAL", "整理 WAL"}, {"Legacy", "旧版"}, {"Convert Legacy DTB", "转换旧 DTB"},
         }},
         {"ja", {
             {"Database", "データベース"}, {"Language", "言語"}, {"Identity Mode", "識別モード"},
@@ -458,7 +462,11 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "高密度メッシュを生成"}, {"Save Metadata", "メタデータを保存"},
             {"Ignore in search", "検索で無視"}, {"Append tags", "タグを追加"},
             {"Apply to Selection", "選択項目に適用"}, {"Selected", "選択"}, {"Batch", "一括"}, {"Activity", "操作履歴"},
-            {"Legacy", "旧形式"}, {"Convert Legacy DTB", "旧DTB変換"},
+            {"Engine", "推論エンジン"}, {"Mode", "モード"}, {"Build", "ビルド"}, {"Provider", "実行プロバイダー"}, {"Status", "状態"}, {"Auto", "自動"},
+            {"Model root", "モデルフォルダー"}, {"Load Runtime", "ランタイムを読み込む"}, {"Current Database", "現在のデータベース"},
+            {"Path", "パス"}, {"Stats", "統計"}, {"Refresh Database Stats", "DB統計を更新"},
+            {"Maintenance", "データベース保守"}, {"Check Integrity", "整合性を確認"}, {"Backup DB", "DBをバックアップ"},
+            {"Checkpoint WAL", "WALを整理"}, {"Legacy", "旧形式"}, {"Convert Legacy DTB", "旧DTB変換"},
         }},
         {"ko", {
             {"Database", "데이터베이스"}, {"Language", "언어"}, {"Identity Mode", "식별 모드"},
@@ -502,7 +510,11 @@ const TranslationTable& uiTranslations() {
             {"Generate Dense Mesh", "고밀도 메시 생성"}, {"Save Metadata", "메타데이터 저장"},
             {"Ignore in search", "검색에서 무시"}, {"Append tags", "태그 추가"},
             {"Apply to Selection", "선택 항목에 적용"}, {"Selected", "선택"}, {"Batch", "일괄"}, {"Activity", "작업 기록"},
-            {"Legacy", "이전 형식"}, {"Convert Legacy DTB", "이전 DTB 변환"},
+            {"Engine", "추론 엔진"}, {"Mode", "모드"}, {"Build", "빌드"}, {"Provider", "실행 공급자"}, {"Status", "상태"}, {"Auto", "자동"},
+            {"Model root", "모델 폴더"}, {"Load Runtime", "런타임 불러오기"}, {"Current Database", "현재 데이터베이스"},
+            {"Path", "경로"}, {"Stats", "통계"}, {"Refresh Database Stats", "DB 통계 새로 고침"},
+            {"Maintenance", "데이터베이스 유지 관리"}, {"Check Integrity", "무결성 검사"}, {"Backup DB", "DB 백업"},
+            {"Checkpoint WAL", "WAL 정리"}, {"Legacy", "이전 형식"}, {"Convert Legacy DTB", "이전 DTB 변환"},
         }},
     };
     return translations;
@@ -1909,6 +1921,69 @@ public:
         return clusterAssignmentSmokeStarted_ && !clusterAssignmentActive_;
     }
 
+    void startRuntimeProbeSmoke(const QString& modelRoot, const QString& runtimeMode) {
+        modelRootPath_ = modelRoot;
+        if (runtimeModeCombo_ != nullptr) {
+            const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
+            runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
+        }
+        runtimeProbeSmokeStarted_ = true;
+        probeRuntime();
+    }
+
+    [[nodiscard]] bool runtimeProbeSmokeFinished() const noexcept {
+        return runtimeProbeSmokeStarted_ && !runtimeProbeActive_;
+    }
+
+    [[nodiscard]] bool runtimeProbeSmokeReady() const noexcept {
+        return runtimeLastProbeOk_ && !runtimeActualProvider_.isEmpty();
+    }
+
+    [[nodiscard]] QString runtimeActualProviderForSmoke() const {
+        return runtimeActualProvider_;
+    }
+
+    void startRuntimeMaintenanceSmoke(
+        const QString& databasePath,
+        const QString& action,
+        const QString& outputPath = {}) {
+        openDatabasePath(databasePath);
+        runtimeMaintenanceSmokeStarted_ = true;
+        startRuntimeMaintenanceTask(action, outputPath);
+    }
+
+    [[nodiscard]] bool runtimeMaintenanceSmokeFinished() const noexcept {
+        return runtimeMaintenanceSmokeStarted_ && !runtimeMaintenanceActive_;
+    }
+
+    [[nodiscard]] bool runtimeMaintenanceSmokeReady() const noexcept {
+        return runtimeLastMaintenanceOk_;
+    }
+
+#ifdef FSC_ENABLE_ONNX
+    void startRuntimeLegacySmoke(
+        const QString& sourcePath,
+        const QString& outputPath,
+        const QString& modelRoot,
+        const QString& runtimeMode) {
+        modelRootPath_ = modelRoot;
+        if (runtimeModeCombo_ != nullptr) {
+            const int modeIndex = runtimeModeCombo_->findData(runtimeMode.toLower());
+            runtimeModeCombo_->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
+        }
+        runtimeLegacySmokeStarted_ = true;
+        startRuntimeLegacyConversion(sourcePath, outputPath);
+    }
+
+    [[nodiscard]] bool runtimeLegacySmokeFinished() const noexcept {
+        return runtimeLegacySmokeStarted_ && !runtimeLegacyActive_;
+    }
+
+    [[nodiscard]] bool runtimeLegacySmokeReady() const noexcept {
+        return runtimeLastLegacyOk_;
+    }
+#endif
+
 #ifdef FSC_ENABLE_ONNX
     void startLibraryImportSmoke(
         const QString& databasePath,
@@ -2117,7 +2192,42 @@ private:
         QString error;
     };
 
+    struct RuntimeProbeTaskResult {
+        uint64_t token = 0;
+        QString modelRoot;
+        QString requestedMode;
+        QString provider;
+        QString modelPath;
+        QString error;
+    };
+
+    struct RuntimeMaintenanceTaskResult {
+        uint64_t token = 0;
+        QString databasePath;
+        fsc::core::MaintenanceResult result;
+        QString error;
+    };
+
 #ifdef FSC_ENABLE_ONNX
+    struct RuntimeLegacyProgressEvent {
+        QString message;
+        int current = 0;
+        int total = 0;
+    };
+
+    struct RuntimeLegacyTaskState {
+        std::mutex mutex;
+        std::deque<RuntimeLegacyProgressEvent> events;
+    };
+
+    struct RuntimeLegacyTaskResult {
+        uint64_t token = 0;
+        QString sourcePath;
+        QString outputPath;
+        fsc::legacy::LegacyConversionSummary summary;
+        QString error;
+    };
+
     struct LibraryImportProgressEvent {
         int current = 0;
         int total = 0;
@@ -3528,55 +3638,75 @@ private:
     void buildRuntimeTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(24, 18, 24, 18);
+        layout->setSpacing(10);
+
+        auto* title = new QLabel("Runtime", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
 
         auto* engineBox = new QGroupBox("Engine", page);
         auto* engineForm = new QFormLayout(engineBox);
         runtimeModeCombo_ = new QComboBox(engineBox);
+        runtimeModeCombo_->setObjectName("RuntimeMode");
         runtimeModeCombo_->addItem("Auto", "auto");
         runtimeModeCombo_->addItem("CPU", "cpu");
         runtimeModeCombo_->addItem("DirectML", "directml");
         runtimeModeCombo_->setCurrentIndex(0);
         runtimeBuildLabel_ = new QLabel(engineBox);
         runtimeProviderLabel_ = new QLabel(engineBox);
+        runtimeProviderLabel_->setObjectName("RuntimeProvider");
+        runtimeModelRootLabel_ = new QLabel(engineBox);
+        runtimeModelRootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        runtimeModelRootLabel_->setWordWrap(true);
         runtimeNoteLabel_ = new QLabel(engineBox);
         runtimeNoteLabel_->setWordWrap(true);
-        auto* refreshButton = new QPushButton("Refresh Runtime", engineBox);
+        runtimeNoteLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        runtimeLoadButton_ = new QPushButton("Load Runtime", engineBox);
+        runtimeLoadButton_->setObjectName("RuntimeLoad");
         engineForm->addRow("Mode", runtimeModeCombo_);
         engineForm->addRow("Build", runtimeBuildLabel_);
         engineForm->addRow("Provider", runtimeProviderLabel_);
+        engineForm->addRow("Model root", runtimeModelRootLabel_);
         engineForm->addRow("Status", runtimeNoteLabel_);
-        engineForm->addRow("", refreshButton);
+        engineForm->addRow("", runtimeLoadButton_);
         layout->addWidget(engineBox);
 
         auto* databaseBox = new QGroupBox("Current Database", page);
         auto* databaseForm = new QFormLayout(databaseBox);
         runtimeDatabasePathLabel_ = new QLabel("--", databaseBox);
         runtimeDatabasePathLabel_->setWordWrap(true);
+        runtimeDatabasePathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         runtimeDatabaseStatsLabel_ = new QLabel("--", databaseBox);
         runtimeDatabaseStatsLabel_->setWordWrap(true);
-        auto* refreshDatabaseButton = new QPushButton("Refresh Database Stats", databaseBox);
+        runtimeRefreshDatabaseButton_ = new QPushButton("Refresh Database Stats", databaseBox);
+        runtimeRefreshDatabaseButton_->setObjectName("RuntimeRefreshDatabase");
         databaseForm->addRow("Path", runtimeDatabasePathLabel_);
         databaseForm->addRow("Stats", runtimeDatabaseStatsLabel_);
-        databaseForm->addRow("", refreshDatabaseButton);
+        databaseForm->addRow("", runtimeRefreshDatabaseButton_);
         layout->addWidget(databaseBox);
 
         auto* maintenanceBox = new QGroupBox("Maintenance", page);
         auto* maintenanceLayout = new QGridLayout(maintenanceBox);
-        auto* integrityButton = new QPushButton("Check Integrity", maintenanceBox);
-        auto* backupButton = new QPushButton("Backup DB", maintenanceBox);
-        auto* checkpointButton = new QPushButton("Checkpoint WAL", maintenanceBox);
-        auto* vacuumButton = new QPushButton("VACUUM", maintenanceBox);
+        runtimeIntegrityButton_ = new QPushButton("Check Integrity", maintenanceBox);
+        runtimeIntegrityButton_->setObjectName("RuntimeIntegrity");
+        runtimeBackupButton_ = new QPushButton("Backup DB", maintenanceBox);
+        runtimeBackupButton_->setObjectName("RuntimeBackup");
+        runtimeCheckpointButton_ = new QPushButton("Checkpoint WAL", maintenanceBox);
+        runtimeCheckpointButton_->setObjectName("RuntimeCheckpoint");
+        runtimeVacuumButton_ = new QPushButton("VACUUM", maintenanceBox);
+        runtimeVacuumButton_->setObjectName("RuntimeVacuum");
         runtimeMaintenanceLog_ = new QTextEdit(maintenanceBox);
+        runtimeMaintenanceLog_->setObjectName("RuntimeMaintenanceLog");
         runtimeMaintenanceLog_->setReadOnly(true);
-        runtimeMaintenanceLog_->setMinimumHeight(120);
+        runtimeMaintenanceLog_->setMinimumHeight(90);
         runtimeMaintenanceLog_->setPlaceholderText("Runtime operation results");
-        maintenanceLayout->addWidget(integrityButton, 0, 0);
-        maintenanceLayout->addWidget(backupButton, 0, 1);
-        maintenanceLayout->addWidget(checkpointButton, 0, 2);
-        maintenanceLayout->addWidget(vacuumButton, 0, 3);
+        maintenanceLayout->addWidget(runtimeIntegrityButton_, 0, 0);
+        maintenanceLayout->addWidget(runtimeBackupButton_, 0, 1);
+        maintenanceLayout->addWidget(runtimeCheckpointButton_, 0, 2);
+        maintenanceLayout->addWidget(runtimeVacuumButton_, 0, 3);
         maintenanceLayout->addWidget(runtimeMaintenanceLog_, 1, 0, 1, 4);
-        layout->addWidget(maintenanceBox);
+        layout->addWidget(maintenanceBox, 1);
 
         auto* legacyBox = new QGroupBox("Legacy", page);
         auto* legacyLayout = new QVBoxLayout(legacyBox);
@@ -3586,7 +3716,9 @@ private:
             legacyBox);
         legacyInfo->setWordWrap(true);
         runtimeLegacyConvertButton_ = new QPushButton("Convert Legacy DTB", legacyBox);
+        runtimeLegacyConvertButton_->setObjectName("RuntimeLegacyConvert");
         runtimeLegacyProgressBar_ = new QProgressBar(legacyBox);
+        runtimeLegacyProgressBar_->setObjectName("RuntimeLegacyProgress");
         runtimeLegacyProgressBar_->setRange(0, 1);
         runtimeLegacyProgressBar_->setValue(0);
         runtimeLegacyProgressBar_->setTextVisible(true);
@@ -3594,17 +3726,21 @@ private:
         legacyLayout->addWidget(runtimeLegacyConvertButton_, 0, Qt::AlignLeft);
         legacyLayout->addWidget(runtimeLegacyProgressBar_);
         layout->addWidget(legacyBox);
-        layout->addStretch(1);
         addMainTab(page, "Runtime");
 
-        connect(refreshButton, &QPushButton::clicked, this, [this] { refreshRuntimeInfo(); });
-        connect(refreshDatabaseButton, &QPushButton::clicked, this, [this] { refreshRuntimeDatabaseInfo(); });
-        connect(integrityButton, &QPushButton::clicked, this, [this] { runRuntimeIntegrityCheck(); });
-        connect(backupButton, &QPushButton::clicked, this, [this] { runRuntimeBackup(); });
-        connect(checkpointButton, &QPushButton::clicked, this, [this] { runRuntimeCheckpoint(); });
-        connect(vacuumButton, &QPushButton::clicked, this, [this] { runRuntimeVacuum(); });
+#ifdef FSC_ENABLE_ONNX
+        runtimeLegacyProgressTimer_ = new QTimer(this);
+        runtimeLegacyProgressTimer_->setInterval(50);
+        connect(runtimeLegacyProgressTimer_, &QTimer::timeout, this, [this] { drainRuntimeLegacyProgress(); });
+#endif
+        connect(runtimeLoadButton_, &QPushButton::clicked, this, [this] { probeRuntime(); });
+        connect(runtimeRefreshDatabaseButton_, &QPushButton::clicked, this, [this] { refreshRuntimeDatabaseInfo(); });
+        connect(runtimeIntegrityButton_, &QPushButton::clicked, this, [this] { runRuntimeIntegrityCheck(); });
+        connect(runtimeBackupButton_, &QPushButton::clicked, this, [this] { runRuntimeBackup(); });
+        connect(runtimeCheckpointButton_, &QPushButton::clicked, this, [this] { runRuntimeCheckpoint(); });
+        connect(runtimeVacuumButton_, &QPushButton::clicked, this, [this] { runRuntimeVacuum(); });
         connect(runtimeLegacyConvertButton_, &QPushButton::clicked, this, [this] { runRuntimeLegacyConversion(); });
-        connect(runtimeModeCombo_, &QComboBox::currentTextChanged, this, [this] {
+        connect(runtimeModeCombo_, &QComboBox::currentIndexChanged, this, [this] {
             refreshRuntimeInfo();
         });
         refreshRuntimeInfo();
@@ -4677,7 +4813,8 @@ private:
     }
 
     void refreshRuntimeInfo() {
-        if (runtimeBuildLabel_ == nullptr || runtimeProviderLabel_ == nullptr || runtimeNoteLabel_ == nullptr) {
+        if (runtimeBuildLabel_ == nullptr || runtimeProviderLabel_ == nullptr || runtimeNoteLabel_ == nullptr ||
+            runtimeModelRootLabel_ == nullptr) {
             return;
         }
 #ifdef FSC_ENABLE_ONNX
@@ -4686,16 +4823,103 @@ private:
         runtimeBuildLabel_->setText("ONNX Runtime disabled");
 #endif
         const auto mode = selectedRuntimeMode();
-        runtimeProviderLabel_->setText(qs(fsc::vision::toString(mode)));
+        const QString modeText = qs(fsc::vision::toString(mode));
+        runtimeModelRootLabel_->setText(modelRootPath_);
+        const bool probeMatchesSelection = runtimeLastProbeOk_ &&
+            runtimeLastProbeMode_ == (runtimeModeCombo_ == nullptr ? QString("auto") : runtimeModeCombo_->currentData().toString()) &&
+            runtimeLastProbeModelRoot_ == modelRootPath_;
+        runtimeProviderLabel_->setText(probeMatchesSelection
+            ? runtimeActualProvider_
+            : QString("Not tested (%1)").arg(modeText));
 #ifdef FSC_ONNXRUNTIME_HAS_DML
         runtimeNoteLabel_->setText(
-            "Import, Compare, and Camera use this setting when creating native InsightFace sessions. "
+            "Import, Search, Compare, Camera, and legacy conversion use this setting. "
             "Auto tries DirectML first and falls back to CPU if unavailable.");
 #else
         runtimeNoteLabel_->setText(
-            "Import, Compare, and Camera use this setting when creating native InsightFace sessions. "
+            "Import, Search, Compare, Camera, and legacy conversion use this setting. "
             "This build does not include the DirectML-enabled ONNX Runtime package, so use CPU or rebuild the DirectML flavor.");
 #endif
+    }
+
+    void probeRuntime() {
+        if (runtimeProbeActive_) {
+            return;
+        }
+        const uint64_t token = ++runtimeProbeToken_;
+        const QString modelRoot = modelRootPath_;
+        const QString requestedMode = runtimeModeCombo_ == nullptr
+            ? QString("auto")
+            : runtimeModeCombo_->currentData().toString();
+        const auto mode = selectedRuntimeMode();
+        runtimeProbeActive_ = true;
+        runtimeLastProbeOk_ = false;
+        if (runtimeLoadButton_ != nullptr) {
+            runtimeLoadButton_->setEnabled(false);
+        }
+        if (runtimeModeCombo_ != nullptr) {
+            runtimeModeCombo_->setEnabled(false);
+        }
+        if (runtimeProviderLabel_ != nullptr) {
+            runtimeProviderLabel_->setText("Loading...");
+        }
+        if (runtimeNoteLabel_ != nullptr) {
+            runtimeNoteLabel_->setText("Creating an ONNX Runtime session and checking the actual execution provider...");
+        }
+        statusBar()->showMessage("Loading runtime...");
+
+        auto* watcher = new QFutureWatcher<RuntimeProbeTaskResult>(this);
+        connect(watcher, &QFutureWatcher<RuntimeProbeTaskResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            if (result.token != runtimeProbeToken_) {
+                return;
+            }
+            runtimeProbeActive_ = false;
+            if (runtimeLoadButton_ != nullptr) {
+                runtimeLoadButton_->setEnabled(true);
+            }
+            if (runtimeModeCombo_ != nullptr) {
+                runtimeModeCombo_->setEnabled(true);
+            }
+            if (!result.error.isEmpty()) {
+                runtimeLastProbeOk_ = false;
+                runtimeActualProvider_.clear();
+                runtimeProviderLabel_->setText("Failed");
+                runtimeNoteLabel_->setText(result.error);
+                statusBar()->showMessage("Runtime loading failed");
+                if (!runtimeProbeSmokeStarted_) {
+                    showError(std::runtime_error(result.error.toUtf8().constData()));
+                }
+                return;
+            }
+            runtimeLastProbeOk_ = true;
+            runtimeActualProvider_ = result.provider;
+            runtimeLastProbeMode_ = result.requestedMode;
+            runtimeLastProbeModelRoot_ = result.modelRoot;
+            runtimeProviderLabel_->setText(result.provider);
+            runtimeModelRootLabel_->setText(result.modelRoot);
+            runtimeNoteLabel_->setText(QString("Runtime loaded successfully with %1. Model: %2")
+                                           .arg(result.provider, result.modelPath));
+            statusBar()->showMessage(QString("Runtime loaded: %1").arg(result.provider));
+        });
+        watcher->setFuture(QtConcurrent::run([token, modelRoot, requestedMode, mode] {
+            RuntimeProbeTaskResult result;
+            result.token = token;
+            result.modelRoot = modelRoot;
+            result.requestedMode = requestedMode;
+            try {
+                const auto models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(modelRoot));
+                const fsc::vision::InsightFaceEngine engine(models, mode);
+                result.provider = engine.actualRuntimeMode() == fsc::vision::RuntimeMode::DirectMl
+                    ? QString("DmlExecutionProvider")
+                    : QString("CPUExecutionProvider");
+                result.modelPath = QString::fromStdWString(models.rootDirectory.wstring());
+            } catch (const std::exception& ex) {
+                result.error = QString::fromUtf8(ex.what());
+            }
+            return result;
+        }));
     }
 
     void refreshRuntimeDatabaseInfo() {
@@ -4708,7 +4932,7 @@ private:
             return;
         }
         const auto stats = database_->statistics();
-        runtimeDatabasePathLabel_->setText(qs(database_->path().string()));
+        runtimeDatabasePathLabel_->setText(QString::fromStdWString(database_->path().wstring()));
         runtimeDatabaseStatsLabel_->setText(
             QString("v%1 | faces %2 | people %3 | tags %4 | review %5 | ignored %6 | avg quality %7")
                 .arg(qs(stats.formatVersion))
@@ -4744,48 +4968,106 @@ private:
         return false;
     }
 
-    void runRuntimeIntegrityCheck() {
-        if (!requireRuntimeDatabase()) {
+    void setRuntimeMaintenanceControlsEnabled(bool enabled) {
+        for (auto* button : {
+                 runtimeIntegrityButton_,
+                 runtimeBackupButton_,
+                 runtimeCheckpointButton_,
+                 runtimeVacuumButton_}) {
+            if (button != nullptr) {
+                button->setEnabled(enabled);
+            }
+        }
+    }
+
+    void startRuntimeMaintenanceTask(const QString& action, const QString& outputPath = {}) {
+        if (!requireRuntimeDatabase() || runtimeMaintenanceActive_) {
             return;
         }
-        try {
-            appendMaintenanceResult(database_->checkIntegrity());
-        } catch (const std::exception& ex) {
-            showError(ex);
+        const uint64_t token = ++runtimeMaintenanceToken_;
+        const QString databasePath = QString::fromStdWString(database_->path().wstring());
+        runtimeMaintenanceActive_ = true;
+        runtimeLastMaintenanceOk_ = false;
+        setRuntimeMaintenanceControlsEnabled(false);
+        if (runtimeMaintenanceLog_ != nullptr) {
+            runtimeMaintenanceLog_->append(QString("Starting %1...").arg(action));
         }
+        statusBar()->showMessage(QString("Running database maintenance: %1...").arg(action));
+
+        auto* watcher = new QFutureWatcher<RuntimeMaintenanceTaskResult>(this);
+        connect(watcher, &QFutureWatcher<RuntimeMaintenanceTaskResult>::finished, this, [this, watcher] {
+            auto task = watcher->result();
+            watcher->deleteLater();
+            if (task.token != runtimeMaintenanceToken_) {
+                return;
+            }
+            runtimeMaintenanceActive_ = false;
+            setRuntimeMaintenanceControlsEnabled(true);
+            if (!task.error.isEmpty()) {
+                runtimeLastMaintenanceOk_ = false;
+                if (runtimeMaintenanceLog_ != nullptr) {
+                    runtimeMaintenanceLog_->append("FAILED: " + task.error);
+                }
+                statusBar()->showMessage("Database maintenance failed");
+                if (!runtimeMaintenanceSmokeStarted_) {
+                    showError(std::runtime_error(task.error.toUtf8().constData()));
+                }
+                return;
+            }
+            runtimeLastMaintenanceOk_ = task.result.ok;
+            appendMaintenanceResult(task.result);
+        });
+        watcher->setFuture(QtConcurrent::run([token, databasePath, action, outputPath] {
+            RuntimeMaintenanceTaskResult task;
+            task.token = token;
+            task.databasePath = databasePath;
+            try {
+                fsc::core::Database workerDatabase(pathFrom(databasePath));
+                if (action == "integrity") {
+                    task.result = workerDatabase.checkIntegrity();
+                } else if (action == "backup") {
+                    if (outputPath.trimmed().isEmpty()) {
+                        throw std::runtime_error("Backup output path is empty.");
+                    }
+                    task.result = workerDatabase.backupTo(pathFrom(outputPath));
+                } else if (action == "checkpoint") {
+                    task.result = workerDatabase.checkpointWal(true);
+                } else if (action == "vacuum") {
+                    task.result = workerDatabase.vacuum();
+                } else {
+                    throw std::runtime_error("Unknown maintenance action: " + action.toStdString());
+                }
+            } catch (const std::exception& ex) {
+                task.error = QString::fromUtf8(ex.what());
+            }
+            return task;
+        }));
+    }
+
+    void runRuntimeIntegrityCheck() {
+        startRuntimeMaintenanceTask("integrity");
     }
 
     void runRuntimeBackup() {
         if (!requireRuntimeDatabase()) {
             return;
         }
-        try {
-            const auto source = database_->path();
-            const auto suffix = source.extension().empty() ? ".fscdb" : source.extension().string();
-            const auto defaultOutput = source.parent_path() / (source.stem().string() + "_backup" + suffix);
-            const auto path = QFileDialog::getSaveFileName(
-                this,
-                "Save database backup",
-                qs(defaultOutput.string()),
-                "FSC Database (*.fscdb);;SQLite Database (*.sqlite *.db);;All Files (*)");
-            if (path.isEmpty()) {
-                return;
-            }
-            appendMaintenanceResult(database_->backupTo(pathFrom(path)));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        const auto source = database_->path();
+        const auto suffix = source.extension().empty() ? std::wstring(L".fscdb") : source.extension().wstring();
+        const auto defaultOutput = source.parent_path() / (source.stem().wstring() + L"_backup" + suffix);
+        const auto path = QFileDialog::getSaveFileName(
+            this,
+            "Save database backup",
+            QString::fromStdWString(defaultOutput.wstring()),
+            "FSC Database (*.fscdb);;SQLite Database (*.sqlite *.db);;All Files (*)");
+        if (path.isEmpty()) {
+            return;
         }
+        startRuntimeMaintenanceTask("backup", path);
     }
 
     void runRuntimeCheckpoint() {
-        if (!requireRuntimeDatabase()) {
-            return;
-        }
-        try {
-            appendMaintenanceResult(database_->checkpointWal(true));
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
+        startRuntimeMaintenanceTask("checkpoint");
     }
 
     void runRuntimeVacuum() {
@@ -4798,15 +5080,14 @@ private:
                 "VACUUM rewrites the database file and may take time on large libraries. Continue?") != QMessageBox::Yes) {
             return;
         }
-        try {
-            appendMaintenanceResult(database_->vacuum());
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
+        startRuntimeMaintenanceTask("vacuum");
     }
 
     void runRuntimeLegacyConversion(QString source = {}) {
 #ifdef FSC_ENABLE_ONNX
+        if (runtimeLegacyActive_) {
+            return;
+        }
         if (source.isEmpty()) {
             source = QFileDialog::getOpenFileName(
                 this,
@@ -4819,60 +5100,150 @@ private:
         }
         const auto sourcePath = pathFrom(source);
         const auto defaultOutput = sourcePath.parent_path() /
-            (sourcePath.stem().string() + "_insightface.fscdb");
+            (sourcePath.stem().wstring() + L"_insightface.fscdb");
         const auto output = QFileDialog::getSaveFileName(
             this,
             "Save converted database",
-            qs(defaultOutput.string()),
+            QString::fromStdWString(defaultOutput.wstring()),
             "FSC Database (*.fscdb);;All Files (*)");
         if (output.isEmpty()) {
             return;
         }
-
-        if (runtimeLegacyConvertButton_ != nullptr) {
-            runtimeLegacyConvertButton_->setEnabled(false);
-        }
-        if (runtimeLegacyProgressBar_ != nullptr) {
-            runtimeLegacyProgressBar_->setRange(0, 1);
-            runtimeLegacyProgressBar_->setValue(0);
-        }
-        try {
-            fsc::legacy::LegacyConversionOptions options;
-            options.models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(defaultModelRoot()));
-            options.runtimeMode = selectedRuntimeMode();
-            options.progress = [this](const std::string& message, int current, int total) {
-                if (runtimeLegacyProgressBar_ != nullptr) {
-                    runtimeLegacyProgressBar_->setRange(0, std::max(1, total));
-                    runtimeLegacyProgressBar_->setValue(current);
-                }
-                if (runtimeMaintenanceLog_ != nullptr &&
-                    (total <= 50 || current == total || current % 10 == 0 || message.find("skipped") != std::string::npos)) {
-                    runtimeMaintenanceLog_->append(QString("[%1/%2] %3").arg(current).arg(total).arg(qs(message)));
-                }
-                statusBar()->showMessage(QString("Converting legacy DTB: %1/%2").arg(current).arg(total));
-                QApplication::processEvents();
-            };
-            const auto summary = fsc::legacy::convertLegacyDtb(sourcePath, pathFrom(output), options);
-            if (runtimeMaintenanceLog_ != nullptr) {
-                runtimeMaintenanceLog_->append(
-                    QString("Converted legacy DTB: saved %1, skipped %2, total %3\n%4")
-                        .arg(summary.facesSaved)
-                        .arg(summary.skippedRows)
-                        .arg(summary.rowsTotal)
-                        .arg(qs(summary.outputPath.string())));
-            }
-            openDatabase(qs(summary.outputPath.string()));
-            statusBar()->showMessage("Legacy DTB conversion complete");
-        } catch (const std::exception& ex) {
-            showError(ex);
-        }
-        if (runtimeLegacyConvertButton_ != nullptr) {
-            runtimeLegacyConvertButton_->setEnabled(true);
-        }
+        startRuntimeLegacyConversion(source, output);
 #else
         showError(std::runtime_error("This build does not include ONNX Runtime, so legacy DTB conversion is unavailable."));
 #endif
     }
+
+#ifdef FSC_ENABLE_ONNX
+    void startRuntimeLegacyConversion(const QString& sourcePath, const QString& outputPath) {
+        if (runtimeLegacyActive_) {
+            return;
+        }
+        const uint64_t token = ++runtimeLegacyToken_;
+        const QString modelRoot = modelRootPath_;
+        const auto runtimeMode = selectedRuntimeMode();
+        auto state = std::make_shared<RuntimeLegacyTaskState>();
+        runtimeLegacyTaskState_ = state;
+        runtimeLegacyActive_ = true;
+        runtimeLastLegacyOk_ = false;
+        if (runtimeLegacyConvertButton_ != nullptr) {
+            runtimeLegacyConvertButton_->setEnabled(false);
+        }
+        if (runtimeLegacyProgressBar_ != nullptr) {
+            runtimeLegacyProgressBar_->setRange(0, 0);
+            runtimeLegacyProgressBar_->setValue(0);
+        }
+        if (runtimeMaintenanceLog_ != nullptr) {
+            runtimeMaintenanceLog_->append(QString("Converting legacy database:\n%1\n%2").arg(sourcePath, outputPath));
+        }
+        if (runtimeLegacyProgressTimer_ != nullptr) {
+            runtimeLegacyProgressTimer_->start();
+        }
+        statusBar()->showMessage("Converting legacy .dtb...");
+
+        auto* watcher = new QFutureWatcher<RuntimeLegacyTaskResult>(this);
+        connect(watcher, &QFutureWatcher<RuntimeLegacyTaskResult>::finished, this, [this, watcher] {
+            auto task = watcher->result();
+            watcher->deleteLater();
+            if (task.token != runtimeLegacyToken_) {
+                return;
+            }
+            drainRuntimeLegacyProgress();
+            if (runtimeLegacyProgressTimer_ != nullptr) {
+                runtimeLegacyProgressTimer_->stop();
+            }
+            runtimeLegacyActive_ = false;
+            if (runtimeLegacyConvertButton_ != nullptr) {
+                runtimeLegacyConvertButton_->setEnabled(true);
+            }
+            if (!task.error.isEmpty()) {
+                runtimeLastLegacyOk_ = false;
+                if (runtimeLegacyProgressBar_ != nullptr) {
+                    runtimeLegacyProgressBar_->setRange(0, 1);
+                    runtimeLegacyProgressBar_->setValue(0);
+                }
+                if (runtimeMaintenanceLog_ != nullptr) {
+                    runtimeMaintenanceLog_->append(
+                        QString("Legacy conversion failed: %1\nPartial output, if any, remains at %2")
+                            .arg(task.error, task.outputPath));
+                }
+                statusBar()->showMessage("Legacy DTB conversion failed");
+                if (!runtimeLegacySmokeStarted_) {
+                    showError(std::runtime_error(task.error.toUtf8().constData()));
+                }
+                return;
+            }
+
+            runtimeLastLegacyOk_ = true;
+            if (runtimeLegacyProgressBar_ != nullptr) {
+                runtimeLegacyProgressBar_->setRange(0, std::max(1, task.summary.rowsTotal));
+                runtimeLegacyProgressBar_->setValue(task.summary.rowsTotal);
+            }
+            if (runtimeMaintenanceLog_ != nullptr) {
+                runtimeMaintenanceLog_->append(
+                    QString("Converted legacy DTB: saved %1, skipped %2, total %3\n%4")
+                        .arg(task.summary.facesSaved)
+                        .arg(task.summary.skippedRows)
+                        .arg(task.summary.rowsTotal)
+                        .arg(QString::fromStdWString(task.summary.outputPath.wstring())));
+            }
+            openDatabase(QString::fromStdWString(task.summary.outputPath.wstring()));
+            statusBar()->showMessage("Legacy DTB conversion complete");
+        });
+        watcher->setFuture(QtConcurrent::run([
+            token,
+            sourcePath,
+            outputPath,
+            modelRoot,
+            runtimeMode,
+            state] {
+            RuntimeLegacyTaskResult task;
+            task.token = token;
+            task.sourcePath = sourcePath;
+            task.outputPath = outputPath;
+            try {
+                fsc::legacy::LegacyConversionOptions options;
+                options.models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(modelRoot));
+                options.runtimeMode = runtimeMode;
+                options.progress = [state](const std::string& message, int current, int total) {
+                    std::lock_guard lock(state->mutex);
+                    state->events.push_back({qs(message), current, total});
+                };
+                task.summary = fsc::legacy::convertLegacyDtb(pathFrom(sourcePath), pathFrom(outputPath), options);
+            } catch (const std::exception& ex) {
+                task.error = QString::fromUtf8(ex.what());
+            }
+            return task;
+        }));
+    }
+
+    void drainRuntimeLegacyProgress() {
+        const auto state = runtimeLegacyTaskState_;
+        if (!state) {
+            return;
+        }
+        std::deque<RuntimeLegacyProgressEvent> events;
+        {
+            std::lock_guard lock(state->mutex);
+            events.swap(state->events);
+        }
+        for (const auto& event : events) {
+            if (runtimeLegacyProgressBar_ != nullptr) {
+                runtimeLegacyProgressBar_->setRange(0, std::max(1, event.total));
+                runtimeLegacyProgressBar_->setValue(event.current);
+            }
+            if (runtimeMaintenanceLog_ != nullptr &&
+                (event.total <= 50 || event.current == event.total || event.current % 10 == 0 ||
+                 event.message.contains("skipped", Qt::CaseInsensitive))) {
+                runtimeMaintenanceLog_->append(
+                    QString("[%1/%2] %3").arg(event.current).arg(event.total).arg(event.message));
+            }
+            statusBar()->showMessage(
+                QString("Converting legacy DTB: %1/%2").arg(event.current).arg(event.total));
+        }
+    }
+#endif
 
     void applyReviewState(const std::string& state, bool ignored, const std::string& notes = {}) {
         if (!database_) {
@@ -7393,12 +7764,38 @@ private:
     QComboBox* runtimeModeCombo_ = nullptr;
     QLabel* runtimeBuildLabel_ = nullptr;
     QLabel* runtimeProviderLabel_ = nullptr;
+    QLabel* runtimeModelRootLabel_ = nullptr;
     QLabel* runtimeNoteLabel_ = nullptr;
+    QPushButton* runtimeLoadButton_ = nullptr;
     QLabel* runtimeDatabasePathLabel_ = nullptr;
     QLabel* runtimeDatabaseStatsLabel_ = nullptr;
+    QPushButton* runtimeRefreshDatabaseButton_ = nullptr;
     QTextEdit* runtimeMaintenanceLog_ = nullptr;
+    QPushButton* runtimeIntegrityButton_ = nullptr;
+    QPushButton* runtimeBackupButton_ = nullptr;
+    QPushButton* runtimeCheckpointButton_ = nullptr;
+    QPushButton* runtimeVacuumButton_ = nullptr;
     QPushButton* runtimeLegacyConvertButton_ = nullptr;
     QProgressBar* runtimeLegacyProgressBar_ = nullptr;
+    uint64_t runtimeProbeToken_ = 0;
+    bool runtimeProbeActive_ = false;
+    bool runtimeProbeSmokeStarted_ = false;
+    bool runtimeLastProbeOk_ = false;
+    QString runtimeActualProvider_;
+    QString runtimeLastProbeMode_;
+    QString runtimeLastProbeModelRoot_;
+    uint64_t runtimeMaintenanceToken_ = 0;
+    bool runtimeMaintenanceActive_ = false;
+    bool runtimeMaintenanceSmokeStarted_ = false;
+    bool runtimeLastMaintenanceOk_ = false;
+#ifdef FSC_ENABLE_ONNX
+    QTimer* runtimeLegacyProgressTimer_ = nullptr;
+    std::shared_ptr<RuntimeLegacyTaskState> runtimeLegacyTaskState_;
+    uint64_t runtimeLegacyToken_ = 0;
+    bool runtimeLegacyActive_ = false;
+    bool runtimeLegacySmokeStarted_ = false;
+    bool runtimeLastLegacyOk_ = false;
+#endif
     QString modelRootPath_;
     std::vector<ClusterSummary> clusters_;
     std::vector<fsc::core::IdentityProfile> cameraIdentityProfiles_;
@@ -8126,6 +8523,87 @@ int main(int argc, char** argv) {
         return outcome;
     }
 
+    if (argc >= 4 && std::string(argv[1]) == "--runtime-probe-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        window.startRuntimeProbeSmoke(
+            QString::fromLocal8Bit(argv[2]),
+            QString::fromLocal8Bit(argv[3]));
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.runtimeProbeSmokeFinished()) {
+                return;
+            }
+            const QString expectedProvider = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString();
+            const bool providerMatches = expectedProvider.isEmpty() ||
+                window.runtimeActualProviderForSmoke().contains(expectedProvider, Qt::CaseInsensitive);
+            outcome = window.runtimeProbeSmokeReady() && providerMatches ? 0 : 4;
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
+    if (argc >= 4 && std::string(argv[1]) == "--runtime-maintenance-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString action = QString::fromLocal8Bit(argv[3]);
+        const QString outputPath = argc >= 5 ? QString::fromLocal8Bit(argv[4]) : QString();
+        MainWindow window;
+        window.startRuntimeMaintenanceSmoke(databasePath, action, outputPath);
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.runtimeMaintenanceSmokeFinished()) {
+                return;
+            }
+            const bool outputReady = action != "backup" || QFileInfo::exists(outputPath);
+            outcome = window.runtimeMaintenanceSmokeReady() && outputReady ? 0 : 4;
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
+#ifdef FSC_ENABLE_ONNX
+    if (argc >= 6 && std::string(argv[1]) == "--runtime-legacy-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        window.startRuntimeLegacySmoke(
+            QString::fromLocal8Bit(argv[2]),
+            QString::fromLocal8Bit(argv[3]),
+            QString::fromLocal8Bit(argv[4]),
+            QString::fromLocal8Bit(argv[5]));
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.runtimeLegacySmokeFinished()) {
+                return;
+            }
+            outcome = window.runtimeLegacySmokeReady() && QFileInfo::exists(QString::fromLocal8Bit(argv[3])) ? 0 : 4;
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(300000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+#endif
+
     if (argc >= 5 && std::string(argv[1]) == "--page-render-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
@@ -8249,11 +8727,24 @@ int main(int argc, char** argv) {
             window.findChild<QWidget*>("CameraMatchPreview") != nullptr &&
             window.findChild<QToolButton*>("CameraMatchFocus") != nullptr &&
             window.findChild<QTableWidget*>("CameraResultTable") != nullptr;
+        const auto* runtimeLoad = window.findChild<QPushButton*>("RuntimeLoad");
+        const auto* runtimeRefreshDatabase = window.findChild<QPushButton*>("RuntimeRefreshDatabase");
+        const auto* runtimeIntegrity = window.findChild<QPushButton*>("RuntimeIntegrity");
+        const auto* runtimeLegacy = window.findChild<QPushButton*>("RuntimeLegacyConvert");
+        const bool runtimeControlsPresent =
+            window.findChild<QComboBox*>("RuntimeMode") != nullptr &&
+            window.findChild<QLabel*>("RuntimeProvider") != nullptr &&
+            window.findChild<QTextEdit*>("RuntimeMaintenanceLog") != nullptr &&
+            window.findChild<QProgressBar*>("RuntimeLegacyProgress") != nullptr &&
+            runtimeLoad != nullptr && runtimeLoad->text() == translatedText("Load Runtime", language) &&
+            runtimeRefreshDatabase != nullptr && runtimeRefreshDatabase->text() == translatedText("Refresh Database Stats", language) &&
+            runtimeIntegrity != nullptr && runtimeIntegrity->text() == translatedText("Check Integrity", language) &&
+            runtimeLegacy != nullptr && runtimeLegacy->text() == translatedText("Convert Legacy DTB", language);
         for (auto* list : window.findChildren<QListWidget*>()) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
                 legacyActionPresent && libraryControlsPresent && peopleControlsPresent && reviewControlsPresent && searchControlsPresent &&
-                clustersControlsPresent && compareControlsPresent && cameraControlsPresent) {
+                clustersControlsPresent && compareControlsPresent && cameraControlsPresent && runtimeControlsPresent) {
                 return 0;
             }
         }

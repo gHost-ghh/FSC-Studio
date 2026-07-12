@@ -41,8 +41,8 @@ continuing that prototype.
 - Camera keeps native capture at a 33 ms UI cadence while recognition runs on a background worker at the configured interval. Database faces and Identity Gallery profiles are immutable snapshots refreshed only when the database changes; recent boxes, smoothed identities, similar hits, and a focusable best-match preview update on the UI thread.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Clusters mirrors the Python parameter band and three-column workflow, supports max-face/min-quality/unassigned/ignored filters, previews selected members with a compact face-focus control, and batch-assigns a selected cluster. Clustering uses OpenCV block matrix multiplication when available, while clustering, transactional assignment, and identity-profile rebuilding run off the UI thread.
-- Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
-- Runtime can also convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`.
+- Runtime loads a real ONNX session on a worker and reports the actual CPU or DirectML execution provider instead of echoing the requested mode. Auto now falls back across the complete session-initialization path. Integrity check, backup, WAL checkpoint, and VACUUM also run on worker database connections.
+- Runtime can convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`. Conversion runs off the UI thread and reports progress through a thread-safe queue.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
 Track that explicitly in `docs/python-ui-parity.md`.
@@ -122,13 +122,18 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-suggestion-switch-ui-smoke D:\FSC\native\FscStudio\out\probe\review-switch-smoke.fscdb 1 2
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --clusters-ui-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --clusters-assign-ui-smoke D:\FSC\native\FscStudio\out\probe\clusters-assign-smoke.fscdb NativeClusterUiSmoke
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --runtime-probe-ui-smoke D:\FSC\model\insightface\models auto
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --runtime-maintenance-ui-smoke D:\FSC\native\FscStudio\out\probe\runtime-maintenance-smoke.fscdb integrity
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --runtime-maintenance-ui-smoke D:\FSC\native\FscStudio\out\probe\runtime-maintenance-smoke.fscdb backup D:\FSC\native\FscStudio\out\probe\runtime-backup-smoke.fscdb
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --runtime-legacy-ui-smoke D:\path\legacy.dtb D:\path\converted.fscdb D:\FSC\model\insightface\models cpu
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --page-render-smoke D:\FSC\new_full.fscdb Library D:\FSC\native\FscStudio\out\probe\library.png 1180 760
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --overview-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 
 Use a copied database for `--review-smoke` and `--clusters-assign-ui-smoke`,
-because they write review/identity state. Use a copied database for Library
+because they write review/identity state. Use a copied database for Runtime
+checkpoint/VACUUM maintenance smokes. Use a copied database for Library
 `--page-render-smoke` runs as well, because selecting the first row may populate
 a missing Dense Mesh cache.
 

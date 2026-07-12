@@ -337,7 +337,27 @@ public:
             throw std::runtime_error("Missing InsightFace model: " + missing.front().string());
         }
 
-        auto options = sessionOptionsFor(mode_);
+        if (mode_ == RuntimeMode::Auto) {
+            try {
+                initializeSessions(RuntimeMode::DirectMl);
+                actualMode_ = RuntimeMode::DirectMl;
+            } catch (...) {
+                resetSessions();
+                initializeSessions(RuntimeMode::Cpu);
+                actualMode_ = RuntimeMode::Cpu;
+            }
+        } else {
+            initializeSessions(mode_);
+            actualMode_ = mode_;
+        }
+    }
+
+    [[nodiscard]] RuntimeMode actualRuntimeMode() const noexcept {
+        return actualMode_;
+    }
+
+    void initializeSessions(RuntimeMode mode) {
+        auto options = sessionOptionsFor(mode);
         detector_ = std::make_unique<Ort::Session>(env_, widePath(models_.detectionModelPath).c_str(), options);
         recognizer_ = std::make_unique<Ort::Session>(env_, widePath(models_.recognitionModelPath).c_str(), options);
         landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark2dModelPath).c_str(), options);
@@ -346,6 +366,17 @@ public:
         recognizerOutputNames_ = outputNames(*recognizer_, allocator_);
         landmark2dOutputNames_ = outputNames(*landmark2d_, allocator_);
         landmark3dOutputNames_ = outputNames(*landmark3d_, allocator_);
+    }
+
+    void resetSessions() {
+        detector_.reset();
+        recognizer_.reset();
+        landmark2d_.reset();
+        landmark3d_.reset();
+        detectorOutputNames_.clear();
+        recognizerOutputNames_.clear();
+        landmark2dOutputNames_.clear();
+        landmark3dOutputNames_.clear();
     }
 
     std::vector<Detection> detect(const RgbImage& image, float threshold, int maxFaces) const {
@@ -538,6 +569,7 @@ public:
 private:
     InsightFaceModelPaths models_;
     RuntimeMode mode_;
+    RuntimeMode actualMode_ = RuntimeMode::Cpu;
     Ort::Env env_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::unique_ptr<Ort::Session> detector_;
@@ -556,6 +588,10 @@ InsightFaceEngine::InsightFaceEngine(InsightFaceModelPaths models, RuntimeMode m
 InsightFaceEngine::~InsightFaceEngine() = default;
 InsightFaceEngine::InsightFaceEngine(InsightFaceEngine&&) noexcept = default;
 InsightFaceEngine& InsightFaceEngine::operator=(InsightFaceEngine&&) noexcept = default;
+
+RuntimeMode InsightFaceEngine::actualRuntimeMode() const noexcept {
+    return impl_->actualRuntimeMode();
+}
 
 std::vector<Detection> InsightFaceEngine::detect(const RgbImage& image, float detectionThreshold, int maxFaces) const {
     return impl_->detect(image, detectionThreshold, maxFaces);

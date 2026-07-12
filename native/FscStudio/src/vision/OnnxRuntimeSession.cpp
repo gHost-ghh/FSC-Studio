@@ -115,6 +115,19 @@ OnnxSessionInfo inspectOnnxModel(const std::filesystem::path& modelPath, Runtime
         throw std::runtime_error("ONNX model file does not exist: " + modelPath.string());
     }
 
+    if (mode == RuntimeMode::Auto) {
+        try {
+            auto info = inspectOnnxModel(modelPath, RuntimeMode::DirectMl);
+            info.requestedMode = RuntimeMode::Auto;
+            return info;
+        } catch (const std::exception& exception) {
+            auto info = inspectOnnxModel(modelPath, RuntimeMode::Cpu);
+            info.requestedMode = RuntimeMode::Auto;
+            info.provider += " (Auto fallback: " + std::string(exception.what()) + ')';
+            return info;
+        }
+    }
+
     Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "FSC Studio Native");
     std::string actualProvider;
     auto options = sessionOptionsFor(mode, actualProvider);

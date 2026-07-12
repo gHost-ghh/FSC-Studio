@@ -31,6 +31,8 @@ public:
     InsightFaceEngine(InsightFaceEngine&&) noexcept;
     InsightFaceEngine& operator=(InsightFaceEngine&&) noexcept;
 
+    [[nodiscard]] RuntimeMode actualRuntimeMode() const noexcept;
+
     [[nodiscard]] std::vector<Detection> detect(
         const RgbImage& image,
         float detectionThreshold = 0.55f,
