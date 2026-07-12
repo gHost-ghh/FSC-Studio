@@ -162,6 +162,25 @@ void databasePersonActionsRoundTrip() {
         const auto sourceId = database.upsertPerson("Source", "source notes");
         const auto targetId = database.upsertPerson("Target", "target notes");
         database.assignFaceToPerson(faceId, sourceId);
+        database.updateFaceReview(batchIds.front(), "open", true, "keep this note");
+        const int batchAssigned = database.assignFacesToPerson(
+            {batchIds.front(), batchIds.back(), batchIds.front()},
+            "Batch Person",
+            "batch-tag, alpha",
+            true);
+        assert(batchAssigned == 2);
+        const auto peopleAfterBatchAssignment = database.loadPeople();
+        const auto batchPerson = std::find_if(peopleAfterBatchAssignment.begin(), peopleAfterBatchAssignment.end(), [](const auto& person) {
+            return person.name == "Batch Person";
+        });
+        assert(batchPerson != peopleAfterBatchAssignment.end() && batchPerson->faceCount == 2);
+        const auto refreshedBatchFace = database.loadFace(batchIds.front());
+        assert(refreshedBatchFace.has_value());
+        assert(refreshedBatchFace->personName == "Batch Person");
+        assert(refreshedBatchFace->reviewState == "reviewed");
+        assert(!refreshedBatchFace->ignored);
+        assert(refreshedBatchFace->notes == "keep this note");
+        assert(refreshedBatchFace->tagText.find("batch-tag") != std::string::npos);
         database.renamePerson(sourceId, "Renamed", "renamed notes");
 
         const auto people = database.loadPeople();

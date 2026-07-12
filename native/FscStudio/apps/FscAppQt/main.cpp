@@ -85,6 +85,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -395,6 +396,12 @@ const TranslationTable& uiTranslations() {
             {"AI Suggested Person: not checked", "AI 建议人物：尚未检查"},
             {"AI Suggested Person: unknown", "AI 建议人物：未知"}, {"Checking identity profiles...", "正在检查身份模板..."},
             {"Confirm AI Person", "确认 AI 人物"}, {"Reject AI Suggestion", "拒绝 AI 建议"},
+            {"Similarity Groups", "相似人脸分组"}, {"Build Clusters", "构建聚类"},
+            {"Min size", "最小组数"}, {"Max faces", "最大人脸数"}, {"Unassigned only", "仅未归属"},
+            {"Cluster", "聚类"}, {"Mean", "平均值"}, {"Max", "最大值"}, {"Avg Quality", "平均质量"},
+            {"Known People", "已知人物"}, {"Batch Assign", "整组归类"}, {"Mark reviewed", "标记为已复核"},
+            {"Assign Cluster", "归类整组"}, {"No clusters built", "尚未构建聚类"},
+            {"Select a cluster", "请选择一个聚类"}, {"Building face clusters...", "正在构建人脸聚类..."},
             {"Filter", "筛选"}, {"Person", "人物"}, {"Tag", "标签"}, {"Include ignored", "包含已忽略"},
             {"Apply Filter", "应用筛选"}, {"Reset Filter", "重置筛选"}, {"Min quality", "最低质量"},
             {"Query", "查询"}, {"Open Database", "打开数据库"}, {"Use Library DB", "使用当前库"},
@@ -433,6 +440,12 @@ const TranslationTable& uiTranslations() {
             {"AI Suggested Person: not checked", "AI 推薦人物：未確認"},
             {"AI Suggested Person: unknown", "AI 推薦人物：不明"}, {"Checking identity profiles...", "識別プロファイルを確認中..."},
             {"Confirm AI Person", "AI 人物を確定"}, {"Reject AI Suggestion", "AI 推薦を拒否"},
+            {"Similarity Groups", "類似顔グループ"}, {"Build Clusters", "クラスタを作成"},
+            {"Min size", "最小サイズ"}, {"Max faces", "最大顔数"}, {"Unassigned only", "未割り当てのみ"},
+            {"Cluster", "クラスタ"}, {"Mean", "平均"}, {"Max", "最大"}, {"Avg Quality", "平均品質"},
+            {"Known People", "既知の人物"}, {"Batch Assign", "一括割り当て"}, {"Mark reviewed", "レビュー済みにする"},
+            {"Assign Cluster", "クラスタを割り当て"}, {"No clusters built", "クラスタ未作成"},
+            {"Select a cluster", "クラスタを選択"}, {"Building face clusters...", "顔クラスタを作成中..."},
             {"Filter", "フィルター"}, {"Person", "人物"}, {"Tag", "タグ"}, {"Include ignored", "無視を含める"},
             {"Apply Filter", "フィルターを適用"}, {"Reset Filter", "フィルターをリセット"}, {"Min quality", "最低品質"},
             {"Query", "検索画像"}, {"Open Database", "DBを開く"}, {"Use Library DB", "現在のDB"},
@@ -471,6 +484,12 @@ const TranslationTable& uiTranslations() {
             {"AI Suggested Person: not checked", "AI 추천 인물: 확인 안 됨"},
             {"AI Suggested Person: unknown", "AI 추천 인물: 알 수 없음"}, {"Checking identity profiles...", "식별 프로필 확인 중..."},
             {"Confirm AI Person", "AI 인물 확인"}, {"Reject AI Suggestion", "AI 추천 거부"},
+            {"Similarity Groups", "유사 얼굴 그룹"}, {"Build Clusters", "클러스터 생성"},
+            {"Min size", "최소 크기"}, {"Max faces", "최대 얼굴 수"}, {"Unassigned only", "미할당만"},
+            {"Cluster", "클러스터"}, {"Mean", "평균"}, {"Max", "최대"}, {"Avg Quality", "평균 품질"},
+            {"Known People", "알려진 인물"}, {"Batch Assign", "일괄 할당"}, {"Mark reviewed", "검토 완료로 표시"},
+            {"Assign Cluster", "클러스터 할당"}, {"No clusters built", "생성된 클러스터 없음"},
+            {"Select a cluster", "클러스터 선택"}, {"Building face clusters...", "얼굴 클러스터 생성 중..."},
             {"Filter", "필터"}, {"Person", "인물"}, {"Tag", "태그"}, {"Include ignored", "무시 항목 포함"},
             {"Apply Filter", "필터 적용"}, {"Reset Filter", "필터 초기화"}, {"Min quality", "최소 품질"},
             {"Query", "검색 이미지"}, {"Open Database", "DB 열기"}, {"Use Library DB", "현재 DB 사용"},
@@ -625,11 +644,14 @@ std::vector<ClusterSummary> buildClusters(
         }),
         records.end());
     if (maxFaces > 0 && records.size() > static_cast<size_t>(maxFaces)) {
-        std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
-            return left.qualityScore > right.qualityScore;
-        });
         records.resize(static_cast<size_t>(maxFaces));
     }
+    const size_t embeddingDim = records.empty() ? 0 : records.front().embedding.size();
+    records.erase(
+        std::remove_if(records.begin(), records.end(), [embeddingDim](const auto& record) {
+            return record.embedding.size() != embeddingDim;
+        }),
+        records.end());
     const int n = static_cast<int>(records.size());
     std::vector<int> parent(static_cast<size_t>(n));
     std::iota(parent.begin(), parent.end(), 0);
@@ -653,13 +675,37 @@ std::vector<ClusterSummary> buildClusters(
         }
     };
 
-    for (int i = 0; i < n; ++i) {
-        for (int j = i + 1; j < n; ++j) {
-            if (fsc::core::dot(records[static_cast<size_t>(i)].embedding, records[static_cast<size_t>(j)].embedding) >= threshold) {
-                unite(i, j);
+#ifdef FSC_ENABLE_OPENCV
+    cv::Mat embeddingMatrix(n, static_cast<int>(embeddingDim), CV_32F);
+    for (int row = 0; row < n; ++row) {
+        std::copy(
+            records[static_cast<size_t>(row)].embedding.begin(),
+            records[static_cast<size_t>(row)].embedding.end(),
+            embeddingMatrix.ptr<float>(row));
+    }
+    constexpr int kClusterBlockSize = 512;
+    for (int start = 0; start < n; start += kClusterBlockSize) {
+        const int end = std::min(n, start + kClusterBlockSize);
+        cv::Mat scores = embeddingMatrix.rowRange(start, end) * embeddingMatrix.t();
+        for (int localRow = 0; localRow < end - start; ++localRow) {
+            const int row = start + localRow;
+            const float* rowScores = scores.ptr<float>(localRow);
+            for (int other = row + 1; other < n; ++other) {
+                if (rowScores[other] >= threshold) {
+                    unite(row, other);
+                }
             }
         }
     }
+#else
+    for (int row = 0; row < n; ++row) {
+        for (int other = row + 1; other < n; ++other) {
+            if (fsc::core::dot(records[static_cast<size_t>(row)].embedding, records[static_cast<size_t>(other)].embedding) >= threshold) {
+                unite(row, other);
+            }
+        }
+    }
+#endif
 
     std::map<int, std::vector<int>> groups;
     for (int i = 0; i < n; ++i) {
@@ -687,28 +733,60 @@ std::vector<ClusterSummary> buildClusters(
         for (const auto& [name, _] : peopleCounts) {
             cluster.knownPeople.push_back(name);
         }
-        if (!peopleCounts.empty()) {
-            const auto bestPerson = std::max_element(peopleCounts.begin(), peopleCounts.end(), [](const auto& left, const auto& right) {
-                return left.second < right.second;
-            });
-            cluster.suggestedName = bestPerson->first;
+        if (peopleCounts.size() == 1) {
+            cluster.suggestedName = peopleCounts.begin()->first;
         }
-        const auto representative = std::max_element(cluster.members.begin(), cluster.members.end(), [](const auto& left, const auto& right) {
-            return left.qualityScore < right.qualityScore;
-        });
-        if (representative != cluster.members.end()) {
-            cluster.representativeId = representative->id;
+
+        std::vector<float> centroid(embeddingDim, 0.0f);
+        for (const auto& member : cluster.members) {
+            for (size_t column = 0; column < embeddingDim; ++column) {
+                centroid[column] += member.embedding[column];
+            }
         }
+        centroid = fsc::core::normalize(centroid);
+        double representativeScore = -std::numeric_limits<double>::infinity();
+        for (const auto& member : cluster.members) {
+            const double score = fsc::core::dot(member.embedding, centroid);
+            if (score > representativeScore) {
+                representativeScore = score;
+                cluster.representativeId = member.id;
+            }
+        }
+
         double similarityTotal = 0.0;
-        int pairCount = 0;
-        for (size_t i = 0; i < cluster.members.size(); ++i) {
-            for (size_t j = i + 1; j < cluster.members.size(); ++j) {
-                const double score = fsc::core::dot(cluster.members[i].embedding, cluster.members[j].embedding);
+        int64_t pairCount = 0;
+#ifdef FSC_ENABLE_OPENCV
+        cv::Mat groupMatrix(static_cast<int>(cluster.members.size()), static_cast<int>(embeddingDim), CV_32F);
+        for (int row = 0; row < groupMatrix.rows; ++row) {
+            std::copy(
+                cluster.members[static_cast<size_t>(row)].embedding.begin(),
+                cluster.members[static_cast<size_t>(row)].embedding.end(),
+                groupMatrix.ptr<float>(row));
+        }
+        for (int start = 0; start < groupMatrix.rows; start += kClusterBlockSize) {
+            const int end = std::min(groupMatrix.rows, start + kClusterBlockSize);
+            cv::Mat scores = groupMatrix.rowRange(start, end) * groupMatrix.t();
+            for (int localRow = 0; localRow < end - start; ++localRow) {
+                const int row = start + localRow;
+                const float* rowScores = scores.ptr<float>(localRow);
+                for (int other = row + 1; other < groupMatrix.rows; ++other) {
+                    const double score = rowScores[other];
+                    similarityTotal += score;
+                    cluster.maxSimilarity = std::max(cluster.maxSimilarity, score);
+                    ++pairCount;
+                }
+            }
+        }
+#else
+        for (size_t row = 0; row < cluster.members.size(); ++row) {
+            for (size_t other = row + 1; other < cluster.members.size(); ++other) {
+                const double score = fsc::core::dot(cluster.members[row].embedding, cluster.members[other].embedding);
                 similarityTotal += score;
                 cluster.maxSimilarity = std::max(cluster.maxSimilarity, score);
                 ++pairCount;
             }
         }
+#endif
         cluster.meanSimilarity = pairCount > 0 ? similarityTotal / static_cast<double>(pairCount) : 0.0;
         clusters.push_back(std::move(cluster));
     }
@@ -716,7 +794,10 @@ std::vector<ClusterSummary> buildClusters(
         if (left.members.size() != right.members.size()) {
             return left.members.size() > right.members.size();
         }
-        return left.meanSimilarity > right.meanSimilarity;
+        if (left.meanSimilarity != right.meanSimilarity) {
+            return left.meanSimilarity > right.meanSimilarity;
+        }
+        return left.averageQuality > right.averageQuality;
     });
     return clusters;
 }
@@ -1735,6 +1816,8 @@ public:
         selectMainTab(page);
         if (page.compare("Library", Qt::CaseInsensitive) == 0 && libraryTable_ != nullptr && libraryTable_->rowCount() > 0) {
             libraryTable_->selectRow(0);
+        } else if (page.compare("Clusters", Qt::CaseInsensitive) == 0 && database_) {
+            refreshClusters();
         }
     }
 
@@ -1796,6 +1879,34 @@ public:
 
     [[nodiscard]] bool reviewConfirmSmokeFinished() const noexcept {
         return !reviewConfirmActive_;
+    }
+
+    void startClusterBuildSmoke(const QString& databasePath) {
+        openDatabasePath(databasePath);
+        clusterBuildSmokeStarted_ = true;
+        refreshClusters();
+    }
+
+    [[nodiscard]] bool clusterBuildSmokeFinished() const noexcept {
+        return clusterBuildSmokeStarted_ && !clusterBuildActive_;
+    }
+
+    [[nodiscard]] int clusterBuildSmokeCount() const noexcept {
+        return static_cast<int>(clusters_.size());
+    }
+
+    void assignFirstClusterForSmoke(const QString& personName) {
+        if (clusterTable_ == nullptr || clusters_.empty()) {
+            return;
+        }
+        clusterTable_->selectRow(0);
+        clusterPersonEdit_->setText(personName);
+        clusterAssignmentSmokeStarted_ = true;
+        assignSelectedCluster();
+    }
+
+    [[nodiscard]] bool clusterAssignmentSmokeFinished() const noexcept {
+        return clusterAssignmentSmokeStarted_ && !clusterAssignmentActive_;
     }
 
 #ifdef FSC_ENABLE_ONNX
@@ -1986,6 +2097,23 @@ private:
         QString databasePath;
         int64_t faceId = 0;
         QString personName;
+        QString error;
+    };
+
+    struct ClusterBuildTaskResult {
+        uint64_t token = 0;
+        QString databasePath;
+        double threshold = 0.55;
+        std::vector<ClusterSummary> clusters;
+        QString error;
+    };
+
+    struct ClusterAssignmentTaskResult {
+        uint64_t token = 0;
+        QString databasePath;
+        QString personName;
+        std::vector<int64_t> faceIds;
+        int assignedCount = 0;
         QString error;
     };
 
@@ -3264,60 +3392,100 @@ private:
     void buildClustersTab() {
         auto* page = new QWidget(tabs_);
         auto* layout = new QVBoxLayout(page);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(24, 22, 24, 22);
+        layout->setSpacing(14);
 
-        auto* controls = new QWidget(page);
-        auto* controlsLayout = new QHBoxLayout(controls);
-        controlsLayout->setContentsMargins(0, 0, 0, 0);
+        auto* title = new QLabel("Clusters", page);
+        title->setObjectName("PageTitle");
+        layout->addWidget(title);
+
+        auto* controls = new QGroupBox("Similarity Groups", page);
+        auto* controlsLayout = new QGridLayout(controls);
+        clusterDatabaseEdit_ = new QLineEdit(controls);
+        clusterDatabaseEdit_->setObjectName("ClustersDatabasePath");
+        clusterDatabaseEdit_->setReadOnly(true);
         clusterThresholdSpin_ = new QDoubleSpinBox(controls);
-        clusterThresholdSpin_->setRange(-1.0, 1.0);
+        clusterThresholdSpin_->setRange(0.1, 0.95);
         clusterThresholdSpin_->setSingleStep(0.01);
         clusterThresholdSpin_->setDecimals(3);
-        clusterThresholdSpin_->setValue(0.62);
+        clusterThresholdSpin_->setValue(0.55);
         clusterMinSizeSpin_ = new QSpinBox(controls);
         clusterMinSizeSpin_->setRange(2, 50);
         clusterMinSizeSpin_->setValue(2);
         clusterMaxFacesSpin_ = new QSpinBox(controls);
         clusterMaxFacesSpin_->setRange(100, 100000);
         clusterMaxFacesSpin_->setValue(5000);
-        clusterMaxFacesSpin_->setPrefix("Max ");
         clusterMinQualitySpin_ = new QDoubleSpinBox(controls);
         clusterMinQualitySpin_->setRange(0.0, 1.0);
         clusterMinQualitySpin_->setDecimals(3);
         clusterMinQualitySpin_->setSingleStep(0.050);
         clusterMinQualitySpin_->setValue(0.0);
-        clusterMinQualitySpin_->setPrefix("Min quality ");
         clusterUnassignedOnlyCheck_ = new QCheckBox("Unassigned only", controls);
         clusterIncludeIgnoredCheck_ = new QCheckBox("Include ignored", controls);
-        auto* clusterButton = new QPushButton("Build Clusters", controls);
-        controlsLayout->addWidget(new QLabel("Threshold", controls));
-        controlsLayout->addWidget(clusterThresholdSpin_);
-        controlsLayout->addWidget(new QLabel("Min Size", controls));
-        controlsLayout->addWidget(clusterMinSizeSpin_);
-        controlsLayout->addWidget(clusterMaxFacesSpin_);
-        controlsLayout->addWidget(clusterMinQualitySpin_);
-        controlsLayout->addWidget(clusterUnassignedOnlyCheck_);
-        controlsLayout->addWidget(clusterIncludeIgnoredCheck_);
-        controlsLayout->addWidget(clusterButton);
-        controlsLayout->addStretch(1);
+        clusterBuildButton_ = new QPushButton("Build Clusters", controls);
+        clusterBuildButton_->setObjectName("ClustersBuild");
+        controlsLayout->addWidget(new QLabel("Database", controls), 0, 0);
+        controlsLayout->addWidget(clusterDatabaseEdit_, 0, 1, 1, 5);
+        controlsLayout->addWidget(clusterBuildButton_, 0, 6);
+        controlsLayout->addWidget(new QLabel("Threshold", controls), 1, 0);
+        controlsLayout->addWidget(clusterThresholdSpin_, 1, 1);
+        controlsLayout->addWidget(new QLabel("Min size", controls), 1, 2);
+        controlsLayout->addWidget(clusterMinSizeSpin_, 1, 3);
+        controlsLayout->addWidget(new QLabel("Max faces", controls), 1, 4);
+        controlsLayout->addWidget(clusterMaxFacesSpin_, 1, 5);
+        controlsLayout->addWidget(new QLabel("Min quality", controls), 2, 0);
+        controlsLayout->addWidget(clusterMinQualitySpin_, 2, 1);
+        controlsLayout->addWidget(clusterUnassignedOnlyCheck_, 2, 2, 1, 2);
+        controlsLayout->addWidget(clusterIncludeIgnoredCheck_, 2, 4, 1, 2);
+        controlsLayout->setColumnStretch(1, 1);
+        controlsLayout->setColumnStretch(3, 1);
+        controlsLayout->setColumnStretch(5, 1);
         layout->addWidget(controls);
 
         auto* splitter = new QSplitter(page);
         clusterTable_ = new QTableWidget(splitter);
+        clusterTable_->setObjectName("ClustersTable");
         clusterTable_->setColumnCount(6);
         clusterTable_->setHorizontalHeaderLabels({"Cluster", "Faces", "Mean", "Max", "Avg Quality", "Known People"});
         fitTable(clusterTable_);
+        clusterTable_->setMinimumWidth(220);
+        clusterTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        clusterTable_->setColumnWidth(0, 64);
+        clusterTable_->setColumnWidth(1, 62);
+        clusterTable_->setColumnWidth(2, 70);
+        clusterTable_->setColumnWidth(3, 70);
+        clusterTable_->setColumnWidth(4, 88);
         clusterMemberTable_ = new QTableWidget(splitter);
+        clusterMemberTable_->setObjectName("ClustersMemberTable");
         clusterMemberTable_->setColumnCount(6);
         clusterMemberTable_->setHorizontalHeaderLabels({"ID", "File", "Person", "Tags", "Quality", "Review"});
         fitTable(clusterMemberTable_);
+        clusterMemberTable_->setMinimumWidth(300);
+        clusterMemberTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        clusterMemberTable_->setColumnWidth(0, 55);
+        clusterMemberTable_->setColumnWidth(1, 145);
+        clusterMemberTable_->setColumnWidth(2, 100);
+        clusterMemberTable_->setColumnWidth(3, 110);
+        clusterMemberTable_->setColumnWidth(4, 65);
 
         auto* actionPanel = new QWidget(splitter);
+        actionPanel->setMinimumWidth(255);
+        actionPanel->setMaximumWidth(380);
+        actionPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         auto* actionLayout = new QVBoxLayout(actionPanel);
-        actionLayout->setContentsMargins(8, 0, 0, 0);
+        actionLayout->setContentsMargins(6, 0, 0, 0);
+        actionLayout->setSpacing(8);
+        clusterFocusButton_ = new QToolButton(actionPanel);
+        clusterFocusButton_->setObjectName("ClustersFocus");
+        clusterFocusButton_->setText("Focus on Face");
+        clusterFocusButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        clusterFocusButton_->setMaximumSize(118, 24);
+        clusterFocusButton_->setEnabled(false);
         clusterPreviewLabel_ = new QLabel("Select a cluster", actionPanel);
+        clusterPreviewLabel_->setObjectName("ClustersPreview");
         clusterPreviewLabel_->setAlignment(Qt::AlignCenter);
-        clusterPreviewLabel_->setMinimumWidth(320);
+        clusterPreviewLabel_->setMinimumSize(180, 180);
+        clusterPreviewLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
         clusterPreviewLabel_->setStyleSheet("background:#0c1420;color:#dce8f5;border:1px solid #c8d5e6;");
         auto* assignBox = new QGroupBox("Batch Assign", actionPanel);
         auto* assignForm = new QFormLayout(assignBox);
@@ -3326,17 +3494,19 @@ private:
         clusterTagsEdit_->setText("cluster-suggested");
         clusterMarkReviewedCheck_ = new QCheckBox("Mark reviewed", assignBox);
         clusterMarkReviewedCheck_->setChecked(true);
-        auto* assignClusterButton = new QPushButton("Assign Cluster", assignBox);
+        clusterAssignButton_ = new QPushButton("Assign Cluster", assignBox);
+        clusterAssignButton_->setObjectName("ClustersAssign");
         assignForm->addRow("Person", clusterPersonEdit_);
         assignForm->addRow("Tags", clusterTagsEdit_);
         assignForm->addRow("", clusterMarkReviewedCheck_);
-        assignForm->addRow("", assignClusterButton);
+        assignForm->addRow("", clusterAssignButton_);
         clusterSummaryLabel_ = new QLabel("No clusters built", actionPanel);
         clusterSummaryLabel_->setWordWrap(true);
+        clusterSummaryLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        actionLayout->addWidget(clusterFocusButton_, 0, Qt::AlignLeft);
         actionLayout->addWidget(clusterPreviewLabel_, 1);
         actionLayout->addWidget(assignBox);
         actionLayout->addWidget(clusterSummaryLabel_);
-        actionLayout->addStretch(1);
 
         splitter->addWidget(clusterTable_);
         splitter->addWidget(clusterMemberTable_);
@@ -3344,13 +3514,15 @@ private:
         splitter->setStretchFactor(0, 1);
         splitter->setStretchFactor(1, 2);
         splitter->setStretchFactor(2, 1);
+        splitter->setSizes({240, 380, 300});
         layout->addWidget(splitter, 1);
         addMainTab(page, "Clusters");
 
-        connect(clusterButton, &QPushButton::clicked, this, [this] { refreshClusters(); });
+        connect(clusterBuildButton_, &QPushButton::clicked, this, [this] { refreshClusters(); });
         connect(clusterTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMembers(); });
         connect(clusterMemberTable_, &QTableWidget::itemSelectionChanged, this, [this] { showSelectedClusterMemberPreview(); });
-        connect(assignClusterButton, &QPushButton::clicked, this, [this] { assignSelectedCluster(); });
+        connect(clusterFocusButton_, &QToolButton::clicked, this, [this] { toggleClusterFocus(); });
+        connect(clusterAssignButton_, &QPushButton::clicked, this, [this] { assignSelectedCluster(); });
     }
 
     void buildRuntimeTab() {
@@ -3469,6 +3641,7 @@ private:
             runRuntimeLegacyConversion(path);
             return;
         }
+        invalidateClusterTasks();
         try {
             database_ = std::make_unique<fsc::core::Database>(pathFrom(path));
             databasePathEdit_->setText(path);
@@ -3479,6 +3652,16 @@ private:
             cameraIdentityProfiles_.clear();
             cameraIdentityProfilesSnapshot_ = std::make_shared<const std::vector<fsc::core::IdentityProfile>>();
             cameraStoredFaces_ = std::make_shared<const std::vector<fsc::core::FaceRecord>>();
+            clusters_.clear();
+            if (clusterDatabaseEdit_ != nullptr) {
+                clusterDatabaseEdit_->clear();
+            }
+            if (clusterTable_ != nullptr) {
+                clusterTable_->setRowCount(0);
+            }
+            if (clusterMemberTable_ != nullptr) {
+                clusterMemberTable_->setRowCount(0);
+            }
             syncCameraDatabasePath();
             syncSearchDatabasePath();
             showError(ex);
@@ -3499,6 +3682,9 @@ private:
             cameraIdentityProfiles_);
         cameraStoredFaces_ = std::make_shared<const std::vector<fsc::core::FaceRecord>>(
             database_->loadFaces(false));
+        if (clusterDatabaseEdit_ != nullptr) {
+            clusterDatabaseEdit_->setText(QString::fromStdWString(database_->path().wstring()));
+        }
         syncSearchDatabasePath();
         refreshRuntimeDatabaseInfo();
         syncCameraDatabasePath();
@@ -6329,17 +6515,55 @@ private:
     }
 
     void refreshClusters() {
-        if (!database_) {
+        if (!database_ || clusterBuildActive_) {
             return;
         }
-        try {
-            clusters_ = buildClusters(
-                database_->loadFaces(clusterIncludeIgnoredCheck_ != nullptr && clusterIncludeIgnoredCheck_->isChecked()),
-                clusterThresholdSpin_->value(),
-                clusterMinSizeSpin_->value(),
-                clusterMinQualitySpin_ != nullptr ? clusterMinQualitySpin_->value() : 0.0,
-                clusterUnassignedOnlyCheck_ != nullptr && clusterUnassignedOnlyCheck_->isChecked(),
-                clusterMaxFacesSpin_ != nullptr ? clusterMaxFacesSpin_->value() : 0);
+        const uint64_t token = ++clusterBuildToken_;
+        const QString databasePath = QString::fromStdWString(database_->path().wstring());
+        const double threshold = clusterThresholdSpin_ == nullptr ? 0.55 : clusterThresholdSpin_->value();
+        const int minSize = clusterMinSizeSpin_ == nullptr ? 2 : clusterMinSizeSpin_->value();
+        const int maxFaces = clusterMaxFacesSpin_ == nullptr ? 5000 : clusterMaxFacesSpin_->value();
+        const double minQuality = clusterMinQualitySpin_ == nullptr ? 0.0 : clusterMinQualitySpin_->value();
+        const bool unassignedOnly = clusterUnassignedOnlyCheck_ != nullptr && clusterUnassignedOnlyCheck_->isChecked();
+        const bool includeIgnored = clusterIncludeIgnoredCheck_ != nullptr && clusterIncludeIgnoredCheck_->isChecked();
+        clusterBuildActive_ = true;
+        if (clusterBuildButton_ != nullptr) {
+            clusterBuildButton_->setEnabled(false);
+        }
+        if (clusterAssignButton_ != nullptr) {
+            clusterAssignButton_->setEnabled(false);
+        }
+        if (clusterSummaryLabel_ != nullptr) {
+            clusterSummaryLabel_->setText(trUi("Building face clusters..."));
+        }
+        statusBar()->showMessage(trUi("Building face clusters..."));
+
+        auto* watcher = new QFutureWatcher<ClusterBuildTaskResult>(this);
+        connect(watcher, &QFutureWatcher<ClusterBuildTaskResult>::finished, this, [this, watcher] {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            if (result.token != clusterBuildToken_) {
+                return;
+            }
+            clusterBuildActive_ = false;
+            if (clusterBuildButton_ != nullptr) {
+                clusterBuildButton_->setEnabled(true);
+            }
+            if (clusterAssignButton_ != nullptr) {
+                clusterAssignButton_->setEnabled(true);
+            }
+            if (!result.error.isEmpty()) {
+                if (clusterSummaryLabel_ != nullptr) {
+                    clusterSummaryLabel_->setText(result.error);
+                }
+                showError(std::runtime_error(result.error.toUtf8().constData()));
+                return;
+            }
+            if (!database_ || QString::fromStdWString(database_->path().wstring()) != result.databasePath) {
+                return;
+            }
+
+            clusters_ = std::move(result.clusters);
             clusterTable_->setRowCount(static_cast<int>(clusters_.size()));
             for (int row = 0; row < static_cast<int>(clusters_.size()); ++row) {
                 const auto& cluster = clusters_[static_cast<size_t>(row)];
@@ -6350,23 +6574,66 @@ private:
                 clusterTable_->setItem(row, 4, numberItem(cluster.averageQuality, 3));
                 clusterTable_->setItem(row, 5, item(joinClusterPeople(cluster.knownPeople)));
             }
-            clusterTable_->resizeColumnsToContents();
             clusterMemberTable_->setRowCount(0);
+            currentClusterPreviewFaceId_ = 0;
+            clusterFocusOnFace_ = false;
+            if (clusterFocusButton_ != nullptr) {
+                clusterFocusButton_->setText(trUi("Focus on Face"));
+                clusterFocusButton_->setEnabled(false);
+            }
             if (clusterPreviewLabel_ != nullptr) {
-                clusterPreviewLabel_->setText("Select a cluster");
+                clusterPreviewLabel_->setText(trUi("Select a cluster"));
                 clusterPreviewLabel_->setPixmap(QPixmap());
             }
             if (clusterSummaryLabel_ != nullptr) {
                 clusterSummaryLabel_->setText(QString("%1 cluster(s) above threshold %2")
                                                   .arg(clusters_.size())
-                                                  .arg(clusterThresholdSpin_->value(), 0, 'f', 3));
+                                                  .arg(result.threshold, 0, 'f', 3));
             }
             if (!clusters_.empty()) {
                 clusterTable_->selectRow(0);
             }
             statusBar()->showMessage(QString("Built %1 cluster(s)").arg(clusters_.size()));
-        } catch (const std::exception& ex) {
-            showError(ex);
+        });
+        watcher->setFuture(QtConcurrent::run([
+            token,
+            databasePath,
+            threshold,
+            minSize,
+            maxFaces,
+            minQuality,
+            unassignedOnly,
+            includeIgnored] {
+            ClusterBuildTaskResult result;
+            result.token = token;
+            result.databasePath = databasePath;
+            result.threshold = threshold;
+            try {
+                fsc::core::Database workerDatabase(pathFrom(databasePath));
+                result.clusters = buildClusters(
+                    workerDatabase.loadFaces(includeIgnored),
+                    threshold,
+                    minSize,
+                    minQuality,
+                    unassignedOnly,
+                    maxFaces);
+            } catch (const std::exception& ex) {
+                result.error = QString::fromUtf8(ex.what());
+            }
+            return result;
+        }));
+    }
+
+    void invalidateClusterTasks() {
+        ++clusterBuildToken_;
+        ++clusterAssignmentToken_;
+        clusterBuildActive_ = false;
+        clusterAssignmentActive_ = false;
+        if (clusterBuildButton_ != nullptr) {
+            clusterBuildButton_->setEnabled(true);
+        }
+        if (clusterAssignButton_ != nullptr) {
+            clusterAssignButton_->setEnabled(true);
         }
     }
 
@@ -6382,11 +6649,13 @@ private:
     }
 
     void showSelectedClusterMembers() {
-        const auto selected = clusterTable_->selectedItems();
+        const auto selected = clusterTable_->selectionModel() == nullptr
+            ? QModelIndexList{}
+            : clusterTable_->selectionModel()->selectedRows();
         if (selected.empty()) {
             return;
         }
-        const int index = selected.front()->row();
+        const int index = selected.front().row();
         if (index < 0 || index >= static_cast<int>(clusters_.size())) {
             return;
         }
@@ -6402,7 +6671,6 @@ private:
             clusterMemberTable_->setItem(row, 4, numberItem(member.qualityScore, 3));
             clusterMemberTable_->setItem(row, 5, item(qs(member.reviewState)));
         }
-        clusterMemberTable_->resizeColumnsToContents();
         if (clusterPersonEdit_ != nullptr) {
             clusterPersonEdit_->setText(qs(cluster.suggestedName));
         }
@@ -6449,6 +6717,11 @@ private:
         if (clusterPreviewLabel_ == nullptr || !database_) {
             return;
         }
+        currentClusterPreviewFaceId_ = faceId;
+        if (clusterFocusButton_ != nullptr) {
+            clusterFocusButton_->setText(clusterFocusOnFace_ ? trUi("Full Image") : trUi("Focus on Face"));
+            clusterFocusButton_->setEnabled(faceId > 0);
+        }
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
@@ -6456,15 +6729,23 @@ private:
                 clusterPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
-            setDatabaseFacePreview(clusterPreviewLabel_, *face, "No preview");
+            setDatabaseFacePreview(clusterPreviewLabel_, *face, "No preview", clusterFocusOnFace_);
         } catch (const std::exception& ex) {
             clusterPreviewLabel_->setText(ex.what());
             clusterPreviewLabel_->setPixmap(QPixmap());
         }
     }
 
+    void toggleClusterFocus() {
+        if (currentClusterPreviewFaceId_ <= 0) {
+            return;
+        }
+        clusterFocusOnFace_ = !clusterFocusOnFace_;
+        updateClusterPreviewForFace(currentClusterPreviewFaceId_);
+    }
+
     void assignSelectedCluster() {
-        if (!database_) {
+        if (!database_ || clusterAssignmentActive_ || clusterBuildActive_) {
             return;
         }
         try {
@@ -6478,21 +6759,67 @@ private:
             }
             const QString tags = clusterTagsEdit_ == nullptr ? QString() : clusterTagsEdit_->text();
             const bool markReviewed = clusterMarkReviewedCheck_ == nullptr || clusterMarkReviewedCheck_->isChecked();
-            int count = 0;
+            std::vector<int64_t> faceIds;
+            faceIds.reserve(clusters_[static_cast<size_t>(clusterIndex)].members.size());
             for (const auto& member : clusters_[static_cast<size_t>(clusterIndex)].members) {
-                assignFaceToPersonName(member.id, personName);
-                if (!tags.trimmed().isEmpty()) {
-                    database_->setFaceTags(member.id, tags.toUtf8().constData(), true);
-                }
-                if (markReviewed) {
-                    database_->updateFaceReview(member.id, "reviewed", false, "Confirmed native cluster assignment.");
-                }
-                ++count;
+                faceIds.push_back(member.id);
             }
-            database_->rebuildIdentityProfiles();
-            reloadAll();
-            refreshClusters();
-            statusBar()->showMessage(QString("Assigned %1 face(s) to %2").arg(count).arg(personName));
+
+            const uint64_t token = ++clusterAssignmentToken_;
+            const QString databasePath = QString::fromStdWString(database_->path().wstring());
+            clusterAssignmentActive_ = true;
+            if (clusterAssignButton_ != nullptr) {
+                clusterAssignButton_->setEnabled(false);
+            }
+            if (clusterBuildButton_ != nullptr) {
+                clusterBuildButton_->setEnabled(false);
+            }
+            statusBar()->showMessage(QString("Assigning %1 face(s) to %2...").arg(faceIds.size()).arg(personName));
+
+            auto* watcher = new QFutureWatcher<ClusterAssignmentTaskResult>(this);
+            connect(watcher, &QFutureWatcher<ClusterAssignmentTaskResult>::finished, this, [this, watcher] {
+                auto result = watcher->result();
+                watcher->deleteLater();
+                if (result.token != clusterAssignmentToken_) {
+                    return;
+                }
+                clusterAssignmentActive_ = false;
+                if (clusterAssignButton_ != nullptr) {
+                    clusterAssignButton_->setEnabled(true);
+                }
+                if (clusterBuildButton_ != nullptr) {
+                    clusterBuildButton_->setEnabled(true);
+                }
+                if (!result.error.isEmpty()) {
+                    showError(std::runtime_error(result.error.toUtf8().constData()));
+                    return;
+                }
+                if (database_ && QString::fromStdWString(database_->path().wstring()) == result.databasePath) {
+                    reloadAll();
+                    refreshClusters();
+                }
+                statusBar()->showMessage(
+                    QString("Assigned %1 face(s) to %2").arg(result.assignedCount).arg(result.personName));
+            });
+            watcher->setFuture(QtConcurrent::run([token, databasePath, personName, tags, markReviewed, faceIds] {
+                ClusterAssignmentTaskResult result;
+                result.token = token;
+                result.databasePath = databasePath;
+                result.personName = personName;
+                result.faceIds = faceIds;
+                try {
+                    fsc::core::Database workerDatabase(pathFrom(databasePath));
+                    result.assignedCount = workerDatabase.assignFacesToPerson(
+                        faceIds,
+                        personName.toUtf8().constData(),
+                        tags.toUtf8().constData(),
+                        markReviewed);
+                    workerDatabase.rebuildIdentityProfiles();
+                } catch (const std::exception& ex) {
+                    result.error = QString::fromUtf8(ex.what());
+                }
+                return result;
+            }));
         } catch (const std::exception& ex) {
             showError(ex);
         }
@@ -7038,19 +7365,31 @@ private:
     bool updatingCompareLists_ = false;
     bool compareAnalysisActiveA_ = false;
     bool compareAnalysisActiveB_ = false;
+    QLineEdit* clusterDatabaseEdit_ = nullptr;
     QDoubleSpinBox* clusterThresholdSpin_ = nullptr;
     QSpinBox* clusterMinSizeSpin_ = nullptr;
     QSpinBox* clusterMaxFacesSpin_ = nullptr;
     QDoubleSpinBox* clusterMinQualitySpin_ = nullptr;
     QCheckBox* clusterUnassignedOnlyCheck_ = nullptr;
     QCheckBox* clusterIncludeIgnoredCheck_ = nullptr;
+    QPushButton* clusterBuildButton_ = nullptr;
     QTableWidget* clusterTable_ = nullptr;
     QTableWidget* clusterMemberTable_ = nullptr;
     QLabel* clusterPreviewLabel_ = nullptr;
+    QToolButton* clusterFocusButton_ = nullptr;
     QLineEdit* clusterPersonEdit_ = nullptr;
     QLineEdit* clusterTagsEdit_ = nullptr;
     QCheckBox* clusterMarkReviewedCheck_ = nullptr;
+    QPushButton* clusterAssignButton_ = nullptr;
     QLabel* clusterSummaryLabel_ = nullptr;
+    int64_t currentClusterPreviewFaceId_ = 0;
+    bool clusterFocusOnFace_ = false;
+    uint64_t clusterBuildToken_ = 0;
+    uint64_t clusterAssignmentToken_ = 0;
+    bool clusterBuildActive_ = false;
+    bool clusterAssignmentActive_ = false;
+    bool clusterBuildSmokeStarted_ = false;
+    bool clusterAssignmentSmokeStarted_ = false;
     QComboBox* runtimeModeCombo_ = nullptr;
     QLabel* runtimeBuildLabel_ = nullptr;
     QLabel* runtimeProviderLabel_ = nullptr;
@@ -7192,14 +7531,12 @@ int main(int argc, char** argv) {
             if (clusters.empty()) {
                 return 2;
             }
-            const auto personId = database.upsertPerson(personName);
-            int count = 0;
+            std::vector<int64_t> faceIds;
+            faceIds.reserve(clusters.front().members.size());
             for (const auto& member : clusters.front().members) {
-                database.assignFaceToPerson(member.id, personId);
-                database.setFaceTags(member.id, "cluster-action-smoke", true);
-                database.updateFaceReview(member.id, "reviewed", false, "native cluster action smoke");
-                ++count;
+                faceIds.push_back(member.id);
             }
+            const int count = database.assignFacesToPerson(faceIds, personName, "cluster-action-smoke", true);
             database.rebuildIdentityProfiles();
             const auto face = database.loadFace(clusters.front().members.front().id);
             return count > 0 && face.has_value() && face->personName == personName &&
@@ -7712,6 +8049,83 @@ int main(int argc, char** argv) {
         return outcome;
     }
 
+    if (argc >= 3 && std::string(argv[1]) == "--clusters-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        window.startClusterBuildSmoke(QString::fromLocal8Bit(argv[2]));
+        int outcome = 5;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (!window.clusterBuildSmokeFinished()) {
+                return;
+            }
+            outcome = window.clusterBuildSmokeCount() > 0 ? 0 : 4;
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
+    if (argc >= 4 && std::string(argv[1]) == "--clusters-assign-ui-smoke") {
+        QApplication uiApp(argc, argv);
+        const QString databasePath = QString::fromLocal8Bit(argv[2]);
+        const QString personName = QString::fromLocal8Bit(argv[3]);
+        MainWindow window;
+        window.startClusterBuildSmoke(databasePath);
+        int outcome = 5;
+        int phase = 0;
+        QTimer poll;
+        QObject::connect(&poll, &QTimer::timeout, &uiApp, [&] {
+            if (phase == 0) {
+                if (!window.clusterBuildSmokeFinished()) {
+                    return;
+                }
+                if (window.clusterBuildSmokeCount() <= 0) {
+                    outcome = 4;
+                    uiApp.quit();
+                    return;
+                }
+                window.assignFirstClusterForSmoke(personName);
+                phase = 1;
+                return;
+            }
+            if (!window.clusterAssignmentSmokeFinished() || !window.clusterBuildSmokeFinished()) {
+                return;
+            }
+            try {
+                fsc::core::Database database(pathFrom(databasePath));
+                int assigned = 0;
+                for (const auto& face : database.loadFaces(true)) {
+                    if (qs(face.personName) == personName) {
+                        if (face.reviewState != "reviewed" || face.ignored ||
+                            face.tagText.find("cluster-suggested") == std::string::npos) {
+                            outcome = 7;
+                            uiApp.quit();
+                            return;
+                        }
+                        ++assigned;
+                    }
+                }
+                outcome = assigned >= 2 ? 0 : 8;
+            } catch (...) {
+                outcome = 9;
+            }
+            uiApp.quit();
+        });
+        poll.start(20);
+        QTimer::singleShot(120000, &uiApp, [&] {
+            outcome = 6;
+            uiApp.quit();
+        });
+        uiApp.exec();
+        return outcome;
+    }
+
     if (argc >= 5 && std::string(argv[1]) == "--page-render-smoke") {
         QApplication uiApp(argc, argv);
         MainWindow window;
@@ -7722,7 +8136,7 @@ int main(int argc, char** argv) {
         window.selectPageForSmoke(QString::fromLocal8Bit(argv[3]));
         window.show();
         int outcome = 2;
-        QTimer::singleShot(500, &uiApp, [&] {
+        QTimer::singleShot(800, &uiApp, [&] {
             const std::filesystem::path outputPath = pathFrom(QString::fromLocal8Bit(argv[4]));
             if (outputPath.has_parent_path()) {
                 std::filesystem::create_directories(outputPath.parent_path());
@@ -7793,6 +8207,17 @@ int main(int argc, char** argv) {
             window.findChild<QTableWidget*>("ReviewTable") != nullptr &&
             reviewConfirm != nullptr && reviewConfirm->text() == translatedText("Confirm AI Person", language) &&
             reviewFocus != nullptr && reviewFocus->text() == translatedText("Focus on Face", language);
+        const auto* clustersBuild = window.findChild<QPushButton*>("ClustersBuild");
+        const auto* clustersAssign = window.findChild<QPushButton*>("ClustersAssign");
+        const auto* clustersFocus = window.findChild<QToolButton*>("ClustersFocus");
+        const bool clustersControlsPresent =
+            window.findChild<QLineEdit*>("ClustersDatabasePath") != nullptr &&
+            window.findChild<QTableWidget*>("ClustersTable") != nullptr &&
+            window.findChild<QTableWidget*>("ClustersMemberTable") != nullptr &&
+            window.findChild<QWidget*>("ClustersPreview") != nullptr &&
+            clustersBuild != nullptr && clustersBuild->text() == translatedText("Build Clusters", language) &&
+            clustersAssign != nullptr && clustersAssign->text() == translatedText("Assign Cluster", language) &&
+            clustersFocus != nullptr && clustersFocus->text() == translatedText("Focus on Face", language);
         const bool searchControlsPresent =
             window.findChild<QLineEdit*>("SearchDatabasePath") != nullptr &&
             window.findChild<QPushButton*>("SearchOpenDatabase") != nullptr &&
@@ -7828,7 +8253,7 @@ int main(int argc, char** argv) {
             if (list->count() == 9 && list->item(0) != nullptr &&
                 list->item(0)->text() == translatedText("Overview", language) &&
                 legacyActionPresent && libraryControlsPresent && peopleControlsPresent && reviewControlsPresent && searchControlsPresent &&
-                compareControlsPresent && cameraControlsPresent) {
+                clustersControlsPresent && compareControlsPresent && cameraControlsPresent) {
                 return 0;
             }
         }

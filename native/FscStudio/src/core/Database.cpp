@@ -1452,6 +1452,102 @@ void Database::assignFaceToPerson(int64_t faceId, int64_t personId) {
     }
 }
 
+int Database::assignFacesToPerson(
+    const std::vector<int64_t>& faceIds,
+    const std::string& personName,
+    const std::string& tagText,
+    bool markReviewed) {
+    const auto cleanName = trimText(personName);
+    if (cleanName.empty()) {
+        throw std::runtime_error("Person name cannot be empty.");
+    }
+
+    std::set<int64_t> uniqueIds;
+    for (const int64_t faceId : faceIds) {
+        if (faceId <= 0) {
+            throw std::runtime_error("Face id must be positive.");
+        }
+        uniqueIds.insert(faceId);
+    }
+    if (uniqueIds.empty()) {
+        return 0;
+    }
+
+    const auto tags = parseTagText(tagText);
+    execSql(db_, "BEGIN IMMEDIATE");
+    try {
+        {
+            Statement insertPerson(db_, "INSERT OR IGNORE INTO persons(name, notes) VALUES (?, '')");
+            sqlite3_bind_text(insertPerson.get(), 1, cleanName.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(insertPerson.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+        }
+
+        int64_t personId = 0;
+        {
+            Statement selectPerson(db_, "SELECT id FROM persons WHERE name = ?");
+            sqlite3_bind_text(selectPerson.get(), 1, cleanName.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(selectPerson.get()) != SQLITE_ROW) {
+                throw std::runtime_error("Failed to read assigned person id.");
+            }
+            personId = sqlite3_column_int64(selectPerson.get(), 0);
+        }
+
+        std::vector<int64_t> tagIds;
+        tagIds.reserve(tags.size());
+        for (const auto& tag : tags) {
+            {
+                Statement insertTag(db_, "INSERT OR IGNORE INTO tags(name) VALUES (?)");
+                sqlite3_bind_text(insertTag.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+                if (sqlite3_step(insertTag.get()) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite3_errmsg(db_));
+                }
+            }
+            Statement selectTag(db_, "SELECT id FROM tags WHERE name = ?");
+            sqlite3_bind_text(selectTag.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(selectTag.get()) != SQLITE_ROW) {
+                throw std::runtime_error("Failed to read assigned tag id.");
+            }
+            tagIds.push_back(sqlite3_column_int64(selectTag.get(), 0));
+        }
+
+        Statement updateFace(
+            db_,
+            markReviewed
+                ? "UPDATE faces SET person_id = ?, review_state = 'reviewed', ignored = 0 WHERE id = ?"
+                : "UPDATE faces SET person_id = ? WHERE id = ?");
+        Statement linkTag(db_, "INSERT OR IGNORE INTO face_tags(face_id, tag_id) VALUES (?, ?)");
+        for (const int64_t faceId : uniqueIds) {
+            sqlite3_reset(updateFace.get());
+            sqlite3_clear_bindings(updateFace.get());
+            sqlite3_bind_int64(updateFace.get(), 1, personId);
+            sqlite3_bind_int64(updateFace.get(), 2, faceId);
+            if (sqlite3_step(updateFace.get()) != SQLITE_DONE) {
+                throw std::runtime_error(sqlite3_errmsg(db_));
+            }
+            if (sqlite3_changes(db_) == 0) {
+                throw std::runtime_error("Face id not found: " + std::to_string(faceId));
+            }
+
+            for (const int64_t tagId : tagIds) {
+                sqlite3_reset(linkTag.get());
+                sqlite3_clear_bindings(linkTag.get());
+                sqlite3_bind_int64(linkTag.get(), 1, faceId);
+                sqlite3_bind_int64(linkTag.get(), 2, tagId);
+                if (sqlite3_step(linkTag.get()) != SQLITE_DONE) {
+                    throw std::runtime_error(sqlite3_errmsg(db_));
+                }
+            }
+        }
+        execSql(db_, "COMMIT");
+        return static_cast<int>(uniqueIds.size());
+    } catch (...) {
+        execSql(db_, "ROLLBACK");
+        throw;
+    }
+}
+
 void Database::setFaceTags(int64_t faceId, const std::string& tagText, bool append) {
     {
         Statement check(db_, "SELECT 1 FROM faces WHERE id = ? LIMIT 1");

@@ -142,7 +142,7 @@ Current Qt shell:
 - Review now shows a selected-face detail preview, can run the native identity suggestion scorer, and can confirm the suggested person while retraining identity profiles.
 - Review can update `review_state`, `ignored`, and notes on selected faces.
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
-- Clusters can group stored face embeddings with configurable cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options; the page shows known people, member tags, selected-member preview, and batch assignment actions.
+- Clusters now matches the Python grouped controls and responsive three-column layout at 1180x760 and 1600x1000. It supports cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options, plus fixed-width scrollable tables, member preview, and a compact focus toggle. OpenCV block matrix multiplication accelerates pair scoring; build, transactional batch assignment, and Identity Gallery rebuilding run on workers with database/token guards.
 - Camera result selection updates the evidence/best-hit preview locally; person assignment and review mutations remain on the People and Review pages, matching the Python workflow.
 - Runtime tab exposes Auto / CPU / DirectML mode selection for native inference callers; the DirectML flavor verifies `DmlExecutionProvider`.
 - Runtime tab now shows current database stats and provides native SQLite maintenance actions: integrity check, database backup, WAL checkpoint, VACUUM, and operation log.
@@ -164,6 +164,8 @@ Current Qt shell:
 - `FscStudioQt.exe --people-training-ui-smoke D:\FSC\native\FscStudio\out\probe\people-training-ui-smoke.fscdb`: exit code `0`; rebuilt 119 local identity profiles through the asynchronous People UI path in about 0.58 seconds.
 - `FscStudioQt.exe --review-ai-ui-smoke D:\FSC\native\FscStudio\out\probe\review-ai-ui-smoke.fscdb 1`: exit code `0`; suggested the known identity, confirmed it, preserved person id `3`, changed the queue state from `open` to `reviewed`, and rebuilt profiles in about 0.62 seconds.
 - `FscStudioQt.exe --review-suggestion-switch-ui-smoke D:\FSC\native\FscStudio\out\probe\review-switch-ui-smoke.fscdb 1 2`: exit code `0`; rapid selection switched from person `3` to person `4`, and the final suggestion remained person `4` after both workers completed.
+- `FscStudioQt.exe --clusters-ui-smoke D:\FSC\new_full.fscdb`: exit code `0`; the native asynchronous path built real clusters in about 0.55 seconds without blocking the event loop.
+- `FscStudioQt.exe --clusters-assign-ui-smoke D:\FSC\native\FscStudio\out\probe\clusters-assign-ui-smoke.fscdb NativeClusterUiSmoke`: exit code `0`; three faces were atomically assigned, tagged `cluster-suggested`, marked reviewed without overwriting notes, and rebuilt into a `gallery_v2` identity profile in about 0.79 seconds.
 - `FscStudioQt.exe --review-action-smoke D:\FSC\native\FscStudio\out\probe\native_review_action_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --people-action-smoke D:\FSC\native\FscStudio\out\probe\native_people_action_smoke.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --maintenance-smoke D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke.fscdb D:\FSC\native\FscStudio\out\probe\native_maintenance_smoke_backup.fscdb`: exit code `0`.

@@ -40,7 +40,7 @@ continuing that prototype.
 - Compare detects both selected images asynchronously through a reusable ONNX session, lists every detected face, synchronizes list/preview selection, and compares the selected pair without blocking the UI.
 - Camera keeps native capture at a 33 ms UI cadence while recognition runs on a background worker at the configured interval. Database faces and Identity Gallery profiles are immutable snapshots refreshed only when the database changes; recent boxes, smoothed identities, similar hits, and a focusable best-match preview update on the UI thread.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
-- Clusters supports max-face/min-quality/unassigned/ignored filters, shows known people and member tags, previews selected members, and can batch-assign a selected cluster.
+- Clusters mirrors the Python parameter band and three-column workflow, supports max-face/min-quality/unassigned/ignored filters, previews selected members with a compact face-focus control, and batch-assigns a selected cluster. Clustering uses OpenCV block matrix multiplication when available, while clustering, transactional assignment, and identity-profile rebuilding run off the UI thread.
 - Runtime includes current database stats plus native maintenance actions for integrity check, backup, WAL checkpoint, and VACUUM.
 - Runtime can also convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`.
 
@@ -120,13 +120,15 @@ $p.ExitCode
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --people-training-ui-smoke D:\FSC\native\FscStudio\out\probe\people-training-smoke.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-ai-ui-smoke D:\FSC\native\FscStudio\out\probe\review-ai-smoke.fscdb 1
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --review-suggestion-switch-ui-smoke D:\FSC\native\FscStudio\out\probe\review-switch-smoke.fscdb 1 2
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --clusters-ui-smoke D:\FSC\new_full.fscdb
+.\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --clusters-assign-ui-smoke D:\FSC\native\FscStudio\out\probe\clusters-assign-smoke.fscdb NativeClusterUiSmoke
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --page-render-smoke D:\FSC\new_full.fscdb Library D:\FSC\native\FscStudio\out\probe\library.png 1180 760
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --overview-smoke D:\FSC\new_full.fscdb
 .\out\build\msvc-vs-qt-debug\Debug\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
 ```
 
-Use a copied database for `--review-smoke`, because it writes a review state
-back to the selected face row. Use a copied database for Library
+Use a copied database for `--review-smoke` and `--clusters-assign-ui-smoke`,
+because they write review/identity state. Use a copied database for Library
 `--page-render-smoke` runs as well, because selecting the first row may populate
 a missing Dense Mesh cache.
 
