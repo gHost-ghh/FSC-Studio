@@ -7,7 +7,7 @@
 #include "fsc/mesh/FaceMesh.hpp"
 #include "fsc/vision/FaceGeometry.hpp"
 #include "fsc/vision/ModelPaths.hpp"
-#ifdef FSC_ENABLE_ONNX
+#if defined(FSC_ENABLE_ONNX) && !defined(FSC_CORE_ONLY)
 #include "fsc/legacy/LegacyDtb.hpp"
 #endif
 
@@ -107,6 +107,14 @@ void modelPathResolutionUsesBuffaloRoot() {
     assert(paths.rootDirectory.filename() == "buffalo_l");
     assert(paths.detectionModelPath.filename() == "det_10g.onnx");
     assert(fsc::vision::parseRuntimeMode("dml") == fsc::vision::RuntimeMode::DirectMl);
+    assert(fsc::vision::parseRuntimeMode("nvidia") == fsc::vision::RuntimeMode::Cuda);
+    assert(fsc::vision::parseRuntimeMode("htp") == fsc::vision::RuntimeMode::QnnNpu);
+    assert(fsc::vision::parseRuntimeMode("adreno") == fsc::vision::RuntimeMode::QnnGpu);
+    assert(fsc::vision::executionProviderName(fsc::vision::RuntimeMode::Cuda) == "CUDAExecutionProvider");
+    const auto qnnPaths = paths.optimizedFor(fsc::vision::RuntimeMode::QnnNpu);
+    assert(qnnPaths.rootDirectory.filename() == "qnn_htp");
+    assert(qnnPaths.recognitionModelPath.filename() == "w600k_r50.onnx");
+    assert(paths.optimizedFor(fsc::vision::RuntimeMode::QnnGpu).rootDirectory == paths.rootDirectory);
 }
 
 void mediaPipeMeshValidationRejectsSyntheticFallbacks() {
@@ -119,6 +127,7 @@ void mediaPipeMeshValidationRejectsSyntheticFallbacks() {
     assert(!fsc::mesh::isMediaPipeFaceMesh(mesh));
 }
 
+#ifndef FSC_CORE_ONLY
 void databasePersonActionsRoundTrip() {
     const auto path = std::filesystem::temp_directory_path() /
         ("fsc_core_people_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".fscdb");
@@ -132,6 +141,13 @@ void databasePersonActionsRoundTrip() {
         record.embedding = normalize(std::vector<float>{1.0f, 0.0f, 0.0f});
         record.embeddingDim = static_cast<int>(record.embedding.size());
         record.bbox = {1.0, 2.0, 12.0, 22.0};
+        record.keypoints = {
+            {3.0, 6.0},
+            {9.0, 6.0},
+            {6.0, 11.0},
+            {4.0, 17.0},
+            {8.0, 17.0},
+        };
         record.detectionScore = 0.9;
         record.qualityScore = 0.8;
         record.imageHash = "person-action-smoke";
@@ -206,10 +222,12 @@ void databasePersonActionsRoundTrip() {
         const auto face = database.loadFace(faceId);
         assert(face.has_value());
         assert(face->personId == 0);
+        assert(face->keypoints == record.keypoints);
         const auto preview = database.loadFacePreview(faceId);
         assert(preview.has_value());
         assert(preview->sourcePath == "person-test.jpg");
         assert(preview->bbox.size() == 4);
+        assert(preview->keypoints == record.keypoints);
         assert(preview->embedding.empty());
     }
     std::filesystem::remove(path);
@@ -266,8 +284,9 @@ void databaseUnicodePathsRoundTrip() {
     }
     std::filesystem::remove_all(root);
 }
+#endif
 
-#ifdef FSC_ENABLE_ONNX
+#if defined(FSC_ENABLE_ONNX) && !defined(FSC_CORE_ONLY)
 void appendByte(std::vector<std::uint8_t>& output, std::uint8_t value) {
     output.push_back(value);
 }
@@ -386,9 +405,11 @@ int main() {
     visionNmsKeepsBestBoxes();
     modelPathResolutionUsesBuffaloRoot();
     mediaPipeMeshValidationRejectsSyntheticFallbacks();
+#ifndef FSC_CORE_ONLY
     databasePersonActionsRoundTrip();
     databaseUnicodePathsRoundTrip();
-#ifdef FSC_ENABLE_ONNX
+#endif
+#if defined(FSC_ENABLE_ONNX) && !defined(FSC_CORE_ONLY)
     legacyDtbReaderLoadsTrustedEmbeddedImage();
 #endif
     std::cout << "fsc_core_tests passed\n";

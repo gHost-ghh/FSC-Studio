@@ -37,12 +37,12 @@ void printUsage() {
         << "  fsc_native_probe <database.fscdb> search <face_id> [top_k]\n"
         << "  fsc_native_probe <database.fscdb> identify <face_id> [strict|balanced|broad]\n"
         << "  fsc_native_probe <database.fscdb> train-profiles [min_quality] [max_exemplars]\n"
-        << "  fsc_native_probe <database.fscdb> build-mesh <face_id> [face_landmarker.task]\n"
-        << "  fsc_native_probe <database.fscdb> repair-invalid-meshes [face_landmarker.task]\n"
+        << "  fsc_native_probe <database.fscdb> build-mesh <face_id> [face_landmarks_detector.onnx]\n"
+        << "  fsc_native_probe <database.fscdb> repair-invalid-meshes [face_landmarks_detector.onnx]\n"
         << "  fsc_native_probe <database.fscdb> import-image <model_root> <image_path> [threshold] [person_id]\n"
         << "  fsc_native_probe <database.fscdb> image-search <model_root> <image_path> [top_k] [threshold] [strict|balanced|broad]\n"
         << "  fsc_native_probe <output.fscdb> inspect-legacy-dtb <source.dtb>\n"
-        << "  fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml] [limit]\n";
+        << "  fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml|cuda|qnn-npu|qnn-gpu] [limit]\n";
 }
 
 IdentityMode parseMode(const std::string& value) {
@@ -349,9 +349,10 @@ int main(int argc, char** argv) {
                 options.modelAssetPath = argv[4];
             }
             fsc::mesh::MediaPipeFaceLandmarker landmarker(std::move(options));
-            const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
-                landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
-                face->bbox);
+            const auto mesh = landmarker.detect(
+                fsc::vision::loadImageRgb(face->sourcePath),
+                face->bbox,
+                face->keypoints);
             database.updateFaceMesh3d(faceId, mesh);
             std::cout << "updated_face=" << faceId << "\n";
             std::cout << "mesh_points=" << mesh.size() << "\n";
@@ -392,9 +393,10 @@ int main(int argc, char** argv) {
                     if (face->sourcePath.empty() || !std::filesystem::is_regular_file(face->sourcePath)) {
                         throw std::runtime_error("source image is unavailable");
                     }
-                    const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
-                        landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
-                        face->bbox);
+                    const auto mesh = landmarker.detect(
+                        fsc::vision::loadImageRgb(face->sourcePath),
+                        face->bbox,
+                        face->keypoints);
                     database.updateFaceMesh3d(face->id, mesh);
                     ++repaired;
                 } catch (const std::exception& ex) {

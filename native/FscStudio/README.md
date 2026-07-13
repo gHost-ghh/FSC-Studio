@@ -34,14 +34,14 @@ continuing that prototype.
 - People mirrors the Python three-column workflow for identity-health summaries, person members, representative/member preview, rename/notes, merge, and assignment clearing. Identity Gallery rebuilding runs on a worker connection and refreshes the cached Camera/Search state without blocking the window.
 - Review mirrors the Python queue/detail workflow with fixed table columns, compact focus overlay, metadata actions, and AI person confirmation. Identity suggestions use cached profiles on background workers with generation guards, and confirmation/retraining runs on a separate database connection.
 - Dense Mesh tabs render cached `face_mesh3d_json` in native Points or Textured modes, with depth-tested image texture, back-surface darkening, 3D rotation/zoom, an optional 68-point landmark overlay in Textured mode, and local eyelid/iris triangulation so the 468--477 MediaPipe iris points retain their textured eyeballs.
-- Dense Mesh uses MediaPipe's native Windows C API and the same `face_landmarker.task` model as the Python application. It stores only validated 478-point meshes, uses the same source-image matching rule, and never synthesizes a mesh from the unrelated 68-point landmark cache.
+- Dense Mesh generation runs the official MediaPipe 478-point landmark network directly through ONNX Runtime. It uses the selected database face box and five-point eye alignment, stores only validated 478-point meshes, and never substitutes the unrelated 68-point landmark cache.
 - Qt runtime deployment is staged by CMake beside `FscStudioQt.exe`: `platforms`, `imageformats`, and `qt.conf` are then copied verbatim into the portable package, together with the matching Qt and JPEG/PNG runtime DLLs.
 - Search mirrors the Python query workflow: select an image, detect faces asynchronously, choose by list or preview click, then run filtered similarity and identity search with a throttled progressive preview that ends on the best match.
 - Compare detects both selected images asynchronously through a reusable ONNX session, lists every detected face, synchronizes list/preview selection, and compares the selected pair without blocking the UI.
 - Camera keeps native capture at a 33 ms UI cadence while recognition runs on a background worker at the configured interval. Database faces and Identity Gallery profiles are immutable snapshots refreshed only when the database changes; recent boxes, smoothed identities, similar hits, and a focusable best-match preview update on the UI thread.
 - Review shows the selected face preview, runs native identity suggestions, and can confirm the suggested person while retraining profiles.
 - Clusters mirrors the Python parameter band and three-column workflow, supports max-face/min-quality/unassigned/ignored filters, previews selected members with a compact face-focus control, and batch-assigns a selected cluster. Clustering uses OpenCV block matrix multiplication when available, while clustering, transactional assignment, and identity-profile rebuilding run off the UI thread.
-- Runtime loads a real ONNX session on a worker and reports the actual CPU or DirectML execution provider instead of echoing the requested mode. Auto now falls back across the complete session-initialization path. Integrity check, backup, WAL checkpoint, and VACUUM also run on worker database connections.
+- Runtime loads complete ONNX session groups on a worker and reports the actual provider instead of echoing the requested mode. x64 supports CPU, DirectML, and NVIDIA CUDA. Native ARM64 supports CPU plus Qualcomm QNN HTP/NPU and Adreno GPU. Auto falls back only after validating every InsightFace session for a candidate provider.
 - Runtime can convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`. Conversion runs off the UI thread and reports progress through a thread-safe queue.
 
 The final migration requires full UI and workflow parity with `fsc_studio.py`.
@@ -147,65 +147,65 @@ failed archive into `D:\FSC\.deps\vcpkg\downloads` and rerun the preset. On this
 machine `mity-md4c-release-0.5.3.tar.gz` and
 `strawberry-perl-5.42.2.1-64bit-portable.zip` needed that manual cache step.
 
-To create a Python-free portable package from the current Qt build:
+## Release Builds
+
+Prepare or rebuild the standalone Dense Mesh model from the official MediaPipe
+task asset with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1
-.\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb
-.\out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke .\out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg
+.\scripts\prepare-face-mesh-onnx.ps1 -Bootstrap
 ```
 
-To create the standard x64 Windows installer, install Inno Setup 6 and run:
+The conversion Python environment is build-time tooling only. Python and the
+MediaPipe task archive are not included in any release package.
+
+Build the standard x64 DirectML release:
 
 ```powershell
-.\scripts\build-installer.ps1 -AppVersion 0.1.0
-```
-
-The command stages the DirectML Camera package, verifies its Qt Windows platform
-plugin by starting a no-window UI smoke test, checks ONNX Runtime and MediaPipe
-files, then writes `out\installer\FSC-Studio-Setup-x64.exe`. The
-installer contains no Python runtime and does not install, copy, or remove a
-user database or any original photos.
-
-For the release baseline:
-
-```powershell
-cmake --preset msvc-vs-qt-release
-cmake --build --preset msvc-vs-qt-release
-ctest --preset msvc-vs-qt-release
-powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release
-powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip
-```
-
-To build the OpenCV-backed native Camera flavor:
-
-```powershell
-cmake --preset msvc-vs-qt-camera-release
-cmake --build --preset msvc-vs-qt-camera-release
-ctest --preset msvc-vs-qt-camera-release
-.\out\build\msvc-vs-qt-camera-release\Release\FscStudioQt.exe --camera-open-smoke 0
-powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip
-```
-
-To build the DirectML + Camera flavor:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\fetch-onnxruntime-directml.ps1
+.\scripts\fetch-onnxruntime-directml.ps1
 cmake --preset msvc-vs-qt-camera-dml-release
 cmake --build --preset msvc-vs-qt-camera-dml-release
 ctest --preset msvc-vs-qt-camera-dml-release
-.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml
-.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml
-.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-ui-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg directml
-.\out\build\msvc-vs-qt-camera-dml-release\Release\FscStudioQt.exe --camera-live-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models 0 cpu
-powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip
+.\scripts\build-installer.ps1 -Architecture x64 -Accelerator directml -AppVersion 0.2.0
 ```
 
-The package contains the app, Qt runtime DLLs, Qt platform plugin, ONNX Runtime,
-and the local InsightFace model directory. The Camera flavor also includes the
-OpenCV runtime DLLs copied beside the executable. The DirectML flavor uses the
-DirectML-enabled ONNX Runtime NuGet package. It intentionally does not include
-Python, user databases, or personal photos.
+Build the NVIDIA CUDA x64 release. The redistributable staging script collects
+the tested CUDA 13/cuDNN 9 runtime subset, so the target PC needs a compatible
+NVIDIA driver but does not need the CUDA Toolkit:
+
+```powershell
+.\scripts\fetch-onnxruntime.ps1 -Version 1.27.0 -Flavor cuda
+.\scripts\fetch-cuda13-runtime.ps1
+cmake --preset msvc-vs-qt-camera-cuda-release
+cmake --build --preset msvc-vs-qt-camera-cuda-release
+ctest --preset msvc-vs-qt-camera-cuda-release
+.\scripts\build-installer.ps1 -Architecture x64 -Accelerator cuda -AppVersion 0.2.0
+```
+
+Build the native ARM64 Snapdragon release. Quantized InsightFace models are
+used only for QNN HTP/NPU; the original float models remain available for CPU
+and Adreno GPU fallback. Dense Mesh is sent to Adreno GPU or CPU because its
+float display model is not an appropriate NPU workload.
+
+```powershell
+.\scripts\fetch-qt-arm64.ps1
+.\scripts\fetch-onnxruntime-qnn.ps1
+.\scripts\quantize-insightface-qnn.ps1
+.\scripts\build-arm64-qnn.ps1 -Configuration Release
+.\scripts\build-installer.ps1 -Architecture arm64 -Accelerator qnn -AppVersion 0.2.0 -SkipPackageSmoke
+```
+
+The three installers are written to:
+
+- `out\installer\FSC-Studio-Setup-x64.exe`
+- `out\installer\FSC-Studio-CUDA-Setup-x64.exe`
+- `out\installer\FSC-Studio-Setup-arm64.exe`
+
+Each packaging run validates executable architecture, required provider DLLs,
+Qt plugins, models, VC++ redistributable, and a Windows-platform UI launch on
+x64. The package manifest records version, architecture, accelerator, runtime,
+and hashes. Releases intentionally exclude Python, user databases, personal
+photos, source files, and intermediate build artifacts.
 
 Legacy `.dtb` conversion is available from **Runtime > Convert Legacy DTB** or
 by choosing a `.dtb` file from a native database-open control. The converter
@@ -213,10 +213,6 @@ never executes pickle globals; it accepts only the old FSC row shape and NumPy
 RGB payload, then writes `<output>_legacy_images` beside the new `.fscdb` so
 converted faces remain previewable without the original files.
 
-The package also includes `Install-FSCStudioNative.ps1` /
-`Install-FSCStudioNative.bat` and `Uninstall-FSCStudioNative.ps1`. By default the
-installer copies the app to `%LOCALAPPDATA%\Programs\FSC Studio Native` and
-creates a Start Menu shortcut. Use `-InstallDir` for a custom install directory.
-
-The full Qt application is intentionally not the first milestone. The first
-milestone is native algorithm correctness.
+The Inno Setup executable does not use MSIX package certificates, avoiding the
+test-certificate trust failures of the retired WinUI prototype. Public releases
+should still be Authenticode signed to reduce SmartScreen warnings.

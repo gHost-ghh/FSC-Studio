@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fsc/vision/Image.hpp"
+#include "fsc/vision/ModelPaths.hpp"
 
 #include <cstddef>
 #include <filesystem>
@@ -13,14 +14,14 @@ inline constexpr std::size_t kMediaPipeFaceMeshPointCount = 478;
 
 struct MediaPipeFaceLandmarkerOptions {
     std::filesystem::path modelAssetPath;
-    std::filesystem::path runtimeLibraryPath;
-    int maxFaces = 10;
-    float minFaceDetectionConfidence = 0.5f;
+    fsc::vision::RuntimeMode runtimeMode = fsc::vision::RuntimeMode::Auto;
     float minFacePresenceConfidence = 0.5f;
+    float cropScale = 1.5f;
 };
 
-// Uses MediaPipe's native C Task API. It is the same face-landmarker task and
-// coordinate convention used by the Python application, without a Python runtime.
+// Runs the MediaPipe 478-point landmark network through ONNX Runtime. Supplying
+// the database face box and five detection keypoints avoids a second full-image
+// detector pass and keeps multi-face records associated with the correct face.
 class MediaPipeFaceLandmarker {
 public:
     explicit MediaPipeFaceLandmarker(MediaPipeFaceLandmarkerOptions options = {});
@@ -31,8 +32,10 @@ public:
     MediaPipeFaceLandmarker(MediaPipeFaceLandmarker&&) noexcept;
     MediaPipeFaceLandmarker& operator=(MediaPipeFaceLandmarker&&) noexcept;
 
-    [[nodiscard]] std::vector<std::vector<std::vector<double>>> detect(
-        const fsc::vision::RgbImage& image) const;
+    [[nodiscard]] std::vector<std::vector<double>> detect(
+        const fsc::vision::RgbImage& image,
+        const std::vector<double>& faceBox,
+        const std::vector<std::vector<double>>& keypoints = {}) const;
 
 private:
     class Impl;
@@ -40,7 +43,6 @@ private:
 };
 
 [[nodiscard]] std::filesystem::path defaultMediaPipeFaceLandmarkerModelPath();
-[[nodiscard]] std::filesystem::path defaultMediaPipeRuntimeLibraryPath();
 
 [[nodiscard]] bool isMediaPipeFaceMesh(const std::vector<std::vector<double>>& points) noexcept;
 
