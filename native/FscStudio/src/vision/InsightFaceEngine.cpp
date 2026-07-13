@@ -2,15 +2,14 @@
 
 #include "fsc/core/PathEncoding.hpp"
 #include "fsc/core/VectorMath.hpp"
+#include "fsc/vision/RuntimeProvider.hpp"
 
 #include <onnxruntime_cxx_api.h>
-#ifdef FSC_ONNXRUNTIME_HAS_DML
-#include <dml_provider_factory.h>
-#endif
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -30,41 +29,6 @@ struct LandmarkCropTransform {
 
 std::wstring widePath(const std::filesystem::path& path) {
     return path.wstring();
-}
-
-Ort::SessionOptions cpuSessionOptions() {
-    Ort::SessionOptions options;
-    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    return options;
-}
-
-Ort::SessionOptions dmlSessionOptions() {
-#ifdef FSC_ONNXRUNTIME_HAS_DML
-    Ort::SessionOptions options;
-    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    options.DisableMemPattern();
-    options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-    const OrtDmlApi* dmlApi = nullptr;
-    Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dmlApi)));
-    Ort::ThrowOnError(dmlApi->SessionOptionsAppendExecutionProvider_DML(options, 0));
-    return options;
-#else
-    throw std::runtime_error("This ONNX Runtime build does not include DirectML provider headers.");
-#endif
-}
-
-Ort::SessionOptions sessionOptionsFor(RuntimeMode mode) {
-    if (mode == RuntimeMode::DirectMl) {
-        return dmlSessionOptions();
-    }
-    if (mode == RuntimeMode::Auto) {
-        try {
-            return dmlSessionOptions();
-        } catch (...) {
-            return cpuSessionOptions();
-        }
-    }
-    return cpuSessionOptions();
 }
 
 std::vector<std::string> outputNames(Ort::Session& session, Ort::AllocatorWithDefaultOptions& allocator) {
@@ -339,13 +303,25 @@ public:
         }
 
         if (mode_ == RuntimeMode::Auto) {
-            try {
-                initializeSessions(RuntimeMode::DirectMl);
-                actualMode_ = RuntimeMode::DirectMl;
-            } catch (...) {
+            std::ostringstream failures;
+            bool initialized = false;
+            for (const auto candidate : detail::automaticRuntimeCandidates()) {
+                try {
+                    initializeSessions(candidate);
+                    actualMode_ = candidate;
+                    initialized = true;
+                    break;
+                } catch (const std::exception& exception) {
+                    if (failures.tellp() > 0) {
+                        failures << "; ";
+                    }
+                    failures << toString(candidate) << ": " << exception.what();
+                }
                 resetSessions();
-                initializeSessions(RuntimeMode::Cpu);
-                actualMode_ = RuntimeMode::Cpu;
+            }
+            if (!initialized) {
+                throw std::runtime_error(
+                    "No execution provider could initialize all InsightFace sessions: " + failures.str());
             }
         } else {
             initializeSessions(mode_);
@@ -358,11 +334,27 @@ public:
     }
 
     void initializeSessions(RuntimeMode mode) {
-        auto options = sessionOptionsFor(mode);
-        detector_ = std::make_unique<Ort::Session>(env_, widePath(models_.detectionModelPath).c_str(), options);
-        recognizer_ = std::make_unique<Ort::Session>(env_, widePath(models_.recognitionModelPath).c_str(), options);
-        landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark2dModelPath).c_str(), options);
-        landmark3d_ = std::make_unique<Ort::Session>(env_, widePath(models_.landmark3dModelPath).c_str(), options);
+        const auto runtimeModels = models_.optimizedFor(mode);
+        const std::array runtimeModelFiles{
+            runtimeModels.detectionModelPath,
+            runtimeModels.recognitionModelPath,
+            runtimeModels.landmark2dModelPath,
+            runtimeModels.landmark3dModelPath,
+        };
+        const auto missing = std::find_if(runtimeModelFiles.begin(), runtimeModelFiles.end(), [](const auto& path) {
+            return !std::filesystem::exists(path);
+        });
+        if (missing != runtimeModelFiles.end()) {
+            const auto prefix = mode == RuntimeMode::QnnNpu
+                ? "Missing QNN HTP quantized model: "
+                : "Missing InsightFace model: ";
+            throw std::runtime_error(prefix + fsc::core::pathToUtf8(*missing));
+        }
+        auto options = detail::sessionOptionsFor(mode);
+        detector_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.detectionModelPath).c_str(), options);
+        recognizer_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.recognitionModelPath).c_str(), options);
+        landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.landmark2dModelPath).c_str(), options);
+        landmark3d_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.landmark3dModelPath).c_str(), options);
         detectorOutputNames_ = outputNames(*detector_, allocator_);
         recognizerOutputNames_ = outputNames(*recognizer_, allocator_);
         landmark2dOutputNames_ = outputNames(*landmark2d_, allocator_);

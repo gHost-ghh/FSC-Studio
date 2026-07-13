@@ -146,6 +146,24 @@
         "FSC_BUILD_QT_APP": "ON",
         "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime-directml-1.24.4-nuget"
       }
+    },
+    {
+      "name": "msvc-vs-qt-camera-cuda-release",
+      "displayName": "MSVC Visual Studio Qt Camera CUDA Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/msvc-vs-qt-camera-cuda-release",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/../../.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_FEATURES": "qt-app;opencv",
+        "FSC_CORE_ONLY": "OFF",
+        "FSC_ENABLE_ONNX": "ON",
+        "FSC_ENABLE_OPENCV": "ON",
+        "FSC_BUILD_QT_APP": "ON",
+        "ONNXRUNTIME_ROOT": "${sourceDir}/../../.deps/onnxruntime-cuda-1.27.0"
+      }
     }
   ],
   "buildPresets": [
@@ -190,6 +208,11 @@
     {
       "name": "msvc-vs-qt-camera-dml-release",
       "configurePreset": "msvc-vs-qt-camera-dml-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-vs-qt-camera-cuda-release",
+      "configurePreset": "msvc-vs-qt-camera-cuda-release",
       "configuration": "Release"
     }
   ],
@@ -252,6 +275,14 @@
     {
       "name": "msvc-vs-qt-camera-dml-release",
       "configurePreset": "msvc-vs-qt-camera-dml-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-vs-qt-camera-cuda-release",
+      "configurePreset": "msvc-vs-qt-camera-cuda-release",
       "configuration": "Release",
       "output": {
         "outputOnFailure": true

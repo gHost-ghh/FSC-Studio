@@ -80,12 +80,12 @@ First native landmark parity sample:
 
 ## Checkpoint 3: Dense Mesh And Camera
 
-Status: cached 3D data display, native Points/Textured Dense Mesh rendering, MediaPipe-native 478-point Dense Mesh generation, and native Camera capture are implemented.
+Status: cached 3D data display, native Points/Textured Dense Mesh rendering, ONNX-native 478-point Dense Mesh generation, and native Camera capture are implemented.
 
 Acceptance:
 
 - Read and display existing `landmarks3d_json` and `face_mesh3d_json` without Python.
-- Generate Dense Mesh through MediaPipe's native Windows C API using the same task asset and point convention as Python.
+- Generate Dense Mesh from the official MediaPipe landmark network directly through ONNX Runtime using the same point convention as Python.
 - Camera uses native capture, native inference, cached identity profiles, and short-term smoothing.
 
 Current Dense Mesh shell:
@@ -93,7 +93,7 @@ Current Dense Mesh shell:
 - `loadFace()` now parses cached `landmarks3d_json` and `face_mesh3d_json`; `loadFaces()` remains lightweight and does not pull dense mesh JSON into search/list paths.
 - Qt Dense Mesh panels render only validated cached dense mesh data, with native Points/Textured modes, image texture sampling, per-pixel depth buffering, back-facing triangle darkening, drag/zoom/reset, and an optional 68-point landmark overlay in Textured mode. The Textured path augments the base 852-triangle topology with local eyelid/iris Delaunay triangles, so MediaPipe iris points 468--477 render their original eyeball texture.
 - Qt Dense Mesh tabs generate and cache a validated 478-point MediaPipe mesh from the original source image, never from the 68-point landmark cache.
-- `fsc_native_probe <database.fscdb> build-mesh <face_id> <face_landmarker.task>` writes the MediaPipe `face_mesh3d_json` without Python. `repair-invalid-meshes` removes/rebuilds old non-478-point caches.
+- `fsc_native_probe <database.fscdb> build-mesh <face_id> <face_landmarks_detector.onnx>` writes `face_mesh3d_json` without Python. `repair-invalid-meshes` removes/rebuilds old non-478-point caches and uses the selected face bbox/keypoints instead of a largest-face fallback.
 - `FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
 - `FscStudioQt.exe --mesh-render-smoke D:\FSC\new_full.fscdb 1 out\probe\mesh_render.png [yaw pitch]`: renders a nonblank textured mesh screenshot without opening a user window; optional angles exercise back-surface darkening.
 
@@ -109,13 +109,15 @@ Current Camera shell:
 - `FscStudioQt.exe --camera-ui-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models D:\FSC\test_img\test\baiyh.jpg cpu|directml`: both modes exit `0` after populating native Camera UI results.
 - `FscStudioQt.exe --camera-live-smoke D:\FSC\new_full.fscdb D:\FSC\model\insightface\models 0 cpu`: exit code `0` after an 8-second physical-camera run proved at least 20 captured frames and one completed background recognition.
 
-Current DirectML shell:
+Current accelerator shell:
 
 - `fetch-onnxruntime-directml.ps1`: downloads and extracts `Microsoft.ML.OnnxRuntime.DirectML` to `.deps\onnxruntime-directml-1.24.4-nuget`.
 - DirectML builds use `dml_provider_factory.h`, disable memory pattern optimization, force sequential execution mode, and append `SessionOptionsAppendExecutionProvider_DML`.
 - `fsc_vision_probe.exe onnx D:\FSC\model\insightface\models\buffalo_l\det_10g.onnx directml`: provider `DmlExecutionProvider`, exit code `0`.
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
 - `FscStudioQt.exe --camera-result-smoke D:\FSC\model\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
+- x64 CUDA builds load `CUDAExecutionProvider` for all four InsightFace sessions and distribute the tested CUDA 13/cuDNN 9 runtime subset.
+- Native ARM64 builds load Qualcomm QNN. Auto tries quantized HTP/NPU models, then float Adreno GPU, then CPU. Dense Mesh uses Adreno GPU or CPU because the official float display model is not quantized for HTP.
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
@@ -145,9 +147,9 @@ Current Qt shell:
 - Compare can analyze two image files through native ONNX and report embedding cosine plus detection/quality/landmark counts.
 - Clusters now matches the Python grouped controls and responsive three-column layout at 1180x760 and 1600x1000. It supports cosine threshold, minimum size, max faces, minimum quality, unassigned-only, and ignored-face options, plus fixed-width scrollable tables, member preview, and a compact focus toggle. OpenCV block matrix multiplication accelerates pair scoring; build, transactional batch assignment, and Identity Gallery rebuilding run on workers with database/token guards.
 - Camera result selection updates the evidence/best-hit preview locally; person assignment and review mutations remain on the People and Review pages, matching the Python workflow.
-- Runtime exposes Auto / CPU / DirectML mode selection and now creates a real ONNX session on a worker before reporting the actual provider. Auto wraps complete DirectML session initialization and falls back to CPU if any model session fails, rather than only catching provider-registration errors.
+- Runtime exposes the provider modes compiled into each release: Auto / CPU / DirectML on standard x64, Auto / CPU / CUDA on NVIDIA x64, and Auto / CPU / QNN NPU / QNN GPU on native ARM64. Auto validates all four InsightFace sessions before accepting a provider and then falls back as a group.
 - Runtime shows current database stats and runs SQLite integrity check, backup, WAL checkpoint, and VACUUM on separate worker connections with guarded completion and operation logging.
-- Runtime converts trusted legacy `.dtb` files without Python on a worker: it parses only the known FSC tuple/NumPy-image format, re-extracts embeddings with native ONNX, writes `<output>_legacy_images` PPM previews, and opens the converted v8 database. Progress crosses a mutex-protected queue instead of touching Qt widgets from the worker or re-entering the event loop. `fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml] [limit]` remains the reproducible non-UI path.
+- Runtime converts trusted legacy `.dtb` files without Python on a worker: it parses only the known FSC tuple/NumPy-image format, re-extracts embeddings with native ONNX, writes `<output>_legacy_images` PPM previews, and opens the converted v8 database. Progress crosses a mutex-protected queue instead of touching Qt widgets from the worker or re-entering the event loop. `fsc_native_probe <output.fscdb> convert-legacy-dtb <source.dtb> <model_root> [auto|cpu|directml|cuda|qnn-npu|qnn-gpu] [limit]` remains the reproducible non-UI path.
 - Packaged builds prefer `models/insightface/models` next to the executable before falling back to the source checkout model path.
 - `FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
 - `FscStudioQt.exe --review-smoke D:\FSC\native\FscStudio\out\probe\native_review_qt.fscdb 1`: exit code `0`.
@@ -176,37 +178,14 @@ Current Qt shell:
 - `FscStudioQt.exe --compare-smoke D:\FSC\model\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
 - Launch check: `FscStudioQt.exe D:\FSC\new_full.fscdb` stayed running for 3 seconds with the Qt runtime DLLs copied beside the executable.
 
-Current portable package:
+Current release packages:
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Debug`.
-- `cmake --preset msvc-vs-qt-release`, `cmake --build --preset msvc-vs-qt-release`, and `ctest --preset msvc-vs-qt-release`: passed.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Release.zip`.
-- `cmake --preset msvc-vs-qt-camera-release`, `cmake --build --preset msvc-vs-qt-camera-release`, and `ctest --preset msvc-vs-qt-camera-release`: passed.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-Release.zip`.
-- `cmake --preset msvc-vs-qt-camera-dml-release`, `cmake --build --preset msvc-vs-qt-camera-dml-release`, and `ctest --preset msvc-vs-qt-camera-dml-release`: passed.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\package-qt-portable.ps1 -Configuration Release -Camera -DirectML -Zip`: created `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release` and `D:\FSC\native\FscStudio\out\package\FSC-Studio-Native-Camera-DirectML-Release.zip`.
-- Package includes `FscStudioQt.exe`, copied Qt runtime DLLs, `platforms\qwindows.dll`, `onnxruntime.dll`, and `models\insightface\models\buffalo_l`; installer creation runs one explicitly requested Windows-platform UI smoke test before compiling the setup executable. Other automated UI smokes force the deployed `qminimal.dll`, remain off-screen, and resolve the plugin root from the actual executable path rather than the caller's working directory.
-- The legacy portable package includes `Install-FSCStudioNative.ps1`, `Install-FSCStudioNative.bat`, and `Uninstall-FSCStudioNative.ps1`; the standard release path is the Inno Setup installer, which installs `FSC Studio` without Python.
-- It does not include Python runtime, user databases, or personal image data.
-- `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
-- `out\package\FSC-Studio-Native-Debug\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Debug\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
-- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --smoke D:\FSC\new_full.fscdb`: exit code `0`.
-- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --mesh-smoke D:\FSC\new_full.fscdb 1`: exit code `0`.
-- `out\package\FSC-Studio-Native-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-smoke`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-open-smoke 0`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --library-export-smoke D:\FSC\new_full.fscdb D:\FSC\native\FscStudio\out\probe\native_package_library_export_smoke.csv`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --review-action-smoke D:\FSC\native\FscStudio\out\probe\native_package_review_action_smoke.fscdb 1`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --people-action-smoke D:\FSC\native\FscStudio\out\probe\native_package_people_action_smoke.fscdb 1`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --camera-result-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\new_full.fscdb D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
-- `out\package\FSC-Studio-Native-Camera-DirectML-Release\FscStudioQt.exe --compare-smoke out\package\FSC-Studio-Native-Camera-DirectML-Release\models\insightface\models D:\FSC\test_img\123s2\baiyh.jpg D:\FSC\test_img\123s2\baiyh.jpg directml`: exit code `0`.
-- Launch check from the portable directory stayed running for 3 seconds.
-- Launch check from the Camera Release portable directory stayed running for 3 seconds.
-- Launch check from the Camera DirectML Release portable directory stayed running for 3 seconds.
-- Test install: `Install-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative -NoShortcut` copied the Camera Release package, and smoke/camera/compare checks passed from the installed directory.
-- Test uninstall: `Uninstall-FSCStudioNative.ps1 -InstallDir D:\FSC\native\FscStudio\out\install-test\FSCStudioNative` removed the test install directory.
+- x64 DirectML, x64 CUDA, and native ARM64 QNN builds all compile from the same source tree; CTest passes for both runnable x64 flavors and the ARM64 cross-build completes with Qt, OpenCV, SQLite, ONNX Runtime QNN, and VC runtime staging.
+- `package-qt-portable.ps1` validates PE architecture and stages only the selected provider, required models, Qt/OpenCV/SQLite runtime, and VC++ redistributable. Its 0.2.0 manifest records provider and model hashes and states that no Python runtime or user database is present.
+- Packaged DirectML and CUDA builds pass full provider-group probing, two-image face comparison, and 478-point Dense Mesh generation against copied database files. Auto reports `DmlExecutionProvider` and `CUDAExecutionProvider` respectively.
+- `FSC-Studio-Setup-x64.exe` is the 312.2 MiB DirectML installer; `FSC-Studio-CUDA-Setup-x64.exe` is the 1226.0 MiB CUDA installer with the tested CUDA 13/cuDNN 9 subset; `FSC-Studio-Setup-arm64.exe` is the 391.6 MiB QNN installer.
+- The ARM64 executable and all staged native dependencies have ARM64 PE architecture. It cannot be executed on the current x64 build machine, so final HTP/NPU and Adreno acceptance must run on the Surface Pro 11 hardware.
+- The standard release path is an Inno Setup executable rather than MSIX, so it does not depend on a locally trusted test certificate. Public distribution still benefits from Authenticode signing.
 
 Dependency notes:
 

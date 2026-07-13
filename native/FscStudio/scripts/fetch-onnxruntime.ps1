@@ -1,20 +1,31 @@
 param(
     [string]$Version = "1.27.0",
-    [ValidateSet("cpu", "directml")]
+    [ValidateSet("cpu", "directml", "cuda")]
     [string]$Flavor = "cpu",
-    [string]$OutputRoot = "$PSScriptRoot\..\..\..\.deps\onnxruntime"
+    [ValidateSet("12", "13")]
+    [string]$CudaMajor = "13",
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 
+$workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\.."))
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $folder = if ($Flavor -eq "cpu") { "onnxruntime" } else { "onnxruntime-$Flavor-$Version" }
+    $OutputRoot = Join-Path $workspaceRoot ".deps\$folder"
+}
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputRoot)
+$dependencyRoot = [System.IO.Path]::GetFullPath((Join-Path $workspaceRoot ".deps"))
+if (-not $resolvedOutput.StartsWith($dependencyRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "OutputRoot must stay under $dependencyRoot"
+}
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "fsc-onnxruntime-$Version-$Flavor"
 $zipPath = "$tempRoot.zip"
 
-if ($Flavor -eq "directml") {
-    $asset = "onnxruntime-win-x64-directml-$Version.zip"
-} else {
-    $asset = "onnxruntime-win-x64-$Version.zip"
+switch ($Flavor) {
+    "directml" { $asset = "onnxruntime-win-x64-directml-$Version.zip" }
+    "cuda" { $asset = "onnxruntime-win-x64-gpu_cuda$CudaMajor-$Version.zip" }
+    default { $asset = "onnxruntime-win-x64-$Version.zip" }
 }
 
 $url = "https://github.com/microsoft/onnxruntime/releases/download/v$Version/$asset"
@@ -29,7 +40,10 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $resolvedOutput) -Force | Out-Null
 
 Write-Host "Downloading $url"
-Invoke-WebRequest -Uri $url -OutFile $zipPath
+& curl.exe --location --fail --retry 3 --continue-at - --output $zipPath $url
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to download ONNX Runtime archive (curl exit code $LASTEXITCODE)."
+}
 Expand-Archive -LiteralPath $zipPath -DestinationPath $tempRoot -Force
 
 $expanded = Get-ChildItem -LiteralPath $tempRoot -Directory | Select-Object -First 1

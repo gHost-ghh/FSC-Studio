@@ -45,6 +45,7 @@ struct FaceRecord {
     std::string createdAt;
     int duplicateCount = 0;
     std::vector<double> bbox;
+    std::vector<std::vector<double>> keypoints;
     std::vector<std::vector<double>> landmarks2d;
     std::vector<std::vector<double>> landmarks3d;
     std::vector<std::vector<double>> faceMesh3d;

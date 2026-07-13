@@ -240,22 +240,27 @@ class SharedFaceMeshAnalyzer final {
 public:
     std::vector<std::vector<double>> analyze(
         const std::filesystem::path& modelPath,
+        fsc::vision::RuntimeMode runtimeMode,
         const std::filesystem::path& imagePath,
-        const std::vector<double>& faceBox) {
+        const std::vector<double>& faceBox,
+        const std::vector<std::vector<double>>& keypoints) {
         const auto image = fsc::vision::loadImageRgb(imagePath);
         std::lock_guard lock(mutex_);
-        if (!landmarker_ || modelPath_ != modelPath) {
+        if (!landmarker_ || modelPath_ != modelPath || runtimeMode_ != runtimeMode) {
             fsc::mesh::MediaPipeFaceLandmarkerOptions options;
             options.modelAssetPath = modelPath;
+            options.runtimeMode = runtimeMode;
             landmarker_ = std::make_unique<fsc::mesh::MediaPipeFaceLandmarker>(std::move(options));
             modelPath_ = modelPath;
+            runtimeMode_ = runtimeMode;
         }
-        return fsc::mesh::selectBestMediaPipeFaceMesh(landmarker_->detect(image), faceBox);
+        return landmarker_->detect(image, faceBox, keypoints);
     }
 
 private:
     std::mutex mutex_;
     std::filesystem::path modelPath_;
+    fsc::vision::RuntimeMode runtimeMode_ = fsc::vision::RuntimeMode::Auto;
     std::unique_ptr<fsc::mesh::MediaPipeFaceLandmarker> landmarker_;
 };
 
@@ -3944,7 +3949,16 @@ private:
         runtimeModeCombo_->setObjectName("RuntimeMode");
         runtimeModeCombo_->addItem("Auto", "auto");
         runtimeModeCombo_->addItem("CPU", "cpu");
+#ifdef FSC_ONNXRUNTIME_HAS_CUDA
+        runtimeModeCombo_->addItem("NVIDIA CUDA", "cuda");
+#endif
+#ifdef FSC_ONNXRUNTIME_HAS_QNN
+        runtimeModeCombo_->addItem("Snapdragon NPU (QNN)", "qnn-npu");
+        runtimeModeCombo_->addItem("Adreno GPU (QNN)", "qnn-gpu");
+#endif
+#ifdef FSC_ONNXRUNTIME_HAS_DML
         runtimeModeCombo_->addItem("DirectML", "directml");
+#endif
         runtimeModeCombo_->setCurrentIndex(0);
         runtimeBuildLabel_ = new QLabel(engineBox);
         runtimeProviderLabel_ = new QLabel(engineBox);
@@ -4711,7 +4725,9 @@ private:
         libraryMeshTasksInFlight_.insert(taskKey);
         const int64_t faceId = face.id;
         const std::vector<double> faceBox = face.bbox;
+        const std::vector<std::vector<double>> keypoints = face.keypoints;
         const auto modelPath = fsc::mesh::defaultMediaPipeFaceLandmarkerModelPath();
+        const auto runtimeMode = selectedRuntimeMode();
         const auto analyzer = sharedFaceMeshAnalyzer_;
         statusBar()->showMessage(QString("Analyzing dense face mesh for face %1...").arg(faceId));
 
@@ -4736,13 +4752,13 @@ private:
             }
         });
         watcher->setFuture(QtConcurrent::run(
-            [taskKey, databasePath, faceId, sourcePath, faceBox, modelPath, analyzer] {
+            [taskKey, databasePath, faceId, sourcePath, faceBox, keypoints, modelPath, runtimeMode, analyzer] {
                 LibraryMeshAnalysisResult result;
                 result.taskKey = taskKey;
                 result.databasePath = databasePath;
                 result.faceId = faceId;
                 try {
-                    result.mesh = analyzer->analyze(modelPath, sourcePath, faceBox);
+                    result.mesh = analyzer->analyze(modelPath, runtimeMode, sourcePath, faceBox, keypoints);
                     fsc::core::Database workerDatabase(pathFrom(databasePath));
                     workerDatabase.updateFaceMesh3d(faceId, result.mesh);
                 } catch (const std::exception& ex) {
@@ -5126,15 +5142,27 @@ private:
         runtimeProviderLabel_->setText(probeMatchesSelection
             ? runtimeActualProvider_
             : QString("Not tested (%1)").arg(modeText));
-#ifdef FSC_ONNXRUNTIME_HAS_DML
-        runtimeNoteLabel_->setText(
-            "Import, Search, Compare, Camera, and legacy conversion use this setting. "
-            "Auto tries DirectML first and falls back to CPU if unavailable.");
-#else
-        runtimeNoteLabel_->setText(
-            "Import, Search, Compare, Camera, and legacy conversion use this setting. "
-            "This build does not include the DirectML-enabled ONNX Runtime package, so use CPU or rebuild the DirectML flavor.");
+        QString autoOrder;
+#if defined(_M_ARM64) || defined(__aarch64__)
+#ifdef FSC_ONNXRUNTIME_HAS_QNN
+        autoOrder += "Snapdragon NPU, Adreno GPU, ";
 #endif
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+        autoOrder += "DirectML, ";
+#endif
+#else
+#ifdef FSC_ONNXRUNTIME_HAS_CUDA
+        autoOrder += "NVIDIA CUDA, ";
+#endif
+#ifdef FSC_ONNXRUNTIME_HAS_DML
+        autoOrder += "DirectML, ";
+#endif
+#endif
+        autoOrder += "CPU";
+        runtimeNoteLabel_->setText(
+            QString("Import, Search, Compare, Camera, and legacy conversion use this setting. "
+                    "Auto tries complete InsightFace session groups in this order: %1.")
+                .arg(autoOrder));
     }
 
     void probeRuntime() {
@@ -5206,9 +5234,7 @@ private:
             try {
                 const auto models = fsc::vision::InsightFaceModelPaths::fromBuffaloL(pathFrom(modelRoot));
                 const fsc::vision::InsightFaceEngine engine(models, mode);
-                result.provider = engine.actualRuntimeMode() == fsc::vision::RuntimeMode::DirectMl
-                    ? QString("DmlExecutionProvider")
-                    : QString("CPUExecutionProvider");
+                result.provider = qs(fsc::vision::executionProviderName(engine.actualRuntimeMode()));
                 result.modelPath = QString::fromStdWString(models.rootDirectory.wstring());
             } catch (const std::exception& ex) {
                 result.error = QString::fromUtf8(ex.what());
@@ -8278,9 +8304,10 @@ int main(int argc, char** argv) {
                 return 1;
             }
             fsc::mesh::MediaPipeFaceLandmarker landmarker;
-            const auto mesh = fsc::mesh::selectBestMediaPipeFaceMesh(
-                landmarker.detect(fsc::vision::loadImageRgb(face->sourcePath)),
-                face->bbox);
+            const auto mesh = landmarker.detect(
+                fsc::vision::loadImageRgb(face->sourcePath),
+                face->bbox,
+                face->keypoints);
             database.updateFaceMesh3d(faceId, mesh);
             const auto updated = database.loadFace(faceId);
             return updated.has_value() && fsc::mesh::isMediaPipeFaceMesh(updated->faceMesh3d) ? 0 : 1;

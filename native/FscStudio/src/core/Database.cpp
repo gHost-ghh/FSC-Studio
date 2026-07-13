@@ -996,8 +996,8 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), f.embedding_blob, f.embedding_dim, "
         "COALESCE(f.det_score, 0), COALESCE(f.quality_score, 0), COALESCE(f.person_id, 0), "
         "COALESCE(p.name, ''), f.ignored, COALESCE(f.review_state, 'open'), COALESCE(f.notes, ''), "
-        "COALESCE(f.created_at, ''), COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, ''), "
-        "COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, ''), "
+        "COALESCE(f.created_at, ''), COALESCE(f.bbox_json, ''), COALESCE(f.kps_json, ''), "
+        "COALESCE(f.landmarks_json, ''), COALESCE(f.landmarks3d_json, ''), COALESCE(f.face_mesh3d_json, ''), "
         "COALESCE((SELECT COUNT(*) FROM faces d WHERE COALESCE(f.image_hash, '') != '' AND d.image_hash = f.image_hash), 1), "
         "COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM ("
         "SELECT t.name AS name FROM face_tags ft JOIN tags t ON t.id = ft.tag_id "
@@ -1024,18 +1024,19 @@ std::optional<FaceRecord> Database::loadFace(int64_t faceId) const {
     record.notes = textColumn(statement.get(), 11);
     record.createdAt = textColumn(statement.get(), 12);
     record.bbox = doubleListFromJson(textColumn(statement.get(), 13));
-    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 14));
-    record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 15));
-    record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 16));
-    record.duplicateCount = sqlite3_column_int(statement.get(), 17);
-    record.tagText = textColumn(statement.get(), 18);
+    record.keypoints = pointRowsFromJson(textColumn(statement.get(), 14));
+    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 15));
+    record.landmarks3d = pointRowsFromJson(textColumn(statement.get(), 16));
+    record.faceMesh3d = pointRowsFromJson(textColumn(statement.get(), 17));
+    record.duplicateCount = sqlite3_column_int(statement.get(), 18);
+    record.tagText = textColumn(statement.get(), 19);
     return record;
 }
 
 std::optional<FaceRecord> Database::loadFacePreview(int64_t faceId) const {
     const char* sql =
         "SELECT f.id, f.file_name, COALESCE(f.source_path, ''), "
-        "COALESCE(f.bbox_json, ''), COALESCE(f.landmarks_json, '') "
+        "COALESCE(f.bbox_json, ''), COALESCE(f.kps_json, ''), COALESCE(f.landmarks_json, '') "
         "FROM faces f WHERE f.id = ?1";
     Statement statement(db_, sql);
     sqlite3_bind_int64(statement.get(), 1, faceId);
@@ -1047,7 +1048,8 @@ std::optional<FaceRecord> Database::loadFacePreview(int64_t faceId) const {
     record.fileName = textColumn(statement.get(), 1);
     record.sourcePath = textColumn(statement.get(), 2);
     record.bbox = doubleListFromJson(textColumn(statement.get(), 3));
-    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 4));
+    record.keypoints = pointRowsFromJson(textColumn(statement.get(), 4));
+    record.landmarks2d = pointRowsFromJson(textColumn(statement.get(), 5));
     return record;
 }
 
