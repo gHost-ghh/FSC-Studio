@@ -449,6 +449,27 @@ const TranslationTable& uiTranslations() {
             {"Path", "路径"}, {"Stats", "统计"}, {"Refresh Database Stats", "刷新数据库统计"},
             {"Maintenance", "数据库维护"}, {"Check Integrity", "检查完整性"}, {"Backup DB", "备份数据库"},
             {"Checkpoint WAL", "整理 WAL"}, {"Legacy", "旧版"}, {"Convert Legacy DTB", "转换旧 DTB"},
+            {"All", "全部"}, {"Select a face", "选择一张人脸"}, {"Select a person", "选择人物"},
+            {"Select a review item", "选择复核项"}, {"Select target", "选择目标"}, {"Result", "结果"},
+            {"Match", "匹配结果"}, {"Identity: not searched", "身份：尚未搜索"},
+            {"No camera result", "暂无摄像头结果"}, {"Rank", "排名"}, {"Decision", "判定"},
+            {"Score", "分数"}, {"Confidence", "置信度"}, {"Conf", "置信度"}, {"Evidence", "证据"},
+            {"Cosine", "余弦值"}, {"Similarity", "相似度"}, {"Face", "人脸"},
+            {"Open an FSC .fscdb database", "打开 FSC .fscdb 数据库"},
+            {"name, path, person, tag, notes", "名称、路径、人物、标签或备注"},
+            {"person name or notes", "人物姓名或备注"}, {"leave blank for no change", "留空则不修改"},
+            {"Runtime operation results", "运行与维护结果"}, {"Create Database", "新建数据库"},
+            {"Cosine: --    Similarity: --", "余弦值：--    相似度：--"},
+            {"ONNX Runtime enabled", "ONNX Runtime 已启用"}, {"ONNX Runtime disabled", "ONNX Runtime 未启用"},
+            {"Select image", "选择图像"}, {"No database", "未加载数据库"}, {"Face not found", "未找到人脸"},
+            {"No results", "无结果"}, {"Camera stopped", "摄像头已停止"}, {"Loading...", "正在加载..."},
+            {"Failed", "失败"}, {"No people", "没有人物"}, {"No faces", "没有人脸"},
+            {"No review items", "没有复核项"}, {"Image unavailable", "图像不可用"},
+            {"Image preview unavailable", "图像预览不可用"}, {"Open a database first", "请先打开数据库"},
+            {"Comparing database faces...", "正在比对数据库人脸..."}, {"Identity: searching...", "身份：正在搜索..."},
+            {"Detecting query faces...", "正在检测查询图像中的人脸..."},
+            {"Convert a trusted legacy .dtb database by re-analyzing its embedded RGB images. The converted database keeps local preview files and does not require Python at runtime.",
+             "通过重新分析内嵌 RGB 图像转换可信的旧版 .dtb 数据库。转换后的数据库会保留本地预览文件，运行时不需要 Python。"},
         }},
         {"ja", {
             {"Database", "データベース"}, {"Language", "言語"}, {"Identity Mode", "識別モード"},
@@ -503,6 +524,27 @@ const TranslationTable& uiTranslations() {
             {"Path", "パス"}, {"Stats", "統計"}, {"Refresh Database Stats", "DB統計を更新"},
             {"Maintenance", "データベース保守"}, {"Check Integrity", "整合性を確認"}, {"Backup DB", "DBをバックアップ"},
             {"Checkpoint WAL", "WALを整理"}, {"Legacy", "旧形式"}, {"Convert Legacy DTB", "旧DTB変換"},
+            {"All", "すべて"}, {"Select a face", "顔を選択"}, {"Select a person", "人物を選択"},
+            {"Select a review item", "レビュー項目を選択"}, {"Select target", "対象を選択"}, {"Result", "結果"},
+            {"Match", "一致結果"}, {"Identity: not searched", "識別：未検索"},
+            {"No camera result", "カメラ結果なし"}, {"Rank", "順位"}, {"Decision", "判定"},
+            {"Score", "スコア"}, {"Confidence", "信頼度"}, {"Conf", "信頼度"}, {"Evidence", "根拠"},
+            {"Cosine", "コサイン"}, {"Similarity", "類似度"}, {"Face", "顔"},
+            {"Open an FSC .fscdb database", "FSC .fscdb データベースを開く"},
+            {"name, path, person, tag, notes", "名前、パス、人物、タグ、メモ"},
+            {"person name or notes", "人物名またはメモ"}, {"leave blank for no change", "変更しない場合は空欄"},
+            {"Runtime operation results", "ランタイム操作結果"}, {"Create Database", "データベースを作成"},
+            {"Cosine: --    Similarity: --", "コサイン：--    類似度：--"},
+            {"ONNX Runtime enabled", "ONNX Runtime 有効"}, {"ONNX Runtime disabled", "ONNX Runtime 無効"},
+            {"Select image", "画像を選択"}, {"No database", "データベース未読込"}, {"Face not found", "顔が見つかりません"},
+            {"No results", "結果なし"}, {"Camera stopped", "カメラ停止"}, {"Loading...", "読み込み中..."},
+            {"Failed", "失敗"}, {"No people", "人物なし"}, {"No faces", "顔なし"},
+            {"No review items", "レビュー項目なし"}, {"Image unavailable", "画像を利用できません"},
+            {"Image preview unavailable", "画像プレビューを利用できません"}, {"Open a database first", "先にデータベースを開いてください"},
+            {"Comparing database faces...", "データベースの顔を比較中..."}, {"Identity: searching...", "識別：検索中..."},
+            {"Detecting query faces...", "検索画像の顔を検出中..."},
+            {"Convert a trusted legacy .dtb database by re-analyzing its embedded RGB images. The converted database keeps local preview files and does not require Python at runtime.",
+             "埋め込み RGB 画像を再解析して、信頼できる旧 .dtb データベースを変換します。変換後のデータベースはローカルのプレビュー画像を保持し、実行時に Python は不要です。"},
         }},
         {"ko", {
             {"Database", "데이터베이스"}, {"Language", "언어"}, {"Identity Mode", "식별 모드"},
@@ -557,9 +599,41 @@ const TranslationTable& uiTranslations() {
             {"Path", "경로"}, {"Stats", "통계"}, {"Refresh Database Stats", "DB 통계 새로 고침"},
             {"Maintenance", "데이터베이스 유지 관리"}, {"Check Integrity", "무결성 검사"}, {"Backup DB", "DB 백업"},
             {"Checkpoint WAL", "WAL 정리"}, {"Legacy", "이전 형식"}, {"Convert Legacy DTB", "이전 DTB 변환"},
+            {"All", "전체"}, {"Select a face", "얼굴 선택"}, {"Select a person", "인물 선택"},
+            {"Select a review item", "검토 항목 선택"}, {"Select target", "대상 선택"}, {"Result", "결과"},
+            {"Match", "일치 결과"}, {"Identity: not searched", "식별: 검색 안 함"},
+            {"No camera result", "카메라 결과 없음"}, {"Rank", "순위"}, {"Decision", "판정"},
+            {"Score", "점수"}, {"Confidence", "신뢰도"}, {"Conf", "신뢰도"}, {"Evidence", "근거"},
+            {"Cosine", "코사인"}, {"Similarity", "유사도"}, {"Face", "얼굴"},
+            {"Open an FSC .fscdb database", "FSC .fscdb 데이터베이스 열기"},
+            {"name, path, person, tag, notes", "이름, 경로, 인물, 태그 또는 메모"},
+            {"person name or notes", "인물 이름 또는 메모"}, {"leave blank for no change", "변경하지 않으려면 비워 두기"},
+            {"Runtime operation results", "런타임 작업 결과"}, {"Create Database", "데이터베이스 만들기"},
+            {"Cosine: --    Similarity: --", "코사인: --    유사도: --"},
+            {"ONNX Runtime enabled", "ONNX Runtime 사용 가능"}, {"ONNX Runtime disabled", "ONNX Runtime 사용 안 함"},
+            {"Select image", "이미지 선택"}, {"No database", "데이터베이스 없음"}, {"Face not found", "얼굴을 찾을 수 없음"},
+            {"No results", "결과 없음"}, {"Camera stopped", "카메라 중지됨"}, {"Loading...", "불러오는 중..."},
+            {"Failed", "실패"}, {"No people", "인물 없음"}, {"No faces", "얼굴 없음"},
+            {"No review items", "검토 항목 없음"}, {"Image unavailable", "이미지를 사용할 수 없음"},
+            {"Image preview unavailable", "이미지 미리보기를 사용할 수 없음"}, {"Open a database first", "먼저 데이터베이스를 여세요"},
+            {"Comparing database faces...", "데이터베이스 얼굴 비교 중..."}, {"Identity: searching...", "식별: 검색 중..."},
+            {"Detecting query faces...", "검색 이미지의 얼굴 감지 중..."},
+            {"Convert a trusted legacy .dtb database by re-analyzing its embedded RGB images. The converted database keeps local preview files and does not require Python at runtime.",
+             "포함된 RGB 이미지를 다시 분석하여 신뢰할 수 있는 이전 .dtb 데이터베이스를 변환합니다. 변환된 데이터베이스는 로컬 미리보기 파일을 유지하며 실행할 때 Python이 필요하지 않습니다."},
         }},
     };
     return translations;
+}
+
+bool isUiTranslationKey(const QString& key) {
+    const auto encoded = key.toStdString();
+    for (const auto& [language, entries] : uiTranslations()) {
+        (void)language;
+        if (entries.contains(encoded)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString translationKey(const QString& text) {
@@ -2141,6 +2215,62 @@ public:
 #endif
 #endif
 
+    void setLanguageForSmoke(const QString& language) {
+        if (languageCombo_ == nullptr) {
+            return;
+        }
+        const int index = languageCombo_->findData(language);
+        languageCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        applyLanguage();
+    }
+
+    [[nodiscard]] QStringList translationCoverageIssuesForSmoke(const QString& language) const {
+        QStringList issues;
+        const QStringList requiredKeys{
+            "All", "Select a face", "Select a person", "Select a review item", "Select target",
+            "Result", "Match", "Identity: not searched", "No camera result", "Rank", "Decision",
+            "Score", "Confidence", "Conf", "Evidence", "Cosine", "Similarity", "Face",
+            "Open an FSC .fscdb database", "name, path, person, tag, notes", "person name or notes",
+            "leave blank for no change", "Runtime operation results", "Create Database",
+            "Cosine: --    Similarity: --", "ONNX Runtime enabled", "ONNX Runtime disabled",
+            "Convert a trusted legacy .dtb database by re-analyzing its embedded RGB images. "
+            "The converted database keeps local preview files and does not require Python at runtime.",
+        };
+        for (const auto& key : requiredKeys) {
+            if (language != "en" && translatedText(key, language) == key) {
+                issues.push_back("missing translation: " + key);
+            }
+        }
+
+        const auto inspect = [&](const QString& value, const QString& context) {
+            if (!value.isEmpty() && translatedText(value, language) != value) {
+                issues.push_back(context + ": " + value);
+            }
+        };
+        for (auto* widget : findChildren<QLabel*>()) inspect(widget->text(), "label");
+        for (auto* widget : findChildren<QPushButton*>()) inspect(widget->text(), "button");
+        for (auto* widget : findChildren<QToolButton*>()) inspect(widget->text(), "tool button");
+        for (auto* widget : findChildren<QCheckBox*>()) inspect(widget->text(), "check box");
+        for (auto* widget : findChildren<QGroupBox*>()) inspect(widget->title(), "group");
+        for (auto* widget : findChildren<QLineEdit*>()) inspect(widget->placeholderText(), "line edit placeholder");
+        for (auto* widget : findChildren<QTextEdit*>()) inspect(widget->placeholderText(), "text edit placeholder");
+        for (auto* widget : findChildren<QWidget*>()) inspect(widget->toolTip(), "tool tip");
+        for (auto* widget : findChildren<QTabWidget*>()) {
+            for (int index = 0; index < widget->count(); ++index) inspect(widget->tabText(index), "tab");
+        }
+        for (auto* widget : findChildren<QComboBox*>()) {
+            if (widget == languageCombo_) continue;
+            for (int index = 0; index < widget->count(); ++index) inspect(widget->itemText(index), "combo item");
+        }
+        for (auto* table : findChildren<QTableWidget*>()) {
+            for (int column = 0; column < table->columnCount(); ++column) {
+                if (const auto* header = table->horizontalHeaderItem(column)) inspect(header->text(), "table header");
+            }
+        }
+        issues.removeDuplicates();
+        return issues;
+    }
+
 private:
     struct CameraResultActionRow {
         int faceIndex = -1;
@@ -2328,10 +2458,42 @@ private:
     }
 
     void applyTranslatedStaticText() {
-        const auto translateText = [this](auto* widget) {
+        const QString targetLanguage = languageCombo_ == nullptr
+            ? QString("en")
+            : languageCombo_->currentData().toString();
+        const auto translatedObjectValue = [this, &targetLanguage](
+            QObject* object,
+            const char* propertyName,
+            const QString& current) -> QString {
+            if (current.isEmpty()) {
+                return current;
+            }
+            QString key = object->property(propertyName).toString();
+            if (key.isEmpty()) {
+                if (!appliedLanguage_.isEmpty()) {
+                    return current;
+                }
+                const QString candidate = translationKey(current);
+                if (!isUiTranslationKey(candidate)) {
+                    return current;
+                }
+                key = candidate;
+                object->setProperty(propertyName, key);
+            } else if (!appliedLanguage_.isEmpty() && current != translatedText(key, appliedLanguage_)) {
+                const QString candidate = translationKey(current);
+                if (!isUiTranslationKey(candidate)) {
+                    object->setProperty(propertyName, QVariant{});
+                    return current;
+                }
+                key = candidate;
+                object->setProperty(propertyName, key);
+            }
+            return translatedText(key, targetLanguage);
+        };
+        const auto translateText = [&translatedObjectValue](auto* widget) {
             const QString current = widget->text();
             if (!current.isEmpty()) {
-                widget->setText(trUi(current));
+                widget->setText(translatedObjectValue(widget, "fscTranslationKey", current));
             }
         };
         for (auto* widget : findChildren<QLabel*>()) {
@@ -2346,15 +2508,47 @@ private:
         for (auto* widget : findChildren<QCheckBox*>()) {
             translateText(widget);
         }
+        for (auto* widget : findChildren<QLineEdit*>()) {
+            const QString current = widget->placeholderText();
+            if (!current.isEmpty()) {
+                widget->setPlaceholderText(translatedObjectValue(widget, "fscPlaceholderTranslationKey", current));
+            }
+        }
+        for (auto* widget : findChildren<QTextEdit*>()) {
+            const QString current = widget->placeholderText();
+            if (!current.isEmpty()) {
+                widget->setPlaceholderText(translatedObjectValue(widget, "fscPlaceholderTranslationKey", current));
+            }
+        }
+        for (auto* widget : findChildren<QWidget*>()) {
+            const QString current = widget->toolTip();
+            if (!current.isEmpty()) {
+                widget->setToolTip(translatedObjectValue(widget, "fscToolTipTranslationKey", current));
+            }
+        }
         for (auto* widget : findChildren<QGroupBox*>()) {
             const QString current = widget->title();
             if (!current.isEmpty()) {
-                widget->setTitle(trUi(current));
+                widget->setTitle(translatedObjectValue(widget, "fscTitleTranslationKey", current));
             }
         }
         for (auto* widget : findChildren<QTabWidget*>()) {
+            if (widget == tabs_) {
+                continue;
+            }
             for (int index = 0; index < widget->count(); ++index) {
-                widget->setTabText(index, trUi(widget->tabText(index)));
+                QString key = widget->tabBar()->tabData(index).toString();
+                const QString current = widget->tabText(index);
+                if (key.isEmpty() && appliedLanguage_.isEmpty()) {
+                    const QString candidate = translationKey(current);
+                    if (isUiTranslationKey(candidate)) {
+                        key = candidate;
+                        widget->tabBar()->setTabData(index, key);
+                    }
+                }
+                if (!key.isEmpty()) {
+                    widget->setTabText(index, translatedText(key, targetLanguage));
+                }
             }
         }
         for (auto* widget : findChildren<QComboBox*>()) {
@@ -2362,13 +2556,35 @@ private:
                 continue;
             }
             for (int index = 0; index < widget->count(); ++index) {
-                widget->setItemText(index, trUi(widget->itemText(index)));
+                constexpr int translationRole = Qt::UserRole + 31;
+                QString key = widget->itemData(index, translationRole).toString();
+                if (key.isEmpty() && appliedLanguage_.isEmpty()) {
+                    const QString candidate = translationKey(widget->itemText(index));
+                    if (isUiTranslationKey(candidate)) {
+                        key = candidate;
+                        widget->setItemData(index, key, translationRole);
+                    }
+                }
+                if (!key.isEmpty()) {
+                    widget->setItemText(index, translatedText(key, targetLanguage));
+                }
             }
         }
         for (auto* table : findChildren<QTableWidget*>()) {
             for (int index = 0; index < table->columnCount(); ++index) {
                 if (auto* header = table->horizontalHeaderItem(index)) {
-                    header->setText(trUi(header->text()));
+                    constexpr int translationRole = Qt::UserRole + 31;
+                    QString key = header->data(translationRole).toString();
+                    if (key.isEmpty() && appliedLanguage_.isEmpty()) {
+                        const QString candidate = translationKey(header->text());
+                        if (isUiTranslationKey(candidate)) {
+                            key = candidate;
+                            header->setData(translationRole, key);
+                        }
+                    }
+                    if (!key.isEmpty()) {
+                        header->setText(translatedText(key, targetLanguage));
+                    }
                 }
             }
         }
@@ -2405,6 +2621,7 @@ private:
             }
         }
         applyTranslatedStaticText();
+        appliedLanguage_ = languageCombo_ == nullptr ? QString("en") : languageCombo_->currentData().toString();
         if (database_) {
             loadOverview();
         }
@@ -3987,7 +4204,7 @@ private:
             libraryPreviewFaceId_ = 0;
             libraryFocusOnFace_ = false;
             libraryPreviewLabel_->setPixmap(QPixmap());
-            libraryPreviewLabel_->setText("Select a face");
+            libraryPreviewLabel_->setText(trUi("Select a face"));
             libraryFocusButton_->setEnabled(false);
             libraryLandmarksView_->setMessage("Select a face");
             libraryDenseMeshView_->setTextureImage(QImage());
@@ -4073,8 +4290,8 @@ private:
         libraryFilterTagCombo_->blockSignals(true);
         libraryFilterPersonCombo_->clear();
         libraryFilterTagCombo_->clear();
-        libraryFilterPersonCombo_->addItem("All", "");
-        libraryFilterTagCombo_->addItem("All", "");
+        libraryFilterPersonCombo_->addItem(trUi("All"), "");
+        libraryFilterTagCombo_->addItem(trUi("All"), "");
         if (database_) {
             try {
                 for (const auto& person : database_->loadPeople()) {
@@ -4320,13 +4537,13 @@ private:
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
-                libraryPreviewLabel_->setText("Face not found");
+                libraryPreviewLabel_->setText(trUi("Face not found"));
                 libraryPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
             QImage image = loadPreviewImage(pathFrom(qs(face->sourcePath)));
             if (image.isNull()) {
-                libraryPreviewLabel_->setText("Image unavailable");
+                libraryPreviewLabel_->setText(trUi("Image unavailable"));
                 libraryPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
@@ -4584,7 +4801,7 @@ private:
             peopleFocusButton_->setEnabled(false);
         }
         if (peoplePreviewLabel_ != nullptr) {
-            peoplePreviewLabel_->setText(peopleRows_.empty() ? "No people" : "Select a person");
+            peoplePreviewLabel_->setText(peopleRows_.empty() ? trUi("No people") : trUi("Select a person"));
             peoplePreviewLabel_->setPixmap(QPixmap());
         }
         if (!peopleRows_.empty()) {
@@ -4599,7 +4816,7 @@ private:
         const auto current = peopleMergeTargetCombo_->currentData().toLongLong();
         peopleMergeTargetCombo_->blockSignals(true);
         peopleMergeTargetCombo_->clear();
-        peopleMergeTargetCombo_->addItem("Select target", 0);
+        peopleMergeTargetCombo_->addItem(trUi("Select target"), 0);
         for (const auto& person : peopleRows_) {
             if (person.id == excludePersonId) {
                 continue;
@@ -4636,7 +4853,7 @@ private:
         if (person.representativeFaceId > 0) {
             updatePeoplePreview(person.representativeFaceId);
         } else if (peoplePreviewLabel_ != nullptr) {
-            peoplePreviewLabel_->setText("No faces");
+            peoplePreviewLabel_->setText(trUi("No faces"));
             peoplePreviewLabel_->setPixmap(QPixmap());
         }
         if (peopleSummaryLabel_ != nullptr) {
@@ -4708,7 +4925,7 @@ private:
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
-                peoplePreviewLabel_->setText("Face not found");
+                peoplePreviewLabel_->setText(trUi("Face not found"));
                 peoplePreviewLabel_->setPixmap(QPixmap());
                 return;
             }
@@ -4768,7 +4985,7 @@ private:
             reviewFocusButton_->setEnabled(false);
         }
         if (reviewPreviewLabel_ != nullptr) {
-            reviewPreviewLabel_->setText(reviewRows_.empty() ? "No review items" : "Select a review item");
+            reviewPreviewLabel_->setText(reviewRows_.empty() ? trUi("No review items") : trUi("Select a review item"));
             reviewPreviewLabel_->setPixmap(QPixmap());
         }
         if (reviewSuggestionLabel_ != nullptr) {
@@ -4865,7 +5082,7 @@ private:
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
-                reviewPreviewLabel_->setText("Face not found");
+                reviewPreviewLabel_->setText(trUi("Face not found"));
                 reviewPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
@@ -4896,9 +5113,9 @@ private:
             return;
         }
 #ifdef FSC_ENABLE_ONNX
-        runtimeBuildLabel_->setText("ONNX Runtime enabled");
+        runtimeBuildLabel_->setText(trUi("ONNX Runtime enabled"));
 #else
-        runtimeBuildLabel_->setText("ONNX Runtime disabled");
+        runtimeBuildLabel_->setText(trUi("ONNX Runtime disabled"));
 #endif
         const auto mode = selectedRuntimeMode();
         const QString modeText = qs(fsc::vision::toString(mode));
@@ -4939,7 +5156,7 @@ private:
             runtimeModeCombo_->setEnabled(false);
         }
         if (runtimeProviderLabel_ != nullptr) {
-            runtimeProviderLabel_->setText("Loading...");
+            runtimeProviderLabel_->setText(trUi("Loading..."));
         }
         if (runtimeNoteLabel_ != nullptr) {
             runtimeNoteLabel_->setText("Creating an ONNX Runtime session and checking the actual execution provider...");
@@ -4963,7 +5180,7 @@ private:
             if (!result.error.isEmpty()) {
                 runtimeLastProbeOk_ = false;
                 runtimeActualProvider_.clear();
-                runtimeProviderLabel_->setText("Failed");
+                runtimeProviderLabel_->setText(trUi("Failed"));
                 runtimeNoteLabel_->setText(result.error);
                 statusBar()->showMessage("Runtime loading failed");
                 if (!runtimeProbeSmokeStarted_) {
@@ -5695,8 +5912,8 @@ private:
         searchTagFilterCombo_->blockSignals(true);
         searchPersonFilterCombo_->clear();
         searchTagFilterCombo_->clear();
-        searchPersonFilterCombo_->addItem("All", "");
-        searchTagFilterCombo_->addItem("All", "");
+        searchPersonFilterCombo_->addItem(trUi("All"), "");
+        searchTagFilterCombo_->addItem(trUi("All"), "");
         if (database_) {
             try {
                 for (const auto& person : database_->loadPeople()) {
@@ -5781,11 +5998,11 @@ private:
             searchIdentityTable_->setRowCount(0);
         }
         if (searchResultPreviewLabel_ != nullptr) {
-            searchResultPreviewLabel_->setText("Result");
+            searchResultPreviewLabel_->setText(trUi("Result"));
             searchResultPreviewLabel_->setPixmap(QPixmap());
         }
         if (identityLabel_ != nullptr) {
-            identityLabel_->setText("Identity: not searched");
+            identityLabel_->setText(trUi("Identity: not searched"));
         }
         statusBar()->showMessage("Detecting query faces...");
 
@@ -5934,10 +6151,10 @@ private:
             searchIdentityTable_->setRowCount(0);
             lastSearchIdentityResult_ = {};
             if (identityLabel_ != nullptr) {
-                identityLabel_->setText("Identity: searching...");
+                identityLabel_->setText(trUi("Identity: searching..."));
             }
             if (searchResultPreviewLabel_ != nullptr) {
-                searchResultPreviewLabel_->setText("Comparing database faces...");
+                searchResultPreviewLabel_->setText(trUi("Comparing database faces..."));
                 searchResultPreviewLabel_->setPixmap(QPixmap());
             }
             searchResultPreviewFaceId_ = 0;
@@ -6077,7 +6294,7 @@ private:
         } else {
             searchResultPreviewFaceId_ = 0;
             if (searchResultPreviewLabel_ != nullptr) {
-                searchResultPreviewLabel_->setText("No results");
+                searchResultPreviewLabel_->setText(trUi("No results"));
                 searchResultPreviewLabel_->setPixmap(QPixmap());
             }
             if (searchResultFocusButton_ != nullptr) {
@@ -6125,7 +6342,7 @@ private:
         try {
             const auto face = database_->loadFacePreview(faceId);
             if (!face.has_value()) {
-                searchResultPreviewLabel_->setText("Face not found");
+                searchResultPreviewLabel_->setText(trUi("Face not found"));
                 searchResultPreviewLabel_->setPixmap(QPixmap());
                 searchResultPreviewFaceId_ = 0;
                 if (searchResultFocusButton_ != nullptr) {
@@ -6282,7 +6499,7 @@ private:
         }
         if (cameraMatchPreviewLabel_ != nullptr) {
             cameraMatchPreviewLabel_->setPixmap(QPixmap());
-            cameraMatchPreviewLabel_->setText("Match");
+            cameraMatchPreviewLabel_->setText(trUi("Match"));
         }
     }
 
@@ -6419,7 +6636,7 @@ private:
         setCameraMatchPlaceholder("No camera result");
         if (cameraPreviewLabel_ != nullptr) {
             cameraPreviewLabel_->setPixmap(QPixmap());
-            cameraPreviewLabel_->setText("Camera stopped");
+            cameraPreviewLabel_->setText(trUi("Camera stopped"));
         }
         if (cameraStartButton_ != nullptr) {
             cameraStartButton_->setEnabled(true);
@@ -6795,7 +7012,7 @@ private:
             focusButton->setText(trUi("Focus on Face"));
             focusButton->setEnabled(false);
         }
-        compareResultLabel_->setText("Cosine: --    Similarity: --");
+        compareResultLabel_->setText(trUi("Cosine: --    Similarity: --"));
         analyzeCompareImage(slot);
     }
 
@@ -7174,7 +7391,7 @@ private:
         try {
             const auto face = database_->loadFace(faceId);
             if (!face.has_value()) {
-                clusterPreviewLabel_->setText("Face not found");
+                clusterPreviewLabel_->setText(trUi("Face not found"));
                 clusterPreviewLabel_->setPixmap(QPixmap());
                 return;
             }
@@ -7289,7 +7506,7 @@ private:
         }
         QImage image = loadPreviewImage(imagePath);
         if (image.isNull()) {
-            libraryPreviewLabel_->setText("Image preview unavailable");
+            libraryPreviewLabel_->setText(trUi("Image preview unavailable"));
             libraryPreviewLabel_->setPixmap(QPixmap());
             return;
         }
@@ -7653,6 +7870,7 @@ private:
     QListWidget* sidebar_ = nullptr;
     QLabel* languageLabel_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
+    QString appliedLanguage_;
     QLabel* identityModeLabel_ = nullptr;
     QComboBox* identityModeCombo_ = nullptr;
     QLineEdit* databasePathEdit_ = nullptr;
@@ -8692,6 +8910,9 @@ int main(int argc, char** argv) {
             argc >= 7 ? std::max(650, std::atoi(argv[6])) : 1000);
         window.openDatabasePath(commandLineArgument(argc, argv, 2));
         window.selectPageForSmoke(commandLineArgument(argc, argv, 3));
+        if (argc >= 8) {
+            window.setLanguageForSmoke(commandLineArgument(argc, argv, 7));
+        }
         window.show();
         int outcome = 2;
         QTimer::singleShot(800, &uiApp, [&] {
@@ -8704,6 +8925,15 @@ int main(int argc, char** argv) {
         });
         uiApp.exec();
         return outcome;
+    }
+
+    if (argc >= 2 && std::string(argv[1]) == "--ui-language-coverage-smoke") {
+        const QString language = argc >= 3 ? commandLineArgument(argc, argv, 2) : QString("zh");
+        QApplication uiApp(argc, argv);
+        MainWindow window;
+        window.setLanguageForSmoke(language);
+        const auto issues = window.translationCoverageIssuesForSmoke(language);
+        return issues.isEmpty() ? 0 : std::min(255, 10 + static_cast<int>(issues.size()));
     }
 
     if (argc >= 2 && std::string(argv[1]) == "--ui-language-smoke") {
