@@ -77,7 +77,29 @@ workflows, and user experience before the migration can be considered complete.
 - Maintenance actions: integrity check, backup, checkpoint, vacuum, and operation log.
 - Trusted legacy `.dtb` conversion with progress, an output `.fscdb`, and retained local preview images.
 
-## Current Native Gaps
+## Native Parity Result
+
+All checklist items above are implemented in the native Qt application and are
+covered by command-line UI/workflow smoke tests. The final packaged release
+completed 66 DirectML scenarios and 46 CUDA scenarios on the x64 validation machine;
+the CUDA run omitted duplicate page screenshots after the DirectML visual pass.
+The ARM64/QNN application and package cross-build successfully, while physical
+HTP/NPU and Adreno execution requires the target Surface Pro 11 hardware and is
+covered by `scripts/test-snapdragon-release.ps1`.
+
+Intentional native adaptations:
+
+- Compact fixed columns and horizontal table scrolling replace the Python
+  window's oversized minimum-size behavior, which clipped maximized and
+  1180x760 layouts at 150% Windows scaling.
+- The application follows the Windows system light/dark palette instead of
+  forcing the Python version's light stylesheet.
+- Dynamic diagnostic/metric phrases that are English in the Python reference
+  remain English; static navigation, controls, tabs, headers, placeholders,
+  and tooltips switch among English, Chinese, Japanese, and Korean.
+- Background inference, database writes, clustering, profile training, and
+  camera recognition use guarded native worker tasks. This preserves the same
+  workflow while preventing the UI freezes present in synchronous paths.
 
 - Core file handling now uses explicit UTF-8/native-wide path conversion rather than the active Windows code page. Database create/open/backup, CSV export, image hashing, model diagnostics, legacy conversion, and smoke-command arguments are covered by CJK mixed-path regression tests.
 - Static interface translations now retain stable English keys instead of reconstructing keys from translated text. English, Chinese, Japanese, and Korean can be cycled repeatedly without collisions; labels, controls, tabs, table headers, placeholders, and tooltips have a dedicated coverage smoke.

@@ -1,6 +1,6 @@
-# FSC Studio Native C++ Restart
+# FSC Studio Native Windows Application
 
-This directory is the clean native Windows restart for FSC Studio.
+This directory contains the native Windows implementation of FSC Studio.
 
 The previous WinUI/C# prototype is preserved on `codex/native-winui-prototype`.
 This branch starts from `origin/main` and uses C++/Qt + ONNX Runtime instead of
@@ -9,9 +9,9 @@ continuing that prototype.
 ## Goals
 
 - Keep `.fscdb` v8 compatible with the Python FSC Studio.
-- Port the algorithm core before building the full UI.
+- Preserve Python FSC Studio database, algorithm, workflow, and UI behavior.
 - Avoid Python runtime in the final Windows application.
-- Use Qt 6 Widgets for the desktop UI after the native core reaches parity.
+- Use Qt 6 Widgets for a responsive native desktop UI.
 
 ## Current Checkpoint
 
@@ -44,8 +44,9 @@ continuing that prototype.
 - Runtime loads complete ONNX session groups on a worker and reports the actual provider instead of echoing the requested mode. x64 supports CPU, DirectML, and NVIDIA CUDA. Native ARM64 supports CPU plus Qualcomm QNN HTP/NPU and Adreno GPU. Auto falls back only after validating every InsightFace session for a candidate provider.
 - Runtime can convert trusted legacy `.dtb` data without Python: a restricted reader extracts the old FSC tuple/NumPy RGB layout, native ONNX re-analyzes the images, and a sibling local preview directory is retained for the converted `.fscdb`. Conversion runs off the UI thread and reports progress through a thread-safe queue.
 
-The final migration requires full UI and workflow parity with `fsc_studio.py`.
-Track that explicitly in `docs/python-ui-parity.md`.
+The native application now covers the complete Python page/workflow surface.
+The parity audit and intentional native adaptations are recorded in
+`docs/python-ui-parity.md`.
 
 ## Build
 
@@ -166,7 +167,7 @@ Build the standard x64 DirectML release:
 cmake --preset msvc-vs-qt-camera-dml-release
 cmake --build --preset msvc-vs-qt-camera-dml-release
 ctest --preset msvc-vs-qt-camera-dml-release
-.\scripts\build-installer.ps1 -Architecture x64 -Accelerator directml -AppVersion 0.2.0
+.\scripts\build-installer.ps1 -Architecture x64 -Accelerator directml -AppVersion 1.0.0
 ```
 
 Build the NVIDIA CUDA x64 release. The redistributable staging script collects
@@ -179,20 +180,22 @@ NVIDIA driver but does not need the CUDA Toolkit:
 cmake --preset msvc-vs-qt-camera-cuda-release
 cmake --build --preset msvc-vs-qt-camera-cuda-release
 ctest --preset msvc-vs-qt-camera-cuda-release
-.\scripts\build-installer.ps1 -Architecture x64 -Accelerator cuda -AppVersion 0.2.0
+.\scripts\build-installer.ps1 -Architecture x64 -Accelerator cuda -AppVersion 1.0.0
 ```
 
 Build the native ARM64 Snapdragon release. Quantized InsightFace models are
-used only for QNN HTP/NPU; the original float models remain available for CPU
-and Adreno GPU fallback. Dense Mesh is sent to Adreno GPU or CPU because its
-float display model is not an appropriate NPU workload.
+used for the main QNN HTP/NPU sessions; a small ARM CPU auxiliary session keeps
+SCRFD's 128/640 dual-scale detection parity because HTP requires the quantized
+detector's fixed 640 input. The original float models also remain available for
+CPU and Adreno GPU fallback. Dense Mesh is sent to Adreno GPU or CPU because
+its float display model is not an appropriate NPU workload.
 
 ```powershell
 .\scripts\fetch-qt-arm64.ps1
 .\scripts\fetch-onnxruntime-qnn.ps1
 .\scripts\quantize-insightface-qnn.ps1
 .\scripts\build-arm64-qnn.ps1 -Configuration Release
-.\scripts\build-installer.ps1 -Architecture arm64 -Accelerator qnn -AppVersion 0.2.0 -SkipPackageSmoke
+.\scripts\build-installer.ps1 -Architecture arm64 -Accelerator qnn -AppVersion 1.0.0 -SkipPackageSmoke
 ```
 
 The three installers are written to:
@@ -205,7 +208,36 @@ Each packaging run validates executable architecture, required provider DLLs,
 Qt plugins, models, VC++ redistributable, and a Windows-platform UI launch on
 x64. The package manifest records version, architecture, accelerator, runtime,
 and hashes. Releases intentionally exclude Python, user databases, personal
-photos, source files, and intermediate build artifacts.
+photos, source files, and intermediate build artifacts. The offline user guide,
+application license, and third-party notices are installed beside the program.
+
+Run the reusable full release matrix against an x64 build or package with:
+
+```powershell
+.\scripts\test-native-release.ps1 `
+  -BuildDirectory .\out\package\FSC-Studio-Windows-x64-DIRECTML-Release `
+  -Database D:\FSC\new_full.fscdb `
+  -ClusterDatabase D:\FSC\new_full.fscdb `
+  -ModelRoot .\out\package\FSC-Studio-Windows-x64-DIRECTML-Release\models\insightface\models\buffalo_l `
+  -ImageA D:\FSC\test_img\test\baiyh.jpg `
+  -ImageB D:\FSC\test_img\test\bianyh.jpg `
+  -RuntimeMode directml -ExpectedProvider DmlExecutionProvider
+```
+
+`test-native-release.ps1` uses a new database copy for every mutating scenario.
+It covers the nine pages at compact and large window sizes, all four languages,
+database operations, import/search/compare/camera, People/Review/Clusters,
+Identity Gallery, Dense Mesh, maintenance, and optional physical camera input.
+
+Use `test-installed-release.ps1` for an install-launch-provider-uninstall check.
+Use `test-snapdragon-release.ps1` on Surface Pro 11 to run the same matrix with
+HTP/NPU, Adreno GPU, and ARM64 CPU independently.
+
+On the local 480x640 one-face benchmark, the persistent full native pipeline
+(dual-scale SCRFD, ArcFace, 2D/3D landmarks, and quality) measured about 1.25 s
+on CPU, 34.9 ms on DirectML, and 93.1 ms on CUDA. The exact CUDA value varies
+with concurrent GPU load; the benchmark command reports the provider actually
+used instead of trusting the requested mode.
 
 Legacy `.dtb` conversion is available from **Runtime > Convert Legacy DTB** or
 by choosing a `.dtb` file from a native database-open control. The converter

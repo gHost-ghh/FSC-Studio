@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FscStudioNative VERSION 0.2.0 LANGUAGES CXX)
+project(FscStudioNative VERSION 1.0.0 LANGUAGES CXX)
 
 option(FSC_BUILD_QT_APP "Build the Qt desktop shell" OFF)
 option(FSC_CORE_ONLY "Build dependency-light algorithm core only" OFF)

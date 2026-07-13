@@ -54,7 +54,9 @@ Ort::SessionOptions cudaSessionOptions() {
 Ort::SessionOptions qnnSessionOptions(bool npu) {
 #ifdef FSC_ONNXRUNTIME_HAS_QNN
     auto options = cpuSessionOptions();
-    options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    if (npu) {
+        options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    }
     std::unordered_map<std::string, std::string> providerOptions{
         {"backend_path", npu ? "QnnHtp.dll" : "QnnGpu.dll"},
     };

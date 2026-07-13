@@ -7,7 +7,7 @@
 #endif
 
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "1.0.0"
 #endif
 
 #ifndef Architecture
@@ -22,12 +22,16 @@
   #define VCRedistFile "VC_redist.x64.exe"
 #endif
 
+#ifndef ApplicationId
+  #define ApplicationId "{{594F0143-C6C1-442A-9DE7-4D2528B3EA41}"
+#endif
+
 #define AppName "FSC Studio"
 #define AppPublisher "FSC Studio"
 #define AppExeName "FscStudioQt.exe"
 
 [Setup]
-AppId={{594F0143-C6C1-442A-9DE7-4D2528B3EA41}
+AppId={#ApplicationId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -47,7 +51,12 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 #endif
 UninstallDisplayName=FSC Studio
+InfoBeforeFile={#SourceDir}\THIRD-PARTY-NOTICES.txt
+#ifdef PerUserTestMode
+PrivilegesRequired=lowest
+#else
 PrivilegesRequired=admin
+#endif
 CloseApplications=yes
 RestartApplications=no
 
@@ -63,8 +72,11 @@ Source: "{#SourceDir}\_redist\{#VCRedistFile}"; DestDir: "{tmp}"; Flags: ignorev
 
 [Icons]
 Name: "{autoprograms}\FSC Studio"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{autoprograms}\FSC Studio User Guide"; Filename: "{app}\FSC-Studio-User-Guide.html"
 Name: "{autodesktop}\FSC Studio"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
+#ifndef PerUserTestMode
 Filename: "{tmp}\{#VCRedistFile}"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: runhidden waituntilterminated
+#endif
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,FSC Studio}"; Flags: nowait postinstall skipifsilent

@@ -718,6 +718,15 @@ IdentityProfile buildIdentityProfileFromFaces(
     const double negP99 = negativeScores.empty() ? 0.0 : percentile(negativeScores, 99.0);
     const double negMax = negativeScores.empty() ? 0.0 : *std::max_element(negativeScores.begin(), negativeScores.end());
 
+    profile.calibrationPositiveCount = static_cast<int>(positiveScores.size());
+    profile.calibrationNegativeCount = static_cast<int>(negativeScores.size());
+    profile.calibrationPositiveMean = positiveMean;
+    profile.calibrationPositiveP05 = posP05;
+    profile.calibrationPositiveP20 = posP20;
+    profile.calibrationNegativeP95 = negP95;
+    profile.calibrationNegativeP99 = negP99;
+    profile.calibrationNegativeMax = negMax;
+
     double strictAccept = 0.92;
     double balancedAccept = 0.90;
     double broadAccept = 0.88;
@@ -729,6 +738,8 @@ IdentityProfile buildIdentityProfileFromFaces(
     profile.strict = {strictAccept, std::clamp(strictAccept - 0.100, 0.35, strictAccept - 0.020), 0.055};
     profile.balanced = {balancedAccept, std::clamp(balancedAccept - 0.115, 0.32, balancedAccept - 0.020), 0.040};
     profile.broad = {broadAccept, std::clamp(broadAccept - 0.130, 0.28, broadAccept - 0.020), 0.025};
+    profile.calibrationHasStrictGap = !negativeScores.empty();
+    profile.calibrationStrictGap = strictAccept - negMax;
     profile.acceptThreshold = profile.strict.accept;
     profile.reviewThreshold = profile.strict.review;
     profile.status = profile.sampleCount >= 3 ? "strong" : "weak";
@@ -1174,6 +1185,18 @@ std::vector<IdentityProfile> Database::loadIdentityProfiles() const {
         try {
             const auto calibration = nlohmann::json::parse(textColumn(statement.get(), 12));
             profile.health = calibration.value("health", "");
+            profile.calibrationPositiveCount = calibration.value("positive_count", 0);
+            profile.calibrationNegativeCount = calibration.value("negative_count", 0);
+            profile.calibrationPositiveMean = calibration.value("positive_mean", 0.0);
+            profile.calibrationPositiveP05 = calibration.value("positive_p05", profile.calibrationPositiveMean);
+            profile.calibrationPositiveP20 = calibration.value("positive_p20", profile.calibrationPositiveMean);
+            profile.calibrationNegativeP95 = calibration.value("negative_p95", 0.0);
+            profile.calibrationNegativeP99 = calibration.value("negative_p99", 0.0);
+            profile.calibrationNegativeMax = calibration.value("negative_max", 0.0);
+            if (calibration.contains("strict_gap") && calibration["strict_gap"].is_number()) {
+                profile.calibrationHasStrictGap = true;
+                profile.calibrationStrictGap = calibration["strict_gap"].get<double>();
+            }
         } catch (...) {
             profile.health.clear();
         }
@@ -1847,14 +1870,22 @@ IdentityTrainingSummary Database::rebuildIdentityProfiles(const IdentityTraining
             const auto prototypes = flattenRows(profile.prototypes);
             const auto exemplars = flattenRows(profile.exemplars);
             const auto thresholds = thresholdsJson(profile).dump();
-            const auto calibration = nlohmann::json{
-                {"positive_count", std::max(0, profile.sampleCount - 1)},
-                {"negative_count", negatives.size()},
-                {"positive_mean", profile.meanSimilarity},
-                {"negative_max", nullptr},
+            auto calibrationObject = nlohmann::json{
+                {"positive_count", profile.calibrationPositiveCount},
+                {"negative_count", profile.calibrationNegativeCount},
+                {"positive_mean", profile.calibrationPositiveMean},
+                {"positive_p05", profile.calibrationPositiveP05},
+                {"positive_p20", profile.calibrationPositiveP20},
+                {"negative_p95", profile.calibrationNegativeP95},
+                {"negative_p99", profile.calibrationNegativeP99},
+                {"negative_max", profile.calibrationNegativeMax},
                 {"strict_gap", nullptr},
                 {"health", profile.health},
-            }.dump();
+            };
+            if (profile.calibrationHasStrictGap) {
+                calibrationObject["strict_gap"] = profile.calibrationStrictGap;
+            }
+            const auto calibration = calibrationObject.dump();
             const auto exemplarFaceIds = nlohmann::json(profile.exemplarFaceIds).dump();
             const auto hardNegativeFaceIds = nlohmann::json(profile.hardNegativeFaceIds).dump();
             const auto evidenceFaceIds = nlohmann::json(profile.evidenceFaceIds).dump();

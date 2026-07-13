@@ -5,7 +5,7 @@ param(
     [string]$Architecture = "x64",
     [ValidateSet("directml", "cuda", "qnn")]
     [string]$Accelerator = "directml",
-    [string]$AppVersion = "0.2.0",
+    [string]$AppVersion = "1.0.0",
     [string]$BuildDir = "",
     [string]$OutputDir = "",
     [string]$ModelRoot = "",
@@ -136,6 +136,18 @@ $faceMeshOut = Join-Path $outputFull "models\mediapipe"
 New-Item -ItemType Directory -Force -Path $faceMeshOut | Out-Null
 Copy-Item -LiteralPath $FaceMeshModel -Destination (Join-Path $faceMeshOut "face_landmarks_detector.onnx") -Force
 
+$guideSource = Join-Path $projectRoot "docs\user-guide.zh-CN.html"
+$noticesSource = Join-Path $projectRoot "docs\third-party-notices.txt"
+$licenseSource = Join-Path $workspaceRoot "LICENSE"
+foreach ($requiredDocument in @($guideSource, $noticesSource, $licenseSource)) {
+    if (-not (Test-Path -LiteralPath $requiredDocument)) {
+        throw "Required release document is missing: $requiredDocument"
+    }
+}
+Copy-Item -LiteralPath $guideSource -Destination (Join-Path $outputFull "FSC-Studio-User-Guide.html") -Force
+Copy-Item -LiteralPath $noticesSource -Destination (Join-Path $outputFull "THIRD-PARTY-NOTICES.txt") -Force
+Copy-Item -LiteralPath $licenseSource -Destination (Join-Path $outputFull "LICENSE.txt") -Force
+
 if ($Accelerator -eq "cuda") {
     if (-not $CudaRuntimeRoot) { $CudaRuntimeRoot = Join-Path $depsRoot "cuda13-redist" }
     $cudaBin = if (Test-Path (Join-Path $CudaRuntimeRoot "bin")) { Join-Path $CudaRuntimeRoot "bin" } else { $CudaRuntimeRoot }
@@ -191,6 +203,9 @@ $manifest = [ordered]@{
     camera = $true
     includes_python_runtime = $false
     includes_user_database = $false
+    user_guide = "FSC-Studio-User-Guide.html"
+    third_party_notices = "THIRD-PARTY-NOTICES.txt"
+    insightface_model_terms = "non-commercial research use only; see THIRD-PARTY-NOTICES.txt"
     insightface_models = "models/insightface/models/buffalo_l"
     dense_mesh_model = "models/mediapipe/face_landmarks_detector.onnx"
     runtime = [ordered]@{
@@ -215,7 +230,7 @@ if (-not $SkipSmoke -and $Architecture -eq "x64") {
     $smokeInfo.Arguments = "--ui-language-smoke en"
     $smoke = [System.Diagnostics.Process]::Start($smokeInfo)
     if (-not $smoke.WaitForExit(20000)) {
-        $smoke.Kill($true)
+        $smoke.Kill()
         throw "Packaged Qt smoke test timed out."
     }
     if ($smoke.ExitCode -ne 0) { throw "Packaged Qt smoke test failed with exit code $($smoke.ExitCode)." }

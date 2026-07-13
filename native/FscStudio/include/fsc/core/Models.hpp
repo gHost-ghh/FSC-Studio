@@ -134,6 +134,16 @@ struct IdentityProfile {
     double minSimilarity = 0.0;
     double maxSimilarity = 0.0;
     double qualityMean = 0.0;
+    int calibrationPositiveCount = 0;
+    int calibrationNegativeCount = 0;
+    double calibrationPositiveMean = 0.0;
+    double calibrationPositiveP05 = 0.0;
+    double calibrationPositiveP20 = 0.0;
+    double calibrationNegativeP95 = 0.0;
+    double calibrationNegativeP99 = 0.0;
+    double calibrationNegativeMax = 0.0;
+    bool calibrationHasStrictGap = false;
+    double calibrationStrictGap = 0.0;
     std::vector<int64_t> evidenceFaceIds;
     std::string status;
     std::string health;

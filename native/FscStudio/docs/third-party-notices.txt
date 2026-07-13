@@ -1,0 +1,73 @@
+FSC Studio - Third-Party Notices
+================================
+
+FSC Studio is distributed under the Apache License 2.0. The installed
+LICENSE.txt contains the application license. The following components and
+model files retain their own licenses and terms.
+
+Qt 6
+----
+Copyright (C) The Qt Company Ltd. and other contributors.
+The dynamically linked Qt Core, GUI, and Widgets libraries are available under
+the GNU Lesser General Public License v3 (or applicable commercial terms).
+Source and license information: https://www.qt.io/licensing/open-source-lgpl-obligations
+
+ONNX Runtime
+------------
+Copyright (c) Microsoft Corporation. MIT License.
+https://github.com/microsoft/onnxruntime
+
+OpenCV
+------
+Copyright OpenCV contributors. Apache License 2.0.
+https://opencv.org/license/
+
+nlohmann/json
+-------------
+Copyright (c) Niels Lohmann. MIT License.
+https://github.com/nlohmann/json
+
+SQLite
+------
+SQLite is in the public domain.
+https://www.sqlite.org/copyright.html
+
+Microsoft DirectML
+------------------
+The DirectML runtime is redistributed under Microsoft's applicable package
+license terms.
+https://www.nuget.org/packages/Microsoft.AI.DirectML
+
+NVIDIA CUDA and cuDNN (CUDA edition only)
+------------------------------------------
+NVIDIA runtime libraries are governed by NVIDIA's CUDA and cuDNN license terms.
+The CUDA package includes the license files supplied with those redistributables.
+https://docs.nvidia.com/cuda/eula/
+
+Qualcomm QNN runtime (ARM64 edition only)
+-----------------------------------------
+QNN provider/runtime files are supplied through the Microsoft ONNX Runtime QNN
+distribution and remain governed by their applicable upstream terms.
+https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html
+
+InsightFace and buffalo_l model files
+-------------------------------------
+InsightFace source code and separately distributed pretrained model weights do
+not share identical terms. InsightFace states that its downloadable pretrained
+models, including the bundled buffalo_l weights and FSC Studio's derived
+quantized copies, are available for non-commercial research purposes only.
+These model files are not covered by FSC Studio's Apache License 2.0, and this
+distribution does not grant commercial model rights. For recognition-model
+licensing, contact recognition-oss-pack@insightface.ai and review the current
+upstream terms before use or redistribution.
+https://github.com/deepinsight/insightface
+
+MediaPipe Face Landmarker model
+-------------------------------
+The Dense Mesh model is derived from the official MediaPipe Face Landmarker
+task asset. MediaPipe source is Apache License 2.0; the task/model asset retains
+its applicable upstream terms.
+https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker
+
+This notice is informational and does not replace the complete upstream license
+texts or grant rights beyond those licenses.

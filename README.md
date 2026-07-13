@@ -1,6 +1,6 @@
 # FSC Studio
 
-FSC Studio is a desktop face-similarity and face-database application built with PySide6, InsightFace, and ONNX Runtime.
+FSC Studio is a native Windows face-similarity, identity-learning, and face-database application built with C++/Qt, SQLite, OpenCV, and ONNX Runtime. The original PySide6 implementation remains in the repository as the behavioral reference and research version.
 
 The public repository is intentionally source-only. It does not include private face databases, face photos, model weights, generated installers, virtual environments, or mobile-port prototypes.
 
@@ -23,10 +23,20 @@ fsc_studio_services.py  Application service layer
 fsc_face_engine.py      InsightFace / ONNX Runtime integration
 fsc_face_database.py    SQLite .fscdb database layer
 pyproject.toml          Python dependency metadata
-native/FscStudio/       In-progress C++/Qt native Windows port
+native/FscStudio/       Native C++/Qt Windows application and installer
 ```
 
-## Setup
+## Native Windows Install
+
+The native installers include the application, Qt/OpenCV/ONNX Runtime libraries, and required models. End users do not need Python, Visual Studio, the CUDA Toolkit, or a separate model download.
+
+- `FSC-Studio-Setup-x64.exe`: standard Intel/AMD Windows release using DirectML GPU with CPU fallback.
+- `FSC-Studio-CUDA-Setup-x64.exe`: NVIDIA release using CUDA with CPU fallback.
+- `FSC-Studio-Setup-arm64.exe`: native Snapdragon X release using Qualcomm HTP/NPU, Adreno GPU, and ARM64 CPU.
+
+See the packaged `FSC-Studio-User-Guide.html` or [native/FscStudio/docs/user-guide.zh-CN.html](native/FscStudio/docs/user-guide.zh-CN.html).
+
+## Python Reference Setup
 
 Use Python 3.12 on Windows.
 
@@ -83,16 +93,9 @@ w600k_r50.onnx
 
 ## Release Builds
 
-Windows release packaging scripts live in `packaging/`. They build installers with an embedded Python runtime, so end users do not need to install Python.
+Native release and validation scripts live under `native/FscStudio/scripts/`. They generate Python-free DirectML, CUDA, and ARM64 QNN portable packages and Inno Setup installers. Build details and reproducible acceptance commands are in [native/FscStudio/README.md](native/FscStudio/README.md).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant universal
-powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -Variant cpu -OutputRoot release\optimized_cpu
-```
-
-`universal` includes CPU and GPU ONNX Runtime overlays and asks the user which runtime to install after CUDA/NVIDIA detection. Generated installers are written under `release/`, which is intentionally ignored by Git.
-
-The native Windows migration lives under `native/FscStudio/`. Its current Qt shell can open existing `.fscdb` files, import single images or folders, filter Library records, export the filtered Library table as CSV, manage People records and Review metadata, and run native Search/Compare/Camera smoke checks without Python.
+The older `packaging/` flow is retained only for reproducing the retired Python-bundled release. It is not the current distribution path.
 
 ## Data Privacy
 

@@ -207,9 +207,18 @@ RgbImage letterboxToSquare(const RgbImage& image, int size, float& scale) {
         throw std::runtime_error("Letterbox size must be positive.");
     }
 
-    scale = std::min(size / static_cast<float>(image.width), size / static_cast<float>(image.height));
-    const int resizedWidth = std::max(1, static_cast<int>(std::round(image.width * scale)));
-    const int resizedHeight = std::max(1, static_cast<int>(std::round(image.height * scale)));
+    const float imageRatio = static_cast<float>(image.height) / image.width;
+    int resizedWidth = 0;
+    int resizedHeight = 0;
+    if (imageRatio > 1.0f) {
+        resizedHeight = size;
+        resizedWidth = std::max(1, static_cast<int>(size / imageRatio));
+        scale = static_cast<float>(resizedHeight) / image.height;
+    } else {
+        resizedWidth = size;
+        resizedHeight = std::max(1, static_cast<int>(size * imageRatio));
+        scale = static_cast<float>(resizedWidth) / image.width;
+    }
     const auto resized = resizeBilinear(image, resizedWidth, resizedHeight);
 
     RgbImage output;

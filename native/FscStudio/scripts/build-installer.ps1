@@ -7,7 +7,10 @@ param(
     [string]$Accelerator = "directml",
     [string]$PackageDir = "",
     [string]$OutputDir = "",
-    [string]$AppVersion = "0.2.0",
+    [string]$AppVersion = "1.0.0",
+    [string]$ApplicationId = "",
+    [string]$SetupBaseNameOverride = "",
+    [switch]$PerUserTestMode,
     [switch]$SkipPackageSmoke
 )
 
@@ -16,15 +19,15 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot ".."))
 if (-not $PackageDir) {
-    $packageArguments = @(
-        "-Configuration", $Configuration,
-        "-Architecture", $Architecture,
-        "-Accelerator", $Accelerator,
-        "-AppVersion", $AppVersion
-    )
-    if ($SkipPackageSmoke) { $packageArguments += "-SkipSmoke" }
+    $packageArguments = @{
+        Configuration = $Configuration
+        Architecture = $Architecture
+        Accelerator = $Accelerator
+        AppVersion = $AppVersion
+    }
+    if ($SkipPackageSmoke) { $packageArguments.SkipSmoke = $true }
     & (Join-Path $scriptRoot "package-qt-portable.ps1") @packageArguments
-    if ($LASTEXITCODE -ne 0) { throw "Portable package staging failed." }
+    if (-not $?) { throw "Portable package staging failed." }
     $PackageDir = Join-Path $projectRoot "out\package\FSC-Studio-Windows-$Architecture-$($Accelerator.ToUpperInvariant())-$Configuration"
 }
 if (-not $OutputDir) { $OutputDir = Join-Path $projectRoot "out\installer" }
@@ -62,7 +65,7 @@ if ($Architecture -eq "x64") {
     $runtimeSmokeInfo.Environment.Remove("QT_PLUGIN_PATH") | Out-Null
     $runtimeSmoke = [System.Diagnostics.Process]::Start($runtimeSmokeInfo)
     if (-not $runtimeSmoke.WaitForExit(20000)) {
-        $runtimeSmoke.Kill($true)
+        $runtimeSmoke.Kill()
         throw "Qt Windows platform runtime smoke timed out."
     }
     if ($runtimeSmoke.ExitCode -ne 0) { throw "Qt Windows platform runtime smoke failed with exit code $($runtimeSmoke.ExitCode)." }
@@ -78,7 +81,9 @@ $isccCandidates = @(
 )
 if (-not $isccCandidates) { throw "Inno Setup 6 was not found. Install JRSoftware.InnoSetup first." }
 
-$setupBaseName = if ($Architecture -eq "arm64") {
+$setupBaseName = if ($SetupBaseNameOverride) {
+    $SetupBaseNameOverride
+} elseif ($Architecture -eq "arm64") {
     "FSC-Studio-Setup-arm64"
 } elseif ($Accelerator -eq "cuda") {
     "FSC-Studio-CUDA-Setup-x64"
@@ -88,7 +93,23 @@ $setupBaseName = if ($Architecture -eq "arm64") {
 
 New-Item -ItemType Directory -Force -Path $outputFull | Out-Null
 $source = Join-Path $projectRoot "installer\FSCStudio.iss"
-& $isccCandidates[0] "/DSourceDir=$packageFull" "/DOutputDir=$outputFull" "/DAppVersion=$AppVersion" "/DArchitecture=$Architecture" "/DSetupBaseName=$setupBaseName" "/DVCRedistFile=$redistFileName" $source
+$compilerArguments = @(
+    "/DSourceDir=$packageFull",
+    "/DOutputDir=$outputFull",
+    "/DAppVersion=$AppVersion",
+    "/DArchitecture=$Architecture",
+    "/DSetupBaseName=$setupBaseName",
+    "/DVCRedistFile=$redistFileName"
+)
+if ($ApplicationId) {
+    $applicationIdValue = $ApplicationId
+    if ($applicationIdValue -match '^\{?[0-9A-Fa-f-]{36}\}?$') {
+        $applicationIdValue = "{{" + $applicationIdValue.Trim('{}') + "}"
+    }
+    $compilerArguments += "/DApplicationId=$applicationIdValue"
+}
+if ($PerUserTestMode) { $compilerArguments += "/DPerUserTestMode=1" }
+& $isccCandidates[0] @compilerArguments $source
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
 $installer = Join-Path $outputFull "$setupBaseName.exe"

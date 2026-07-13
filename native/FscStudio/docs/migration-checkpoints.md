@@ -40,7 +40,7 @@ Observed local database probe:
 
 ## Checkpoint 2: Native InsightFace Inference
 
-Status: first native image-to-database path verified on one sample.
+Status: verified against the Python InsightFace reference on portrait and group images.
 
 Acceptance:
 
@@ -54,29 +54,14 @@ Observed local buffalo_l I/O through `fsc_vision_probe` with ONNX Runtime 1.27.0
 - `2d106det.onnx`: `data` float32 `[-1,3,192,192]`, output `fc1` `[1,212]`.
 - `1k3d68.onnx`: `data` float32 `[-1,3,192,192]`, output `fc1` `[1,3309]`.
 
-First native SCRFD + ArcFace parity sample:
+Final native InsightFace parity matrix:
 
-- Source image: `D:\FSC\test_img\123s2\baiyh.jpg`, converted to temporary P6 PPM for the native probe.
-- The same source JPEG now loads directly through Windows Imaging Component; no Python conversion is needed for native probe runs.
-- C++ native ONNX CPU: 1 face, score `0.8198`, box `[112.2487,145.7734,367.3689,459.4835]`, embedding dim `512`, norm `1.0000`.
-- Python InsightFace CPU reference: 1 face, score `0.8825`, box `[115.1451,141.5938,367.8138,455.8132]`, embedding dim `512`, norm `1.0000`.
-- C++ embedding vs Python embedding cosine: `0.9801`.
-
-First native image search sample:
-
-- Command: `fsc_native_probe D:\FSC\new_full.fscdb image-search D:\FSC\model\insightface\models D:\FSC\native\FscStudio\out\probe\baiyh.ppm 5 0.50 strict`.
-- Result: 1 detected face, native embedding norm `1.0000`, `106` 2D landmarks, `68` 3D landmarks.
-- Native quality score: `0.8542`.
-- Identity Gallery result: `review` because the best profile is weak; best candidate was face id `1` with score `0.9801`.
-- Similar-face search Top 5: face ids `1`, `41`, `52`, `51`, `60`; top hit was the expected source identity.
-
-First native landmark parity sample:
-
-- C++ 2D landmark first point: `[236.1922,461.5391]`.
-- Python InsightFace 2D landmark first point with the same box: `[236.1581,461.5482]`.
-- C++ 3D landmark first point: `[107.2578,267.3733,150.0926]`.
-- Python InsightFace 3D landmark first point with the same box: `[107.2689,267.3744,150.3109]`.
-- C++ quality score: `0.8542`; Python quality score with the same box and detection score: `0.854203`.
+- Windows Imaging Component decoding is byte-identical to the Python Pillow/OpenCV RGB input for the fixed JPEG fixtures.
+- Native SCRFD now reproduces InsightFace's 128/640 dual-scale pass and applies one final NMS. DirectML and QNN GPU use a small CPU auxiliary session only for the 128 detector because those providers reject the model's dynamic reshape at that size; the 640 detector and all main models remain accelerated.
+- Portrait detection box, five keypoints, score, and quality match the Python reference; embedding cosine is `0.99970` to `0.99979` across the portrait fixtures.
+- The group-image minimum native/Python embedding cosine is `0.99798`; maximum box error is below `0.44` pixel and maximum five-point error is below `0.49` pixel.
+- Across the first 12 portrait fixtures, native and Python search have identical Top 1 results. Top 10 overlap is at least `9/10` and averages `9.8333/10`.
+- The native and Python Identity Gallery rebuilds both produce 119 profiles, 117 weak profiles, 0 skipped profiles, and 127 samples. All scalar/JSON calibration fields match within `1e-6`; the maximum float32 profile-blob difference is `5.96e-08`.
 
 ## Checkpoint 3: Dense Mesh And Camera
 
@@ -121,7 +106,7 @@ Current accelerator shell:
 
 ## Checkpoint 4: Qt Desktop App And Installer
 
-Status: expanded Qt desktop shell and Python-free Inno Setup installer verified; the remaining migration work is tracked as a page-by-page functional and UX parity audit.
+Status: complete native page/workflow parity and Python-free Inno Setup packaging verified on x64; target-device QNN execution remains a hardware acceptance step.
 
 Acceptance:
 
@@ -181,9 +166,11 @@ Current Qt shell:
 Current release packages:
 
 - x64 DirectML, x64 CUDA, and native ARM64 QNN builds all compile from the same source tree; CTest passes for both runnable x64 flavors and the ARM64 cross-build completes with Qt, OpenCV, SQLite, ONNX Runtime QNN, and VC runtime staging.
-- `package-qt-portable.ps1` validates PE architecture and stages only the selected provider, required models, Qt/OpenCV/SQLite runtime, and VC++ redistributable. Its 0.2.0 manifest records provider and model hashes and states that no Python runtime or user database is present.
+- `package-qt-portable.ps1` validates PE architecture and stages only the selected provider, required models, Qt/OpenCV/SQLite runtime, and VC++ redistributable. Its 1.0.0 manifest records provider and model hashes and states that no Python runtime or user database is present.
 - Packaged DirectML and CUDA builds pass full provider-group probing, two-image face comparison, and 478-point Dense Mesh generation against copied database files. Auto reports `DmlExecutionProvider` and `CUDAExecutionProvider` respectively.
-- `FSC-Studio-Setup-x64.exe` is the 312.2 MiB DirectML installer; `FSC-Studio-CUDA-Setup-x64.exe` is the 1226.0 MiB CUDA installer with the tested CUDA 13/cuDNN 9 subset; `FSC-Studio-Setup-arm64.exe` is the 391.6 MiB QNN installer.
+- `FSC-Studio-Setup-x64.exe` is the 312.4 MiB DirectML installer; `FSC-Studio-CUDA-Setup-x64.exe` is the 1226.0 MiB CUDA installer with the tested CUDA 13/cuDNN 9 subset; `FSC-Studio-Setup-arm64.exe` is the 391.8 MiB QNN installer.
+- The final DirectML package passed 66/66 release scenarios, including four languages, all nine pages at two window sizes, database mutation workflows, Dense Mesh views, legacy DTB conversion, and physical-camera recognition. The final CUDA package passed 46/46 non-duplicate scenarios plus a separate physical-camera recognition smoke.
+- An isolated per-user QA AppId proved installer extraction, guide/license staging, Windows-platform launch, actual DirectML session creation, no-Python/no-user-data checks, and clean uninstall without modifying the existing production AppId.
 - The ARM64 executable and all staged native dependencies have ARM64 PE architecture. It cannot be executed on the current x64 build machine, so final HTP/NPU and Adreno acceptance must run on the Surface Pro 11 hardware.
 - The standard release path is an Inno Setup executable rather than MSIX, so it does not depend on a locally trusted test certificate. Public distribution still benefits from Authenticode signing.
 

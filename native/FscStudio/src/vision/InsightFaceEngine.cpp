@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -17,7 +18,8 @@
 namespace fsc::vision {
 namespace {
 
-constexpr int DetectorInputSize = 640;
+constexpr int DetectorSmallInputSize = 128;
+constexpr int DetectorLargeInputSize = 640;
 constexpr int RecognitionInputSize = 112;
 constexpr int LandmarkInputSize = 192;
 
@@ -50,14 +52,14 @@ std::vector<const char*> namePointers(const std::vector<std::string>& names) {
     return pointers;
 }
 
-std::vector<float> detectorTensor(const RgbImage& image, float& scale) {
-    const auto canvas = letterboxToSquare(image, DetectorInputSize, scale);
-    std::vector<float> tensor(static_cast<size_t>(1 * 3 * DetectorInputSize * DetectorInputSize));
-    const int planeSize = DetectorInputSize * DetectorInputSize;
-    for (int y = 0; y < DetectorInputSize; ++y) {
-        for (int x = 0; x < DetectorInputSize; ++x) {
-            const size_t pixel = static_cast<size_t>((y * DetectorInputSize + x) * 3);
-            const int index = y * DetectorInputSize + x;
+std::vector<float> detectorTensor(const RgbImage& image, int inputSize, float& scale) {
+    const auto canvas = letterboxToSquare(image, inputSize, scale);
+    std::vector<float> tensor(static_cast<size_t>(1 * 3 * inputSize * inputSize));
+    const int planeSize = inputSize * inputSize;
+    for (int y = 0; y < inputSize; ++y) {
+        for (int x = 0; x < inputSize; ++x) {
+            const size_t pixel = static_cast<size_t>((y * inputSize + x) * 3);
+            const int index = y * inputSize + x;
             tensor[static_cast<size_t>(0 * planeSize + index)] = (static_cast<float>(canvas.pixels[pixel]) - 127.5f) / 128.0f;
             tensor[static_cast<size_t>(1 * planeSize + index)] = (static_cast<float>(canvas.pixels[pixel + 1]) - 127.5f) / 128.0f;
             tensor[static_cast<size_t>(2 * planeSize + index)] = (static_cast<float>(canvas.pixels[pixel + 2]) - 127.5f) / 128.0f;
@@ -296,7 +298,9 @@ public:
     Impl(InsightFaceModelPaths models, RuntimeMode mode)
         : models_(std::move(models)),
           mode_(mode),
-          env_(ORT_LOGGING_LEVEL_WARNING, "FSC Studio Native InsightFace") {
+          // SCRFD's published output metadata is fixed at 640 even though the
+          // model supports InsightFace's 128/640 multi-scale inference.
+          env_(ORT_LOGGING_LEVEL_ERROR, "FSC Studio Native InsightFace") {
         const auto missing = models_.missingFiles();
         if (!missing.empty()) {
             throw std::runtime_error("Missing InsightFace model: " + fsc::core::pathToUtf8(missing.front()));
@@ -352,6 +356,14 @@ public:
         }
         auto options = detail::sessionOptionsFor(mode);
         detector_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.detectionModelPath).c_str(), options);
+        if (mode == RuntimeMode::DirectMl || mode == RuntimeMode::QnnGpu || mode == RuntimeMode::QnnNpu) {
+            auto cpuOptions = detail::sessionOptionsFor(RuntimeMode::Cpu);
+            detectorSmallCpu_ = std::make_unique<Ort::Session>(
+                env_,
+                widePath(models_.detectionModelPath).c_str(),
+                cpuOptions);
+            detectorSmallCpuOutputNames_ = outputNames(*detectorSmallCpu_, allocator_);
+        }
         recognizer_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.recognitionModelPath).c_str(), options);
         landmark2d_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.landmark2dModelPath).c_str(), options);
         landmark3d_ = std::make_unique<Ort::Session>(env_, widePath(runtimeModels.landmark3dModelPath).c_str(), options);
@@ -363,23 +375,21 @@ public:
 
     void resetSessions() {
         detector_.reset();
+        detectorSmallCpu_.reset();
         recognizer_.reset();
         landmark2d_.reset();
         landmark3d_.reset();
         detectorOutputNames_.clear();
+        detectorSmallCpuOutputNames_.clear();
         recognizerOutputNames_.clear();
         landmark2dOutputNames_.clear();
         landmark3dOutputNames_.clear();
     }
 
-    std::vector<Detection> detect(const RgbImage& image, float threshold, int maxFaces) const {
-        if (image.empty()) {
-            throw std::runtime_error("Cannot detect faces in an empty RGB image.");
-        }
-
+    std::vector<Detection> detectAtSize(const RgbImage& image, float threshold, int inputSize) const {
         float scale = 1.0f;
-        auto input = detectorTensor(image, scale);
-        std::array<int64_t, 4> inputShape{1, 3, DetectorInputSize, DetectorInputSize};
+        auto input = detectorTensor(image, inputSize, scale);
+        std::array<int64_t, 4> inputShape{1, 3, inputSize, inputSize};
         auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         auto inputValue = Ort::Value::CreateTensor<float>(
             memoryInfo,
@@ -388,9 +398,15 @@ public:
             inputShape.data(),
             inputShape.size());
 
+        auto* detector = detector_.get();
+        const auto* outputNames = &detectorOutputNames_;
+        if (inputSize == DetectorSmallInputSize && detectorSmallCpu_) {
+            detector = detectorSmallCpu_.get();
+            outputNames = &detectorSmallCpuOutputNames_;
+        }
         const char* inputName = "input.1";
-        const auto outputNamePointers = namePointers(detectorOutputNames_);
-        auto outputs = detector_->Run(
+        const auto outputNamePointers = namePointers(*outputNames);
+        auto outputs = detector->Run(
             Ort::RunOptions{nullptr},
             &inputName,
             &inputValue,
@@ -402,8 +418,8 @@ public:
         std::vector<Detection> detections;
         for (size_t strideIndex = 0; strideIndex < strides.size(); ++strideIndex) {
             const int stride = strides[strideIndex];
-            const int featureWidth = DetectorInputSize / stride;
-            const int featureHeight = DetectorInputSize / stride;
+            const int featureWidth = inputSize / stride;
+            const int featureHeight = inputSize / stride;
             constexpr int anchorCount = 2;
             const int total = featureWidth * featureHeight * anchorCount;
             const auto& scores = outputs[strideIndex];
@@ -425,19 +441,36 @@ public:
                 Detection detection;
                 detection.score = score;
                 detection.box = {
-                    clamp((anchorX - left) / scale, 0.0f, static_cast<float>(image.width - 1)),
-                    clamp((anchorY - top) / scale, 0.0f, static_cast<float>(image.height - 1)),
-                    clamp((anchorX + right) / scale, 0.0f, static_cast<float>(image.width - 1)),
-                    clamp((anchorY + bottom) / scale, 0.0f, static_cast<float>(image.height - 1)),
+                    (anchorX - left) / scale,
+                    (anchorY - top) / scale,
+                    (anchorX + right) / scale,
+                    (anchorY + bottom) / scale,
                 };
                 for (int point = 0; point < 5; ++point) {
                     detection.keypoints[static_cast<size_t>(point)] = {
-                        clamp((anchorX + tensorAt(landmarks, index, point * 2) * stride) / scale, 0.0f, static_cast<float>(image.width - 1)),
-                        clamp((anchorY + tensorAt(landmarks, index, point * 2 + 1) * stride) / scale, 0.0f, static_cast<float>(image.height - 1)),
+                        (anchorX + tensorAt(landmarks, index, point * 2) * stride) / scale,
+                        (anchorY + tensorAt(landmarks, index, point * 2 + 1) * stride) / scale,
                     };
                 }
                 detections.push_back(std::move(detection));
             }
+        }
+        return detections;
+    }
+
+    std::vector<Detection> detect(const RgbImage& image, float threshold, int maxFaces) const {
+        if (image.empty()) {
+            throw std::runtime_error("Cannot detect faces in an empty RGB image.");
+        }
+
+        std::vector<Detection> detections;
+        const std::array<int, 2> inputSizes{DetectorSmallInputSize, DetectorLargeInputSize};
+        for (auto size = inputSizes.begin(); size != inputSizes.end(); ++size) {
+            auto scaleDetections = detectAtSize(image, threshold, *size);
+            detections.insert(
+                detections.end(),
+                std::make_move_iterator(scaleDetections.begin()),
+                std::make_move_iterator(scaleDetections.end()));
         }
 
         return nonMaximumSuppression(std::move(detections), 0.4f, maxFaces);
@@ -566,10 +599,12 @@ private:
     Ort::Env env_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::unique_ptr<Ort::Session> detector_;
+    std::unique_ptr<Ort::Session> detectorSmallCpu_;
     std::unique_ptr<Ort::Session> recognizer_;
     std::unique_ptr<Ort::Session> landmark2d_;
     std::unique_ptr<Ort::Session> landmark3d_;
     std::vector<std::string> detectorOutputNames_;
+    std::vector<std::string> detectorSmallCpuOutputNames_;
     std::vector<std::string> recognizerOutputNames_;
     std::vector<std::string> landmark2dOutputNames_;
     std::vector<std::string> landmark3dOutputNames_;
